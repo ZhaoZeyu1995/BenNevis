@@ -1,0 +1,21 @@
+# cache
+__pycache__
+# debug
+debug.*
+*.debug.*
+# egs
+/egs/*/*/mfcc
+/egs/*/*/fbank
+/egs/*/*/cmvn
+/egs/*/*/plp
+/egs/*/*/exp
+/egs/*/*/outputs
+/egs/*/*/data
+/egs/*/*/wav
+/egs/*/*/enhan
+# yesno
+egs/yesno/asr/waves_yesno
+egs/yesno/asr/waves_yesno.tar.gz
+
+# tools
+/tools/kaldi
