@@ -1,5 +1,5 @@
 defaults:
-  - data: timit
+  - data: train960
   - model: rnnp
   - loss: graph
   - opts: default

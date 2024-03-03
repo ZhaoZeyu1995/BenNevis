@@ -1,5 +1,5 @@
-train_ds: data/train
-valid_ds: data/dev
+train_ds: data/train_460
+valid_ds: data/dev_clean
 lang: ???
 ratio_th: 4
 load_wav: False
@@ -10,4 +10,4 @@ max_dur: 35.0
 num_workers: 4
 val_batch_size: 16
 pin_memory: True
-max_sum_dur: 120.0
+max_sum_dur: 240.0
