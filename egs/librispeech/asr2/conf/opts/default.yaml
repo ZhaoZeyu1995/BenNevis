@@ -1,0 +1,14 @@
+- module: torch.optim
+  name: AdamW
+  nickname: model.AdamW  # nickname to show on WandB logger
+  param: null  # for the whole model
+  kwargs:
+    lr: 1e-4
+  lr_schedulers:
+    - module: torch.optim.lr_scheduler
+      name: ReduceLROnPlateau
+      kwargs:
+        mode: min
+        factor: 0.5
+        patience: 4
+        verbose: True

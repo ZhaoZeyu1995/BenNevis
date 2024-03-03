@@ -1,0 +1,13 @@
+train_ds: data/train_clean_100
+valid_ds: data/dev_clean
+lang: ???
+ratio_th: 4
+load_wav: False
+load_feats: True
+sort: ascending
+min_dur: 0.5
+max_dur: 35.0
+num_workers: 4
+val_batch_size: 16
+pin_memory: True
+max_sum_dur: 240.0
