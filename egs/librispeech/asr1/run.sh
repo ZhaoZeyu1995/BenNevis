@@ -7,7 +7,7 @@
 nj=16
 ngpu=4
 topos="ctc mmictc mmictc-1 2state 2state-1 3state-skip 3state-skip-1 3state-skip-2"
-model="rnnp"
+model="wav2vec2"
 
 # data
 datadir=$LOCAL_HOME/data/librispeech
@@ -100,6 +100,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         if [ $topo == "ctc" ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
+                model=${model} \
+                opts=${model} \
                 data.lang=data/lang_${topo} \
                 data.train_ds=data/$train_set \
                 data.valid_ds=data/$dev_set \
@@ -109,6 +111,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         else
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
+                model=${model} \
+                opts=${model} \
                 data.lang=data/lang_${topo} \
                 data.train_ds=data/$train_set \
                 data.valid_ds=data/$dev_set \

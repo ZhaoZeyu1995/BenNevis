@@ -74,7 +74,7 @@ class Wav2Vec2Model(torch.nn.Module):
             wav2vec2 = torchaudio.pipelines._wav2vec2.utils._Wav2Vec2Model(
                 wav2vec2, normalize_waveform=True, apply_log_softmax=False, append_star=False
             )
-        elif isinstance(wav2vec2, torchaudio.pipeline._wav2vec2.utils._Wav2Vec2Model):
+        elif isinstance(wav2vec2, torchaudio.pipelines._wav2vec2.utils._Wav2Vec2Model):
             wav2vec2.normalize_waveform = True
             wav2vec2.apply_log_softmax = False
             wav2vec2.append_star = False
@@ -110,6 +110,6 @@ class Wav2Vec2Model(torch.nn.Module):
 
     def forward(self, x, xlens):
         x, xlens = self.wav2vec2(x, xlens)
-        x = self.output_layer(x)
+        x = self.olayer(x)
         x = F.log_softmax(x, dim=-1)
         return x, xlens
