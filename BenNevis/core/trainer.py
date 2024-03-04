@@ -57,6 +57,11 @@ class Trainer:
         The maximum number of steps to train the model.
     log_every_n_steps: Optional[int]
         The training logs will be logged every n steps.
+    accum_grad_steps: Optional[int]
+        The number of gradient accumulation steps, default is 1.
+    grad_max_norm: Optional[float]
+        The maximum norm of the gradients, default is None.
+        torch.nn.utils.clip_grad_norm_ will be used if this is set.
     config: Optional[Dict[str, Any]]
         A dictionary containing the arguments for the whole training setting.
         This is useful for several aspects, such as logging, saving, and resuming the training.
@@ -75,6 +80,8 @@ class Trainer:
         max_epochs: Optional[int] = 100,
         max_steps: Optional[int] = None,
         log_every_n_steps: Optional[int] = 50,
+        accum_grad_steps: Optional[int] = 1,
+        grad_max_norm: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None,
     ):
         self.gpu_id = dist.get_rank()
@@ -119,6 +126,8 @@ class Trainer:
         self.max_steps = max_steps
 
         self.log_every_n_steps = log_every_n_steps
+        self.accum_grad_steps = accum_grad_steps
+        self.grad_max_norm = grad_max_norm
 
         self.model = DDP(self.model, device_ids=[self.gpu_id])
 
@@ -273,12 +282,14 @@ class Trainer:
             The computed loss averaged on all GPUs.
         """
         self.model.train()
-        for opt in self.optimizers:
-            opt.zero_grad()
         loss = self._compute_loss(batch)
         loss.backward()
-        for opt in self.optimizers:
-            opt.step()
+        if (self.step+1) % self.accum_grad_steps == 0:
+            if self.grad_max_norm:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_max_norm)
+            for opt in self.optimizers:
+                opt.step()
+                opt.zero_grad()
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
@@ -645,6 +656,8 @@ class Trainer:
                 self.progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
 
             self.model.train()
+            for opt in self.optimizers:
+                opt.zero_grad()
             train_loss = self._train_epoch()
 
             self.epoch += 1

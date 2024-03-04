@@ -1,7 +1,7 @@
 defaults:
   - data: train960
-  - model: wav2vec2
+  - model: rnnp
   - loss: graph
-  - opts: wav2vec2
+  - opts: default
   - trainer: default
   - logger: default

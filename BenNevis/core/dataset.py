@@ -346,8 +346,8 @@ class CollateFunc:
             assert all('wav_len' in sample for sample in list_of_samples), "wav_len is not available in the samples"
             batch_wavs = [sample['wav'] for sample in list_of_samples]
             batch_wav_lens = [sample['wav_len'] for sample in list_of_samples]
-            batch['wav'] = pad_sequence(batch_wavs, batch_first=True)
-            batch['wav_len'] = torch.tensor(batch_wav_lens, dtype=torch.int32)
+            batch['wavs'] = pad_sequence(batch_wavs, batch_first=True)
+            batch['wav_lens'] = torch.tensor(batch_wav_lens, dtype=torch.int32)
 
         if self.load_feats:
             assert all('feats' in sample for sample in list_of_samples), "feats is not available in the samples"
