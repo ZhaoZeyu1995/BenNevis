@@ -2,4 +2,4 @@ exp_dir: ${hydra:run.dir}
 save_every_n_epochs: 1.0
 save_top_k: 2
 max_epochs: 10
-log_every_n_steps: 50
+log_every_n_steps: 100
