@@ -299,7 +299,9 @@ class Trainer:
             for opt in self.optimizers:
                 opt.step()
                 opt.zero_grad(set_to_none=True)
-        return loss
+        dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+        loss_item = loss.item() / self.world_size
+        return loss_item
 
     def _valid_batch(self, batch: Dict[str, Any]) -> float:
         """
@@ -403,7 +405,6 @@ class Trainer:
 
         num_steps = 0
         loss_value_sum = 0
-        loss_value_cnt = 0
 
         epoch_num_batches = None
         for batch in self.train_dl:
@@ -413,16 +414,14 @@ class Trainer:
                 elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
                     epoch_num_batches = self.train_sampler.num_batches
             batch_size = batch["batch_size"]
-            loss = self._train_batch(batch)
+            loss_value = self._train_batch(batch)
             num_steps += 1
             if self.gpu_id == 0:
                 self.progress_bar.update(batch_size * self.world_size)
+                self.metrics_dict["loss"] = loss_value
+                self.progress_bar.set_postfix(self.metrics_dict)
                 if self.step % self.log_every_n_steps == 0:
-                    loss_value = loss.item()
-                    self.metrics_dict["loss"] = loss_value
-                    self.progress_bar.set_postfix(self.metrics_dict)
                     loss_value_sum += loss_value
-                    loss_value_cnt += 1
                     wandb.log({"loss_step": loss_value, "step": self.step}, step=self.step)
                     for opt in self.optimizers:
                         wandb.log(
@@ -449,7 +448,7 @@ class Trainer:
                     self._save_checkpoint(valid_loss)
                     wandb.log({"valid.loss_epoch": valid_loss, "step": self.step}, step=self.step)
 
-        train_loss = loss_value_sum / loss_value_cnt
+        train_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["loss_epoch"] = train_loss
             self.progress_bar.set_postfix(self.metrics_dict)
