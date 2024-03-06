@@ -93,6 +93,7 @@ class Trainer:
         self.schedulers = schedulers
         self.loss_func = loss_func
         self.config = config
+        self.pin_memory = getattr(self.config.data, "pin_memory", False)
 
         if self.gpu_id == 0:
             summary(self.model, depth=5, verbose=1)
@@ -249,11 +250,19 @@ class Trainer:
         assert self.loss_func.reduction in ["mean", "sum"], "Currently GraphLoss.reduction must \
                 be either 'mean' or 'sum', but got {self.loss_func.reduction}"
         if "feats" in batch:
-            inputs = batch["feats"].to(self.device)
-            input_lens = batch["feats_len"].to(self.device)
+            if self.pin_memory:
+                inputs = batch["feats"].to(self.device, non_blocking=True)
+                input_lens = batch["feats_len"].to(self.device, non_blocking=True)
+            else:
+                inputs = batch["feats"].to(self.device)
+                input_lens = batch["feats_len"].to(self.device)
         elif "wavs" in batch:
-            inputs = batch["wavs"].to(self.device)
-            input_lens = batch["wav_lens"].to(self.device)
+            if self.pin_memory:
+                inputs = batch["wavs"].to(self.device, non_blocking=True)
+                input_lens = batch["wav_lens"].to(self.device, non_blocking=True)
+            else:
+                inputs = batch["wavs"].to(self.device)
+                input_lens = batch["wav_lens"].to(self.device)
         else:
             raise ValueError(f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}")
         outputs = self.model(inputs, input_lens)
@@ -289,7 +298,7 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_max_norm)
             for opt in self.optimizers:
                 opt.step()
-                opt.zero_grad()
+                opt.zero_grad(set_to_none=True)
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
@@ -659,7 +668,7 @@ class Trainer:
 
             self.model.train()
             for opt in self.optimizers:
-                opt.zero_grad()
+                opt.zero_grad(set_to_none=True)
             train_loss = self._train_epoch()
 
             self.epoch += 1
