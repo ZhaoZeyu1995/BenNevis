@@ -629,10 +629,7 @@ class Trainer:
         self.step = 0
 
         if self.gpu_id == 0:
-            self.progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
-            self.progress_bar.refresh()
-            self.metrics_dict = {}
-            self.wandb_dir = os.path.join(self.exp_dir, "wandb")
+            self.wandb_dir = os.path.join(self.exp_dir)
             os.makedirs(self.wandb_dir, exist_ok=True)
             wandb.init(
                 dir=self.wandb_dir,
@@ -643,6 +640,11 @@ class Trainer:
                 name=self.config.logger["name"],
                 config=dict(self.config),
             )
+            self.progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
+            self.progress_bar.refresh()
+            self.metrics_dict = {}
+
+        dist.barrier()
 
         if checkpoint:
             if load_weights_only:

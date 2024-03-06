@@ -6,7 +6,7 @@ load_wav: true
 load_feats: false
 sort: ascending
 min_dur: 0.5
-max_dur: 30.0
+max_dur: 25.0
 num_workers: 4
 val_batch_size: 1
 pin_memory: true

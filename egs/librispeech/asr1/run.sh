@@ -1,5 +1,6 @@
 #!/bin/bash
-# Copyright 2022 University of Edinburgh (Zeyu Zhao)
+# Authors:
+#  * Zeyu Zhao (The University of Edinburgh) 2024
 
 . ./env.sh || exit 1
 . ./path.sh || exit 1
