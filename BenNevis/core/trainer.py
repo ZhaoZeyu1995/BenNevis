@@ -93,7 +93,6 @@ class Trainer:
         self.schedulers = schedulers
         self.loss_func = loss_func
         self.config = config
-        self.pin_memory = getattr(self.config.data, "pin_memory", False)
 
         if self.gpu_id == 0:
             summary(self.model, depth=5, verbose=1)
@@ -233,7 +232,7 @@ class Trainer:
         ckpt = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(ckpt["MODEL_STATE"])
 
-    def _compute_loss(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def _compute_loss(self, batch: Dict[str, Any], pin_memory: bool = False) -> torch.Tensor:
         """
         Compute the loss for the given batch.
 
@@ -241,6 +240,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -250,14 +251,14 @@ class Trainer:
         assert self.loss_func.reduction in ["mean", "sum"], "Currently GraphLoss.reduction must \
                 be either 'mean' or 'sum', but got {self.loss_func.reduction}"
         if "feats" in batch:
-            if self.pin_memory:
+            if pin_memory:
                 inputs = batch["feats"].to(self.device, non_blocking=True)
                 input_lens = batch["feats_len"].to(self.device, non_blocking=True)
             else:
                 inputs = batch["feats"].to(self.device)
                 input_lens = batch["feats_len"].to(self.device)
         elif "wavs" in batch:
-            if self.pin_memory:
+            if pin_memory:
                 inputs = batch["wavs"].to(self.device, non_blocking=True)
                 input_lens = batch["wav_lens"].to(self.device, non_blocking=True)
             else:
@@ -276,7 +277,7 @@ class Trainer:
         )
         return loss
 
-    def _train_batch(self, batch: Dict[str, Any]) -> float:
+    def _train_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Train the model on the given batch.
 
@@ -284,6 +285,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -291,7 +294,7 @@ class Trainer:
             The computed loss averaged on all GPUs.
         """
         self.model.train()
-        loss = self._compute_loss(batch)
+        loss = self._compute_loss(batch, pin_memory=pin_memory)
         loss.backward()
         if (self.step+1) % self.accum_grad_steps == 0:
             if self.grad_max_norm:
@@ -303,7 +306,7 @@ class Trainer:
         loss_item = loss.item() / self.world_size
         return loss_item
 
-    def _valid_batch(self, batch: Dict[str, Any]) -> float:
+    def _valid_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Validate the model on the given batch.
 
@@ -311,6 +314,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -319,13 +324,13 @@ class Trainer:
         """
         self.model.eval()
         with torch.no_grad():
-            loss = self._compute_loss(batch)
+            loss = self._compute_loss(batch, pin_memory=pin_memory)
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
         return loss_item
 
-    def _test_batch(self, batch: Dict[str, Any]) -> float:
+    def _test_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Test the model on the given batch.
 
@@ -333,6 +338,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -341,7 +348,7 @@ class Trainer:
         """
         self.model.eval()
         with torch.no_grad():
-            loss = self._compute_loss(batch)
+            loss = self._compute_loss(batch, pin_memory)
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
@@ -414,7 +421,7 @@ class Trainer:
                 elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
                     epoch_num_batches = self.train_sampler.num_batches
             batch_size = batch["batch_size"]
-            loss_value = self._train_batch(batch)
+            loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
             if self.gpu_id == 0:
                 self.progress_bar.update(batch_size * self.world_size)
@@ -466,7 +473,7 @@ class Trainer:
 
         for batch in self.valid_dl:
             batch_size = batch["batch_size"]
-            loss_value = self._valid_batch(batch)
+            loss_value = self._valid_batch(batch, pin_memory=self.valid_dl.pin_memory)
             num_steps += 1
             loss_value_sum += loss_value
             if self.gpu_id == 0:
@@ -744,7 +751,7 @@ class Trainer:
             )
             progress_bar.set_description("Sanity check on validation set")
         for batch in self.valid_dl:
-            _ = self._valid_batch(batch)
+            _ = self._valid_batch(batch, pin_memory=self.valid_dl.pin_memory)
             check_steps -= 1
             if self.gpu_id == 0:
                 progress_bar.update(1)
