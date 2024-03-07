@@ -1,6 +1,6 @@
 defaults:
   - data: train960
-  - model: wav2vec2
+  - model: wav2vec2.large.lv60k
   - loss: graph
   - opts: wav2vec2
   - trainer: default
