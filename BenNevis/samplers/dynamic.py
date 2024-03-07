@@ -354,6 +354,10 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
         batch_sizes = batch_sizes.cpu().tolist()
         batch_sizes = [0] + batch_sizes
         indices = [indices[batch_sizes[i]:batch_sizes[i+1]] for i in range(len(batch_sizes)-1)]
+        # if dataset is sorted in ascending order, we put the last element of indices at the beginning
+        # this is more efficient for GPU memory caching
+        if self.dataset.sort == "ascending":
+            indices = [indices[-1]] + indices[:-1]
         self.num_batches = len(indices)
         return iter(indices)
 
