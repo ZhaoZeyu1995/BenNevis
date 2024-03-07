@@ -427,8 +427,8 @@ class Trainer:
                 self.progress_bar.update(batch_size * self.world_size)
                 self.metrics_dict["loss"] = loss_value
                 self.progress_bar.set_postfix(self.metrics_dict)
+                loss_value_sum += loss_value
                 if self.step % self.log_every_n_steps == 0:
-                    loss_value_sum += loss_value
                     wandb.log({"loss_step": loss_value, "step": self.step}, step=self.step)
                     for opt in self.optimizers:
                         wandb.log(
