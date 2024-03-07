@@ -14,9 +14,11 @@ debug.*
 /egs/*/*/wav
 /egs/*/*/enhan
 /egs/*/*/db
+/egs/*/*/wandb
 # yesno
 egs/yesno/asr/waves_yesno
 egs/yesno/asr/waves_yesno.tar.gz
 
 # tools
 /tools/kaldi
+/tools/venv

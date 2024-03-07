@@ -412,6 +412,11 @@ class Trainer:
 
         num_steps = 0
         loss_value_sum = 0
+        if self.gpu_id == 0:
+            progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
+            progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
+            progress_bar.set_postfix(self.metrics_dict)
+            progress_bar.refresh()
 
         epoch_num_batches = None
         for batch in self.train_dl:
@@ -424,9 +429,9 @@ class Trainer:
             loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
             if self.gpu_id == 0:
-                self.progress_bar.update(batch_size * self.world_size)
+                progress_bar.update(batch_size * self.world_size)
                 self.metrics_dict["loss"] = loss_value
-                self.progress_bar.set_postfix(self.metrics_dict)
+                progress_bar.set_postfix(self.metrics_dict)
                 loss_value_sum += loss_value
                 if self.step % self.log_every_n_steps == 0:
                     wandb.log({"loss_step": loss_value, "step": self.step}, step=self.step)
@@ -458,8 +463,8 @@ class Trainer:
         train_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["loss_epoch"] = train_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
-            self.progress_bar.reset()
+            progress_bar.set_postfix(self.metrics_dict)
+            progress_bar.close()
         return train_loss
 
     def _valid_epoch(self):
@@ -482,7 +487,6 @@ class Trainer:
         valid_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["val_loss"] = valid_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
             valid_progress_bar.close()
         return valid_loss
 
@@ -655,8 +659,6 @@ class Trainer:
                 name=self.config.logger["name"],
                 config=dict(self.config),
             )
-            self.progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
-            self.progress_bar.refresh()
             self.metrics_dict = {}
 
         dist.barrier()
@@ -668,9 +670,6 @@ class Trainer:
                 self._load_checkpoint(checkpoint)
 
         while self.epoch < self.max_epochs:
-
-            if self.gpu_id == 0:
-                self.progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
 
             self.model.train()
             for opt in self.optimizers:
