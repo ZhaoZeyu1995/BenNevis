@@ -1,7 +1,0 @@
-defaults:
-  - data: train960
-  - model: rnnp
-  - loss: graph
-  - opts: default
-  - trainer: default
-  - logger: default

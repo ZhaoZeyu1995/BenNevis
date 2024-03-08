@@ -185,7 +185,7 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
     config_name="config",
 )
 def main(cfg):
-    setup_seed(0)
+    setup_seed(1368)
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(int(os.environ["RANK"]))
     gpu_id = dist.get_rank()

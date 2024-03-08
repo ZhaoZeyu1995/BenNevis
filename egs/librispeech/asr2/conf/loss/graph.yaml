@@ -1,7 +1,0 @@
-module: BenNevis.core.losses
-name: GraphLoss
-kwargs:
-  use_den: true
-  use_den_grad: false
-  output_beam: 10.0
-  reduction: mean

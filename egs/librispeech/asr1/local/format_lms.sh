@@ -43,7 +43,7 @@ trap "rm -r $tmpdir" EXIT
 
 mkdir -p $tmpdir
 
-for lm_suffix in tgsmall tgmed tglarge fglarge; do
+for lm_suffix in tgsmall tgmed; do
   # tglarge is prepared by a separate command, called from run.sh; we don't
   # want to compile G.fst for tglarge, as it takes a while.
   test=${src_dir}_test_${lm_suffix}

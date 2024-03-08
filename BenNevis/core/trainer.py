@@ -95,7 +95,7 @@ class Trainer:
         self.config = config
 
         if self.gpu_id == 0:
-            summary(self.model, depth=5, verbose=1)
+            summary(self.model, depth=6, verbose=1)
 
         self.exp_dir = exp_dir
         if self.exp_dir:
@@ -129,10 +129,7 @@ class Trainer:
         self.accum_grad_steps = accum_grad_steps
         self.grad_max_norm = grad_max_norm
 
-        if self.world_size > 1:
-            self.model = DDP(self.model, device_ids=[self.gpu_id])
-        else:
-            self.model = self.model.to(self.device)
+        self.model = DDP(self.model, device_ids=[self.gpu_id])
 
     def _load_best_checkpoint(self):
         """
@@ -254,24 +251,18 @@ class Trainer:
         assert self.loss_func.reduction in ["mean", "sum"], "Currently GraphLoss.reduction must \
                 be either 'mean' or 'sum', but got {self.loss_func.reduction}"
         if "feats" in batch:
-            if pin_memory:
-                inputs = batch["feats"].to(self.device, non_blocking=True)
-                input_lens = batch["feats_len"].to(self.device, non_blocking=True)
-            else:
-                inputs = batch["feats"].to(self.device)
-                input_lens = batch["feats_len"].to(self.device)
+            inputs = batch["feats"].to(self.device, non_blocking=pin_memory)
+            input_lens = batch["feats_len"].to(self.device, non_blocking=pin_memory)
         elif "wavs" in batch:
-            if pin_memory:
-                inputs = batch["wavs"].to(self.device, non_blocking=True)
-                input_lens = batch["wav_lens"].to(self.device, non_blocking=True)
-            else:
-                inputs = batch["wavs"].to(self.device)
-                input_lens = batch["wav_lens"].to(self.device)
+            inputs = batch["wavs"].to(self.device, non_blocking=pin_memory)
+            input_lens = batch["wav_lens"].to(self.device, non_blocking=pin_memory)
         else:
             raise ValueError(f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}")
+
         outputs = self.model(inputs, input_lens)
         log_probs, log_prob_lens = outputs[0], outputs[1]
-        target_lengths = batch["target_lengths"].to(self.device)
+
+        target_lengths = batch["target_lengths"].to(self.device, non_blocking=pin_memory)
         loss = self.loss_func(
             log_probs,
             log_prob_lens,

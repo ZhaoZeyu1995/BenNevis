@@ -1,4 +1,5 @@
 venv_path=../../../tools/venv
+export PYTHONPATH=../../..:$PYTHONPATH
 if [ -z $VIRTUAL_ENV ]; then
     echo "Activating virtual environment $venv_path"
     source $venv_path/bin/activate
