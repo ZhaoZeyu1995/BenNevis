@@ -1,0 +1,7 @@
+defaults:
+  - data: timit
+  - model: rnnp
+  - loss: graph
+  - opts: default
+  - trainer: default
+  - logger: default

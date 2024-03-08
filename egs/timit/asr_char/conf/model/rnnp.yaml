@@ -1,0 +1,12 @@
+module: BenNevis.models.rnnp
+name: Encoder
+kwargs:
+  etype: bgrup
+  idim: 83
+  odim: null  # determined by lang at training stage
+  elayers: 3
+  eunits: 320
+  eprojs: 320
+  subsample: [2, 1, 1]
+  dropout: 0.1
+

@@ -170,10 +170,10 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
         for x in ${recog_sets}; do
             for lm in $lms; do
                 if [ $lm == "nolm" ]; then
-                    run/align.sh data/${x} --nj ${nj} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+                    run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
                 else
                     for acwt in ${acwts}; do
-                        run/align.sh data/${x} --nj ${nj} data/lang_test_${lm}_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${lm}_${x}/aw_${acwt}-ma_5000-bm_32 || exit 1;
+                        run/align.sh --nj ${nj} data/${x} data/lang_test_${lm}_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${lm}_${x}/aw_${acwt}-ma_5000-bm_32 || exit 1;
                     done
                 fi
             done
