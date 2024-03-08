@@ -129,7 +129,10 @@ class Trainer:
         self.accum_grad_steps = accum_grad_steps
         self.grad_max_norm = grad_max_norm
 
-        self.model = DDP(self.model, device_ids=[self.gpu_id])
+        if self.world_size > 1:
+            self.model = DDP(self.model, device_ids=[self.gpu_id])
+        else:
+            self.model = self.model.to(self.device)
 
     def _load_best_checkpoint(self):
         """
