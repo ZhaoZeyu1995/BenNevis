@@ -104,6 +104,25 @@ class Trainer:
             logging.warning("No experiment directory is provided. Please make sure to only do prediction with the model.")
 
         if save_every_n_epochs:
+            def check_valid(save_every_n_epochs):
+                if isinstance(save_every_n_epochs, int):
+                    if save_every_n_epochs >= 1:
+                        return True
+                    else:
+                        return False
+                elif isinstance(save_every_n_epochs, float):
+                    if 0 < save_every_n_epochs and save_every_n_epochs < 1.0:
+                        return True
+                    elif save_every_n_epochs.is_integer() and save_every_n_epochs >= 1.0:
+                        return True
+                    else:
+                        return False
+                else:
+                    return False
+            if not check_valid(save_every_n_epochs):
+                raise ValueError("save_every_n_epochs should be a positive float number smaller than 1.0. \
+                        Otherwise it must be a positive integer.")
+            
             self.save_every_n_epochs = save_every_n_epochs
             self.save_every_n_steps = None
             logging.info(f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_epochs} epochs")
@@ -114,7 +133,12 @@ class Trainer:
         else:
             self.save_every_n_epochs = None
             self.save_every_n_steps = save_every_n_steps
-            logging.info(f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_steps} steps")
+            if save_every_n_steps:
+                logging.info(f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_steps} steps")
+            else:
+                self.save_every_n_epochs = 1
+                logging.warning(f"RANK {self.gpu_id}: No save_every_n_epochs or save_every_n_steps is set. \
+                        Model will be saved every 1 epoch by default.")
 
         if save_top_k:
             assert isinstance(save_top_k, int) and save_top_k > 0, "save_top_k should be a positive integer."
@@ -685,7 +709,9 @@ class Trainer:
                            "step": self.step},
                           step=self.step)
 
-                if self.epoch % self.save_every_n_epochs == 0:
+                if self.save_every_n_epochs > 1 and self.epoch % self.save_every_n_epochs == 0:
+                    self._save_checkpoint(valid_loss)
+                else:
                     self._save_checkpoint(valid_loss)
         logging.info(f"RANK {self.gpu_id}: Training finished")
         if self.gpu_id == 0:
