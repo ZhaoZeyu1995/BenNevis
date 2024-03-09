@@ -90,6 +90,7 @@ for i in $(seq $nj); do
 done > $output_dir/align/ctm
 
 # sort the ctm
-cat $output_dir/align/ctm | sort > $output_dir/align/tmp && mv $output_dir/align/tmp $output_dir/align/ctm
+cat $output_dir/align/ctm | sort -k1,1 -k3,3n > $output_dir/align/tmp && mv $output_dir/align/tmp $output_dir/align/ctm
+
 
 
