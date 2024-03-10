@@ -55,8 +55,10 @@ class Wav2Vec2Model(torch.nn.Module):
         self.wav2vec2_odim = wav2vec2_odim
         self.finetune_last_n_layers = finetune_last_n_layers
 
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
+        if dist.is_available() and dist.is_initialized():
+            self.rank = dist.get_rank()
+        else:
+            self.rank = 0
 
         if self.rank == 0:
             bundle = getattr(torchaudio.pipelines, from_pretrained)
@@ -65,7 +67,6 @@ class Wav2Vec2Model(torch.nn.Module):
         dist.barrier()
         logging.info(f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}")
         bundle = getattr(torchaudio.pipelines, from_pretrained)
-        os.makedirs('exp/downloads', exist_ok=True)
         wav2vec2 = bundle.get_model(dl_kwargs={"model_dir": 'exp/downloads'})
         # If the model is not an instance of torchaudio.models.wav2vec2.Wav2Vec2Model, wrap it
         # with the _Wav2Vec2Model class
@@ -93,10 +94,8 @@ class Wav2Vec2Model(torch.nn.Module):
 
     def freeze_and_init(self):
         # By default, only fine-tune the encoder part of the wav2vec2 model
-        for para in self.wav2vec2.model.feature_extractor.parameters():
-            para.requires_grad = False
-        for para in self.wav2vec2.model.encoder.parameters():
-            para.requires_grad = False
+        self.wav2vec2.model.feature_extractor.requires_grad_(False)
+        self.wav2vec2.model.encoder.requires_grad_(False)
         logging.info(
                 f"RANK {self.rank}: Fine-tuning the last {self.finetune_last_n_layers} "
                 f"transformer layers of the wav2vec2 encoder.")
@@ -109,6 +108,23 @@ class Wav2Vec2Model(torch.nn.Module):
             self.wav2vec2.model.encoder.transformer.layers[-self.finetune_last_n_layers:].requires_grad_(True)
 
     def forward(self, x, xlens):
+        """
+        Forward pass of the Wav2Vec2Model.
+
+        Arguments
+        ---------
+        x : torch.Tensor
+            The input tensor of shape (B, T).
+        xlens : torch.Tensor
+            The length of each input sequence in the batch.
+
+        Returns
+        -------
+        x : torch.Tensor
+            The output tensor of shape (B, T, odim).
+        xlens : torch.Tensor
+            The length of each output sequence in the batch.
+        """
         x, xlens = self.wav2vec2(x, xlens)
         x = self.olayer(x)
         x = F.log_softmax(x, dim=-1)

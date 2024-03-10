@@ -276,7 +276,7 @@ class Trainer:
                 be either 'mean' or 'sum', but got {self.loss_func.reduction}"
         if "feats" in batch:
             inputs = batch["feats"].to(self.device, non_blocking=pin_memory)
-            input_lens = batch["feats_len"].to(self.device, non_blocking=pin_memory)
+            input_lens = batch["feats_lens"].to(self.device, non_blocking=pin_memory)
         elif "wavs" in batch:
             inputs = batch["wavs"].to(self.device, non_blocking=pin_memory)
             input_lens = batch["wav_lens"].to(self.device, non_blocking=pin_memory)
@@ -399,7 +399,7 @@ class Trainer:
         self.model.eval()
         if "feats" in batch:
             inputs = batch["feats"].to(self.device)
-            input_lens = batch["feats_len"].to(self.device)
+            input_lens = batch["feats_lens"].to(self.device)
         elif "wavs" in batch:
             inputs = batch["wavs"].to(self.device)
             input_lens = batch["wav_lens"].to(self.device)

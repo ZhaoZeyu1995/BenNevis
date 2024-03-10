@@ -270,18 +270,25 @@ class CollateFunc:
         Whether to load the CTC target, by default is False.
     sort: str
         The order to sort the utterances, either "ascending" or "descending", by default is "descending".
+    pad_to_length: Optional[int]
+        The length to pad the feat sequences to, by default is None.
+        This is particularly designed for and demanded by finetuning a pre-trained whisper model,
+        where the input feats have to be shaped of (batch_size, 3000, 80), and 3000 is the pad_to_length,
+        80 is the feature dimension (80-dim fbank features).
     """
     def __init__(self,
                  load_wav: bool = False,
                  load_feats: bool = False,
                  ctc_target: bool = False,
                  sort: str = "descending",
+                 pad_to_length: Optional[int] = None,
                  ):
         assert sort in ["ascending", "descending", None], "sort must be either 'ascending' or 'descending'"
         self.sort = sort
         self.load_wav = load_wav
         self.load_feats = load_feats
         self.ctc_target = ctc_target
+        self.pad_to_length = pad_to_length
 
     def __call__(self, list_of_samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -355,10 +362,23 @@ class CollateFunc:
             batch_feats = [sample['feats'] for sample in list_of_samples]
             batch_feats_lens = [sample['feats_len'] for sample in list_of_samples]
             batch['feats'] = pad_sequence(batch_feats, batch_first=True)
-            batch['feats_len'] = torch.tensor(batch_feats_lens, dtype=torch.int32)
+            if self.pad_to_length is not None:
+                batch['feats'] = torch.nn.functional.pad(batch['feats'],
+                                                         (0, 0, 0, self.pad_to_length - batch['feats'].shape[1]))
+                # get the first 80-dim feats as we have 83-dim feats already in hand
+                # Note that this is a temporary solution for the finetuning of the whisper model
+                if batch['feats'].sive(2) == 83:
+                    logging.info("The feature dimension is 83, assuming fbank+pitch feature is applied, \
+                            we will only keep the first 80 dims")
+                    batch['feats'] = batch['feats'][:, :, :80]
+                else:
+                    assert batch['feats'].size(2) == 80, "The feature dimension is not 80,\
+                            please check the feature dimension."
+            batch['feats_lens'] = torch.tensor(batch_feats_lens, dtype=torch.int32)
 
         if self.ctc_target:
-            assert all('target_ctc' in sample for sample in list_of_samples), "target_ctc is not available in the samples"
+            assert all('target_ctc' in sample for sample in list_of_samples), \
+                    "target_ctc is not available in the samples"
             batch_targets_ctc = [sample['target_ctc'] for sample in list_of_samples]
             batch['target_ctc'] = pad_sequence(batch_targets_ctc, batch_first=True)
 

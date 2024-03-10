@@ -154,19 +154,33 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
         load_wav=train_ds.load_wav,
         load_feats=train_ds.load_feats,
         ctc_target=train_ds.ctc_target,
+        pad_to_length=getattr(data_conf, "pad_to_length", None),
     )
-    train_dl = torch.utils.data.DataLoader(
-        train_ds,
-        pin_memory=data_conf["pin_memory"],
-        shuffle=False,
-        batch_sampler=DistributedSyncDynamicBatchSampler(
+    if "train_batch_size" not in data_conf:
+        logging.info("Using dynamic batch size as 'train_batch_size' is not specified.")
+        train_dl = torch.utils.data.DataLoader(
             train_ds,
-            shuffle=True,
-            max_sum_dur=data_conf["max_sum_dur"],
-        ),
-        collate_fn=collate_fn,
-        num_workers=data_conf["num_workers"],
-    )
+            pin_memory=data_conf["pin_memory"],
+            shuffle=False,
+            batch_sampler=DistributedSyncDynamicBatchSampler(
+                train_ds,
+                shuffle=True,
+                max_sum_dur=data_conf["max_sum_dur"],
+            ),
+            collate_fn=collate_fn,
+            num_workers=data_conf["num_workers"],
+        )
+    else:
+        logging.info(f"Using fixed batch size {data_conf['train_batch_size']} with DistributedSampler.")
+        train_dl = torch.utils.data.DataLoader(
+            train_ds,
+            pin_memory=data_conf["pin_memory"],
+            shuffle=False,
+            batch_size=data_conf["train_batch_size"],
+            sampler=DistributedSampler(train_ds, shuffle=getattr(data_conf, "shuffle", True)),
+            collate_fn=collate_fn,
+            num_workers=data_conf["num_workers"],
+        )
     valid_dl = torch.utils.data.DataLoader(
         valid_ds,
         pin_memory=data_conf["pin_memory"],
