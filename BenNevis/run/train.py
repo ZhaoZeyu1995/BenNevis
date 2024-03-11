@@ -226,6 +226,14 @@ def main(cfg):
     )
     model.to(device)
 
+    if getattr(cfg, "init_all", False):
+        logging.info(f"Initialising all parameters in the model as got cfg.init_all {cfg.init_all}.")
+        for name, param in model.named_parameters():
+            if len(param.shape) > 1:
+                torch.nn.init.kaiming_uniform_(param)
+            else:
+                torch.nn.init.zeros_(param)
+
     optimisers = []
     lr_schedulers = []
     for opt_conf in cfg.opts:
