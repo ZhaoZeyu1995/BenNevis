@@ -367,9 +367,9 @@ class CollateFunc:
                                                          (0, 0, 0, self.pad_to_length - batch['feats'].shape[1]))
                 # get the first 80-dim feats as we have 83-dim feats already in hand
                 # Note that this is a temporary solution for the finetuning of the whisper model
-                if batch['feats'].sive(2) == 83:
-                    logging.info("The feature dimension is 83, assuming fbank+pitch feature is applied, \
-                            we will only keep the first 80 dims")
+                if batch['feats'].size(2) == 83:
+                    # The feature dimension is 83, assuming fbank+pitch feature is applied,
+                    # we will only keep the first 80 dims
                     batch['feats'] = batch['feats'][:, :, :80]
                 else:
                     assert batch['feats'].size(2) == 80, "The feature dimension is not 80,\
