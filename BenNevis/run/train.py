@@ -221,6 +221,8 @@ def main(cfg):
         cfg.model["name"],
     )
     cfg.model["kwargs"]["odim"] = lang.num_nn_output
+    cfg.data["load_wav"] = True if cfg.model["name"] in ["Wav2Vec2Model"] else False
+    cfg.data["load_feats"] = True if cfg.model["name"] not in ["Wav2Vec2Model"] else False
     model = model_class(
         **cfg.model["kwargs"],
     )

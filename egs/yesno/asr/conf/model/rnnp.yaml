@@ -9,4 +9,3 @@ kwargs:
   eprojs: 128
   subsample: [2, 2]
   dropout: 0.1
-
