@@ -4,7 +4,7 @@
 . ./path.sh || exit 1
 
 nj=4
-ngpu=2
+ngpu=1
 topos="ctc mmictc mmictc-1 2state 2state-1 3state-skip 3state-skip-1 3state-skip-2"
 
 timit=/group/corporapublic/timit/original
@@ -16,6 +16,8 @@ stop_stage=100
 train_set=train
 dev_set=dev
 recog_sets="dev test"
+model=rnnp
+hydra_opts=""
 
 . ./utils/parse_options.sh
 
@@ -61,19 +63,23 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
                 data.lang=data/lang_${topo} \
-                data.train_ds=data/$train_set \
-                data.valid_ds=data/$dev_set \
+                data.train_ds=data/${train_set} \
+                data.valid_ds=data/${dev_set} \
+                model=${model} \
                 loss.kwargs.use_den=false \
-                logger.name=rnnp-${topo} \
-                hydra.run.dir=exp/rnnp-$topo || exit 1;
+                logger.name=${model}-${topo} \
+                hydra.run.dir=exp/${model}-${topo} \
+                ${hydra_opts} || exit 1;
         else
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
                 data.lang=data/lang_${topo} \
-                data.train_ds=data/$train_set \
-                data.valid_ds=data/$dev_set \
-                logger.name=rnnp-${topo} \
-                hydra.run.dir=exp/rnnp-${topo} || exit 1;
+                data.train_ds=data/${train_set} \
+                data.valid_ds=data/${dev_set} \
+                model=${model} \
+                logger.name=${model}-${topo} \
+                hydra.run.dir=exp/${model}-${topo} \
+                ${hydra_opts} || exit 1;
         fi
     done
 fi
@@ -84,7 +90,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         for x in ${recog_sets}; do
             ./run/predict.sh --ngpu ${ngpu} \
                 data/${x} data/lang_test_nolm_${topo} \
-                exp/rnnp-${topo}/checkpoints/best.pt exp/rnnp-${topo}/pred_${x} || exit 1;
+                exp/${model}-${topo}/checkpoints/best.pt exp/${model}-${topo}/pred_${x} || exit 1;
         done
     done
 fi
@@ -95,7 +101,7 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         for x in ${recog_sets}; do
             ./run/decode_faster.sh --nj ${nj} \
                 data/${x} data/lang_test_nolm_${topo} \
-                exp/rnnp-${topo}/pred_${x} exp/rnnp-${topo}/dec_nolm_${x} || exit 1;
+                exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x} || exit 1;
         done
     done
 fi
@@ -104,7 +110,7 @@ fi
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
     for topo in ${topos}; do
         for x in ${recog_sets}; do
-            run/align.sh data/${x} data/lang_test_nolm_${topo} exp/rnnp-${topo}/pred_${x} || exit 1;
+            run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
         done
     done
 fi
@@ -113,7 +119,7 @@ fi
 if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     for topo in ${topos}; do
         for x in ${recog_sets}; do
-            run/align.sh data/${x} data/lang_test_nolm_${topo} exp/rnnp-${topo}/pred_${x} exp/rnnp-${topo}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+            run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
         done
     done
 fi

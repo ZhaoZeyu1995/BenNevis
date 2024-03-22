@@ -21,11 +21,14 @@ stop_stage=7
 train_set=train_960
 dev_set=dev_clean
 recog_sets="dev_clean dev_other test_clean test_other"
+model="wav2vec2.large.lv60k"
+opts="wav2vec2"
+hydra_opts=""
 
-acwts="0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.3 1.4"
+acwts="0.5 0.75 1.0 1.25 1.5"
 lms="nolm tgsmall"
 
-. ./utils/parse_options.sh
+. ./utils/parse_options.sh || exit 1
 
 # Set bash to 'debug' mode, it will exit on :
 # -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',
@@ -101,24 +104,26 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         if [ $topo == "ctc" ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
-                model=${model} \
-                opts=${model} \
                 data.lang=data/lang_${topo} \
-                data.train_ds=data/$train_set \
-                data.valid_ds=data/$dev_set \
+                data.train_ds=data/${train_set} \
+                data.valid_ds=data/${dev_set} \
+                model=${model} \
+                opts=${opts} \
                 loss.kwargs.use_den=false \
                 logger.name=${model}-${topo} \
-                hydra.run.dir=exp/${model}-$topo || exit 1;
+                hydra.run.dir=exp/${model}-${topo} \
+                ${hydra_opts} || exit 1;
         else
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
-                model=${model} \
-                opts=${model} \
                 data.lang=data/lang_${topo} \
-                data.train_ds=data/$train_set \
-                data.valid_ds=data/$dev_set \
+                data.train_ds=data/${train_set} \
+                data.valid_ds=data/${dev_set} \
+                model=${model} \
+                opts=${opts} \
                 logger.name=${model}-${topo} \
-                hydra.run.dir=exp/${model}-${topo} || exit 1;
+                hydra.run.dir=exp/${model}-${topo} \
+                ${hydra_opts} || exit 1;
         fi
     done
 fi
@@ -159,7 +164,7 @@ fi
 if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     for topo in ${topos}; do
         for x in ${recog_sets}; do
-            run/align.sh data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
+            run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
         done
     done
 fi

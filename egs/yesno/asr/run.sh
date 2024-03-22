@@ -9,7 +9,7 @@ topos="ctc mmictc mmictc-1 2state 2state-1 3state-skip 3state-skip-1 3state-skip
 
 train_set=train_yesno
 dev_set=test_yesno
-recog_set="test_yesno"
+recog_sets="test_yesno"
 model=rnnp
 hydra_opts=""
 
@@ -61,8 +61,8 @@ for topo in ${topos}; do
             model=${model} \
             loss.kwargs.use_den=false \
             logger.name=${model}-${topo} \
-            ${hydra_opts} \
-            hydra.run.dir=exp/${model}-${topo} || exit 1;
+            hydra.run.dir=exp/${model}-${topo} \
+            ${hydra_opts} || exit 1;
     else
         torchrun --standalone --nproc_per_node=${ngpu} \
             run/train.py \
@@ -71,14 +71,14 @@ for topo in ${topos}; do
             data.valid_ds=data/${dev_set} \
             model=${model} \
             logger.name=${model}-${topo} \
-            ${hydra_opts} \
-            hydra.run.dir=exp/${model}-${topo} || exit 1;
+            hydra.run.dir=exp/${model}-${topo} \
+            ${hydra_opts} || exit 1;
     fi
 done
 
 # Prediction
 for topo in ${topos}; do
-    for x in ${recog_set}; do
+    for x in ${recog_sets}; do
         ./run/predict.sh --ngpu ${ngpu} \
             data/${x} data/lang_test_tg_${topo} \
             exp/${model}-${topo}/checkpoints/best.pt exp/${model}-${topo}/pred_${x} || exit 1;
@@ -87,7 +87,7 @@ done
 
 # Decoding
 for topo in ${topos}; do
-    for x in ${recog_set}; do
+    for x in ${recog_sets}; do
         ./run/decode_faster.sh --nj ${nj} \
             data/${x} data/lang_test_tg_${topo} \
             exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${x} || exit 1;
@@ -96,14 +96,14 @@ done
 
 # Align with the ground truth
 for topo in ${topos}; do
-    for x in ${recog_set}; do
-        run/align.sh data/${x} data/lang_test_tg_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
+    for x in ${recog_sets}; do
+        run/align.sh --nj ${nj} data/${x} data/lang_test_tg_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
     done
 done
 
 # Align with the decoding results
 for topo in ${topos}; do
-    for x in ${recog_set}; do
-        run/align.sh data/${x} data/lang_test_tg_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+    for x in ${recog_sets}; do
+        run/align.sh --nj ${nj} data/${x} data/lang_test_tg_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
     done
 done
