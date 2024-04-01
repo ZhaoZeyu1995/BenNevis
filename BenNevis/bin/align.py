@@ -84,16 +84,23 @@ def main(args):
 
     count = 0
 
-    with kaldiio.WriteHelper(f"ark:| gzip -c > {args.output_align_path}") as writer,\
-            kaldiio.WriteHelper(f"ark:| gzip -c > {args.output_word_align_path}") as word_writer,\
-            open(args.output_ctm_path, "w") as ctm_file:
+    with kaldiio.WriteHelper(
+        f"ark:| gzip -c > {args.output_align_path}"
+    ) as writer, kaldiio.WriteHelper(
+        f"ark:| gzip -c > {args.output_word_align_path}"
+    ) as word_writer, open(
+        args.output_ctm_path, "w"
+    ) as ctm_file:
         ctm = ""
         for utt, log_prob in utt2log_prob.items():
             log_prob = torch.tensor(np.array([log_prob]))
             log_prob_len = torch.tensor([log_prob.shape[1]])
             targets = [[lang.word2idx[word] for word in text[utt].split()]]
-            channel = "1" if args.reco2file_and_channel is None or args.segments is None \
+            channel = (
+                "1"
+                if args.reco2file_and_channel is None or args.segments is None
                 else reco2file_and_channel[segments[utt][0]][1]
+            )
 
             graph = lang.compile_training_graph(targets, log_prob.device)
 
@@ -120,11 +127,11 @@ def main(args):
                 if not aux_labels[p]:
                     if e:
                         if labels[p]:
-                            e[2] = p+1
+                            e[2] = p + 1
                 else:
                     if e:
                         aligns.append(e)
-                    e = [aux_labels[p], p, p+1]
+                    e = [aux_labels[p], p, p + 1]
                 p += 1
             for e in aligns:
                 ctm += f"{utt} {channel} {e[1]*args.frame_shift:.3f} {args.frame_shift*(e[2]-e[1]):.3f} {lang.idx2word[e[0]]}\n"
@@ -142,23 +149,48 @@ if __name__ == "__main__":
         description="Align the log-probabilities with the text using the K2 library",
     )
     parser.add_argument("lang_dir", type=str, help="The language directory")
-    parser.add_argument("log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format")
-    parser.add_argument("text", type=str,
-                        help=(
-                            "The text in Kaldi format with the utterance ID "
-                            "and the text separated by a space in each line"
-                        ),
-                        )
-    parser.add_argument("--output_ctm_path", type=str, required=True,
-                        help="The path to output the ctm file")
-    parser.add_argument("--output_align_path", type=str, required=True,
-                        help="The path to output the state-level alignments")
-    parser.add_argument("--output_word_align_path", type=str, required=True,
-                        help="The path to output the word-level alignments")
-    parser.add_argument("--frame_shift", type=float, required=True,
-                        help="The frame shift in seconds at the output end of the model.")
+    parser.add_argument(
+        "log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format"
+    )
+    parser.add_argument(
+        "text",
+        type=str,
+        help=(
+            "The text in Kaldi format with the utterance ID "
+            "and the text separated by a space in each line"
+        ),
+    )
+    parser.add_argument(
+        "--output_ctm_path",
+        type=str,
+        required=True,
+        help="The path to output the ctm file",
+    )
+    parser.add_argument(
+        "--output_align_path",
+        type=str,
+        required=True,
+        help="The path to output the state-level alignments",
+    )
+    parser.add_argument(
+        "--output_word_align_path",
+        type=str,
+        required=True,
+        help="The path to output the word-level alignments",
+    )
+    parser.add_argument(
+        "--frame_shift",
+        type=float,
+        required=True,
+        help="The frame shift in seconds at the output end of the model.",
+    )
     parser.add_argument("--segments", type=str, default=None, help="The segments file")
-    parser.add_argument("--reco2file_and_channel", type=str, default=None, help="The reco2file_and_channel file")
+    parser.add_argument(
+        "--reco2file_and_channel",
+        type=str,
+        default=None,
+        help="The reco2file_and_channel file",
+    )
 
     args = parser.parse_args()
     main(args)

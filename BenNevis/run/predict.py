@@ -46,11 +46,12 @@ def main(args):
     ckpt = torch.load(args.ckpt_path, map_location="cpu")
     conf = ckpt["CONFIG"]
 
-    predict_ds = Dataset(args.data_dir,
-                         args.lang_dir,
-                         load_wav=conf.data.load_wav,
-                         load_feats=conf.data.load_feats,
-                         )
+    predict_ds = Dataset(
+        args.data_dir,
+        args.lang_dir,
+        load_wav=conf.data.load_wav,
+        load_feats=conf.data.load_feats,
+    )
     collate_fn = CollateFunc(
         load_wav=predict_ds.load_wav,
         load_feats=predict_ds.load_feats,
@@ -87,14 +88,18 @@ def main(args):
         if gpu_id == 0:
             logging.info("Merging predictions from multiple GPUs")
             os.system(
-                f"cat {args.output_dir}/split{world_size}/ref.wrd.*.trn | awk '!seen[$0]++' > {args.output_dir}/ref.wrd.trn")
+                f"cat {args.output_dir}/split{world_size}/ref.wrd.*.trn | awk '!seen[$0]++' > {args.output_dir}/ref.wrd.trn"
+            )
             os.system(
-                f"cat {args.output_dir}/split{world_size}/output.*.scp | awk '!seen[$1]++' > {args.output_dir}/output.scp")
+                f"cat {args.output_dir}/split{world_size}/output.*.scp | awk '!seen[$1]++' > {args.output_dir}/output.scp"
+            )
             with open(f"{args.output_dir}/ref.wrd.trn") as file:
                 num_ref = len(file.readlines())
             with open(f"{args.output_dir}/output.scp") as file:
                 num_scp = len(file.readlines())
-            assert num_ref == num_scp, f"Number of lines in {args.output_dir}/ref.wrd.trn ({num_ref}) and {args.output_dir}/output.scp ({num_scp}) do not match"
+            assert (
+                num_ref == num_scp
+            ), f"Number of lines in {args.output_dir}/ref.wrd.trn ({num_ref}) and {args.output_dir}/output.scp ({num_scp}) do not match"
             logging.info(f"Finally got {num_ref} samples in ref.wrd.trn and output.scp")
 
     dist.destroy_process_group()
@@ -115,16 +120,34 @@ if __name__ == "__main__":
             torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
             """
     )
-    parser.add_argument("data_dir", type=str, help="The directory of the dataset to predict on")
-    parser.add_argument("lang_dir", type=str, help="The directory of the language directory")
+    parser.add_argument(
+        "data_dir", type=str, help="The directory of the dataset to predict on"
+    )
+    parser.add_argument(
+        "lang_dir", type=str, help="The directory of the language directory"
+    )
     parser.add_argument("ckpt_path", type=str, help="The path to the checkpoint")
-    parser.add_argument("output_dir", type=str,
-                        help="The directory to save the predictions.")
-    parser.add_argument("--not_pin_memory", action="store_false", dest="pin_memory",
-                        help="Whether to pin memory when loading data")
-    parser.add_argument("--batch_size", type=int, default=4, help="The batch size for the prediction dataloader")
-    parser.add_argument("--num_workers", type=int, default=4,
-                        help="The number of workers for the prediction dataloader")
+    parser.add_argument(
+        "output_dir", type=str, help="The directory to save the predictions."
+    )
+    parser.add_argument(
+        "--not_pin_memory",
+        action="store_false",
+        dest="pin_memory",
+        help="Whether to pin memory when loading data",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=4,
+        help="The batch size for the prediction dataloader",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=4,
+        help="The number of workers for the prediction dataloader",
+    )
     args = parser.parse_args()
 
     main(args)

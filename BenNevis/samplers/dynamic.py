@@ -80,16 +80,16 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
         Whether to drop the last incomplete batch or not.
     """
 
-    def __init__(self,
-                 dataset: Dataset,
-                 num_replicas: Optional[int] = None,
-                 rank: Optional[int] = None,
-                 shuffle: bool = True,
-                 seed: int = 0,
-                 max_sum_dur: float = 100.0,
-                 drop_last: bool = False,
-                 ):
-
+    def __init__(
+        self,
+        dataset: Dataset,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        max_sum_dur: float = 100.0,
+        drop_last: bool = False,
+    ):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -100,7 +100,8 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
             rank = dist.get_rank()
         if rank >= num_replicas or rank < 0:
             raise ValueError(
-                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]")
+                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]"
+            )
         self.dataset = dataset
         self.num_replicas = num_replicas
         self.rank = rank
@@ -123,8 +124,10 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
         self.dataset_length = len(self.dataset)
         self.max_sum_dur = max_sum_dur
 
-        assert self.dataset.sort in ["ascending",
-                                     "descending"], "dataset should be sorted in ascending or descending order"
+        assert self.dataset.sort in [
+            "ascending",
+            "descending",
+        ], "dataset should be sorted in ascending or descending order"
         self.indices = list(range(self.dataset_length))
 
         logging.debug("Rank %d is creating the indices", self.rank)
@@ -135,12 +138,16 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
                 self.indices += self.indices[-padding_size:]
             else:
                 # Usually, it means that the dataset is too small, and we need to duplicate the indices
-                self.indices += (self.indices * math.ceil(padding_size / len(self.indices)))[:padding_size]
+                self.indices += (
+                    self.indices * math.ceil(padding_size / len(self.indices))
+                )[:padding_size]
         else:
-            self.indices = self.indices[:self.total_size]
+            self.indices = self.indices[: self.total_size]
         logging.debug("Rank %d has created the indices", self.rank)
 
-        assert len(self.indices) == self.total_size, f"{len(self.indices)} vs {self.total_size}"
+        assert (
+            len(self.indices) == self.total_size
+        ), f"{len(self.indices)} vs {self.total_size}"
 
     def __iter__(self) -> Iterator[List[int]]:
         """
@@ -157,13 +164,17 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
         indices = indices[self.num_replicas - self.rank - 1].tolist()
         assert len(indices) == self.num_samples, f"{len(indices)} vs {self.num_samples}"
 
-        logging.debug(f"Rank {self.rank}: len(indices) {len(indices)}, len(self.dataset) {len(self.dataset)}")
+        logging.debug(
+            f"Rank {self.rank}: len(indices) {len(indices)}, len(self.dataset) {len(self.dataset)}"
+        )
         start = 0
         pointer = 0
         accumulate = 0
         batch_size = 0
         while pointer < len(indices):
-            logging.debug(f"Rank {dist.get_rank()} pointer {pointer} accumulate {accumulate} batch_size {batch_size}")
+            logging.debug(
+                f"Rank {dist.get_rank()} pointer {pointer} accumulate {accumulate} batch_size {batch_size}"
+            )
             uttid = self.dataset.uttids[indices[pointer]]
             dur = self.dataset.utt2dur[uttid]
             if accumulate + dur <= self.max_sum_dur:
@@ -171,12 +182,12 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
                 batch_size += 1
                 pointer += 1
             else:
-                yield indices[start: pointer]
+                yield indices[start:pointer]
                 start = pointer
                 accumulate = 0
                 batch_size = 0
         if batch_size > 0:
-            yield indices[start: pointer]
+            yield indices[start:pointer]
 
     def __len__(self) -> int:
         return self.num_samples
@@ -221,16 +232,16 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
         Whether to drop the last incomplete batch or not.
     """
 
-    def __init__(self,
-                 dataset: Dataset,
-                 num_replicas: Optional[int] = None,
-                 rank: Optional[int] = None,
-                 shuffle: bool = True,
-                 seed: int = 0,
-                 max_sum_dur: float = 1000.0,
-                 drop_last: bool = False,
-                 ):
-
+    def __init__(
+        self,
+        dataset: Dataset,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        max_sum_dur: float = 1000.0,
+        drop_last: bool = False,
+    ):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -241,7 +252,8 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
             rank = dist.get_rank()
         if rank >= num_replicas or rank < 0:
             raise ValueError(
-                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]")
+                f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]"
+            )
         logging.debug(f"RANK: {rank}, creating sampler")
         self.dataset = dataset
         self.num_replicas = num_replicas
@@ -265,8 +277,10 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
         self.dataset_length = len(self.dataset)
         self.max_sum_dur = max_sum_dur
 
-        assert self.dataset.sort in ["ascending",
-                                     "descending"], "dataset should be sorted in ascending or descending order"
+        assert self.dataset.sort in [
+            "ascending",
+            "descending",
+        ], "dataset should be sorted in ascending or descending order"
         self.indices = list(range(self.dataset_length))
 
         logging.debug("Rank %d is creating the indices", self.rank)
@@ -278,12 +292,16 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
             else:
                 # Usually, this should not happen, but just in case
                 # It means that the dataset is too small
-                self.indices += (self.indices * math.ceil(padding_size / len(self.indices)))[:padding_size]
+                self.indices += (
+                    self.indices * math.ceil(padding_size / len(self.indices))
+                )[:padding_size]
         else:
-            self.indices = self.indices[:self.total_size]
+            self.indices = self.indices[: self.total_size]
         logging.debug("Rank %d has created the indices", self.rank)
 
-        assert len(self.indices) == self.total_size, f"{len(self.indices)} vs {self.total_size}"
+        assert (
+            len(self.indices) == self.total_size
+        ), f"{len(self.indices)} vs {self.total_size}"
 
     def __iter__(self) -> Iterator[List[int]]:
         """
@@ -310,7 +328,9 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
         assert len(indices) == self.num_samples, f"{len(indices)} vs {self.num_samples}"
         device = torch.cuda.current_device()
 
-        logging.debug(f"Rank {self.rank}: len(indices) {len(indices)}, len(self.dataset) {len(self.dataset)}")
+        logging.debug(
+            f"Rank {self.rank}: len(indices) {len(indices)}, len(self.dataset) {len(self.dataset)}"
+        )
         if self.rank == 0:
             batch_sizes = []
             pointer = 0
@@ -331,29 +351,40 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
                 batch_sizes.append(batch_size)
             batch_sizes_len = len(batch_sizes)
             batch_sizes = torch.tensor(batch_sizes, dtype=torch.int32, device=device)
-            batch_sizes_len = torch.tensor([batch_sizes_len], dtype=torch.int32, device=device)
+            batch_sizes_len = torch.tensor(
+                [batch_sizes_len], dtype=torch.int32, device=device
+            )
         else:
             batch_sizes = torch.empty(1, dtype=torch.int32, device=device)
             batch_sizes_len = torch.empty(1, dtype=torch.int32, device=device)
 
-        logging.debug(f"Rank {dist.get_rank()} batch_sizes {batch_sizes} batch_sizes_len {batch_sizes_len}")
+        logging.debug(
+            f"Rank {dist.get_rank()} batch_sizes {batch_sizes} batch_sizes_len {batch_sizes_len}"
+        )
 
         dist.broadcast(batch_sizes_len, 0)
         logging.debug(f"Rank {dist.get_rank()} batch_sizes_len {batch_sizes_len}")
         if self.rank != 0:
             batch_sizes.resize_(batch_sizes_len.tolist())
-            logging.debug(f"Rank {dist.get_rank()} batch_sizes.size() {batch_sizes.size()}")
+            logging.debug(
+                f"Rank {dist.get_rank()} batch_sizes.size() {batch_sizes.size()}"
+            )
         dist.broadcast(batch_sizes, 0)
         logging.debug(f"Rank {dist.get_rank()} batch_sizes {batch_sizes}")
 
         torch.cumsum(batch_sizes, 0, out=batch_sizes)
         logging.debug(f"Rank {dist.get_rank()} torch.cumsum(batch_sizes) {batch_sizes}")
-        assert batch_sizes[-1] == len(indices), \
-            "Rank {} batch_sizes[-1] {} vs len(self.indices) {}".format(self.rank,
-                                                                        batch_sizes[-1], len(indices))
+        assert batch_sizes[-1] == len(
+            indices
+        ), "Rank {} batch_sizes[-1] {} vs len(self.indices) {}".format(
+            self.rank, batch_sizes[-1], len(indices)
+        )
         batch_sizes = batch_sizes.cpu().tolist()
         batch_sizes = [0] + batch_sizes
-        indices = [indices[batch_sizes[i]:batch_sizes[i+1]] for i in range(len(batch_sizes)-1)]
+        indices = [
+            indices[batch_sizes[i] : batch_sizes[i + 1]]
+            for i in range(len(batch_sizes) - 1)
+        ]
         # if dataset is sorted in ascending order, we put the last element of indices at the beginning
         # this is more efficient for GPU memory caching
         if self.dataset.sort == "ascending":

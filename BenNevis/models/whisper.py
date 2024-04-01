@@ -34,14 +34,14 @@ def sinusoids(length, channels, max_timescale=10000):
 
 class WhisperModel(torch.nn.Module):
     def __init__(
-            self,
-            from_pretrained: str,
-            whisper_odim: int,
-            fix_conv: bool,
-            finetune_last_n_layers: int,
-            odim: int,
-            max_len: int = 3000,
-            ):
+        self,
+        from_pretrained: str,
+        whisper_odim: int,
+        fix_conv: bool,
+        finetune_last_n_layers: int,
+        odim: int,
+        max_len: int = 3000,
+    ):
         """
         WhisperModel constructor.
 
@@ -76,15 +76,21 @@ class WhisperModel(torch.nn.Module):
             self.rank = 0
 
         if self.rank == 0:
-            os.makedirs('exp/downloads', exist_ok=True)
+            os.makedirs("exp/downloads", exist_ok=True)
             _ = whisper.load_model(from_pretrained, download_root="exp/downloads")
         dist.barrier()
-        logging.info(f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}")
-        whisper_model = whisper.load_model(from_pretrained, download_root="exp/downloads")
+        logging.info(
+            f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}"
+        )
+        whisper_model = whisper.load_model(
+            from_pretrained, download_root="exp/downloads"
+        )
 
         self.whisper_enc = whisper_model.encoder
         assert max_len <= 10000, "max_len should be less than or equal to 10000"
-        self.whisper_enc.register_buffer("positional_embedding", sinusoids(max_len, whisper_odim))
+        self.whisper_enc.register_buffer(
+            "positional_embedding", sinusoids(max_len, whisper_odim)
+        )
 
         self.olayer = nn.Sequential(
             nn.Linear(self.whisper_odim, self.whisper_odim),
@@ -102,15 +108,17 @@ class WhisperModel(torch.nn.Module):
 
         self.whisper_enc.blocks.requires_grad_(False)
         logging.info(
-                f"RANK {self.rank}: Fine-tuning the last {self.finetune_last_n_layers} "
-                f"transformer layers of the whisper encoder.")
+            f"RANK {self.rank}: Fine-tuning the last {self.finetune_last_n_layers} "
+            f"transformer layers of the whisper encoder."
+        )
         if self.finetune_last_n_layers > 0:
-            assert self.finetune_last_n_layers <= len(self.whisper_enc.blocks), \
-                (f"RANK {self.rank}: finetune_last_n_layers should be less than or equal to "
-                 f"the number of transformer layers in the whisper encoder"
-                 f" but got {self.finetune_last_n_layers} and "
-                 f"{len(self.whisper_enc.blocks)} respectively.")
-            self.whisper_enc.blocks[-self.finetune_last_n_layers:].requires_grad_(True)
+            assert self.finetune_last_n_layers <= len(self.whisper_enc.blocks), (
+                f"RANK {self.rank}: finetune_last_n_layers should be less than or equal to "
+                f"the number of transformer layers in the whisper encoder"
+                f" but got {self.finetune_last_n_layers} and "
+                f"{len(self.whisper_enc.blocks)} respectively."
+            )
+            self.whisper_enc.blocks[-self.finetune_last_n_layers :].requires_grad_(True)
 
     def forward(self, x, xlens):
         """
@@ -136,9 +144,10 @@ class WhisperModel(torch.nn.Module):
         x = F.gelu(self.whisper_enc.conv1(x))
         x = F.gelu(self.whisper_enc.conv2(x))
         x = x.permute(0, 2, 1)
-        assert x.size(2) == self.whisper_enc.positional_embedding.size(1), \
-            (f"RANK {self.rank}: The input length {x.size(2)} should be equal to the "
-             f"positional embedding length {self.whisper_enc.positional_embedding.size(1)}")
+        assert x.size(2) == self.whisper_enc.positional_embedding.size(1), (
+            f"RANK {self.rank}: The input length {x.size(2)} should be equal to the "
+            f"positional embedding length {self.whisper_enc.positional_embedding.size(1)}"
+        )
         T = x.size(1)
         x = (x + self.whisper_enc.positional_embedding[:T]).to(x.dtype)
 

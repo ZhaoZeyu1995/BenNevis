@@ -443,10 +443,10 @@ class Encoder(torch.nn.Module):
                 logging.info("Use CNN-VGG + " + typ.upper() + "P for encoder")
                 self.layernorm = torch.nn.LayerNorm(eprojs)
                 self.olayer = torch.nn.Sequential(
-                            torch.nn.Linear(eprojs, eprojs),
-                            torch.nn.LeakyReLU(),
-                            torch.nn.Linear(eprojs, odim),
-                        )
+                    torch.nn.Linear(eprojs, eprojs),
+                    torch.nn.LeakyReLU(),
+                    torch.nn.Linear(eprojs, odim),
+                )
             else:
                 self.enc = torch.nn.ModuleList(
                     [

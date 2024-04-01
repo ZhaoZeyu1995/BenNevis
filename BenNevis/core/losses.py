@@ -38,28 +38,34 @@ class GraphLoss(torch.nn.Module):
         * "sum": sum the output losses over batches.
 
     """
-    def __init__(self,
-                 lang: Lang,
-                 use_den: bool = True,
-                 use_den_grad: bool = False,
-                 output_beam: float = 10.0,
-                 reduction: str = "mean",
-                 ):
+
+    def __init__(
+        self,
+        lang: Lang,
+        use_den: bool = True,
+        use_den_grad: bool = False,
+        output_beam: float = 10.0,
+        reduction: str = "mean",
+    ):
         super(GraphLoss, self).__init__()
-        assert reduction in ("none", "mean", "sum"), \
-            f"reduction must be 'none', 'mean' or 'sum', but got {reduction}"
+        assert reduction in (
+            "none",
+            "mean",
+            "sum",
+        ), f"reduction must be 'none', 'mean' or 'sum', but got {reduction}"
         self.lang = lang
         self.use_den = use_den
         self.use_den_grad = use_den_grad
         self.output_beam = output_beam
         self.reduction = reduction
 
-    def forward(self,
-                log_probs: torch.Tensor,
-                log_probs_lens: torch.Tensor,
-                word_ids: List[List[int]],
-                target_lengths: Optional[torch.Tensor] = None,
-                ) -> torch.Tensor:
+    def forward(
+        self,
+        log_probs: torch.Tensor,
+        log_probs_lens: torch.Tensor,
+        word_ids: List[List[int]],
+        target_lengths: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Compute the Graph loss given the log probabilities of the output symbols.
 
@@ -99,11 +105,12 @@ class GraphLoss(torch.nn.Module):
             den = self.compute(den_graph, dense_fsa, target_lengths)
             return num - den
 
-    def compute(self,
-                graph: k2.Fsa,
-                dense_fsa_vec: k2.DenseFsaVec,
-                target_lengths: Optional[torch.Tensor] = None,
-                ) -> torch.Tensor:
+    def compute(
+        self,
+        graph: k2.Fsa,
+        dense_fsa_vec: k2.DenseFsaVec,
+        target_lengths: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         Compute the Graph loss given a decoding graph and a dense fsa vector.
 
@@ -125,8 +132,7 @@ class GraphLoss(torch.nn.Module):
             If `reduction` is `mean` or `sum`, the shape is `()`.
         """
 
-        lattice = k2.intersect_dense(graph, dense_fsa_vec,
-                                     self.output_beam)
+        lattice = k2.intersect_dense(graph, dense_fsa_vec, self.output_beam)
         tot_scores = lattice.get_tot_scores(log_semiring=True, use_double_scores=False)
         loss = -1 * tot_scores
         loss = loss.to(torch.float32)
@@ -140,10 +146,11 @@ class GraphLoss(torch.nn.Module):
             loss /= target_lengths
             return loss.mean()
 
-    def get_num_graph(self,
-                      word_ids: List[List[int]],
-                      device: torch.device,
-                      ) -> k2.Fsa:
+    def get_num_graph(
+        self,
+        word_ids: List[List[int]],
+        device: torch.device,
+    ) -> k2.Fsa:
         """
         Get the numerator graph for the loss computation.
 
@@ -160,17 +167,16 @@ class GraphLoss(torch.nn.Module):
         decoding_graph: k2.Fsa
             The numerator graph for the loss computation.
         """
-        decoding_graph = self.lang.compile_training_graph(
-            word_ids, device
-        )
+        decoding_graph = self.lang.compile_training_graph(word_ids, device)
 
         assert decoding_graph.requires_grad is False
         return decoding_graph
 
-    def get_dense_fsa(self,
-                      log_probs: torch.Tensor,
-                      log_probs_lens: torch.Tensor,
-                      ) -> k2.DenseFsaVec:
+    def get_dense_fsa(
+        self,
+        log_probs: torch.Tensor,
+        log_probs_lens: torch.Tensor,
+    ) -> k2.DenseFsaVec:
         """
         Get the dense fsa vector for the loss computation.
 
@@ -199,10 +205,11 @@ class GraphLoss(torch.nn.Module):
         )
         return dense_fsa_vec
 
-    def get_den_graph(self,
-                      batch_size: int,
-                      device: torch.device,
-                      ) -> k2.Fsa:
+    def get_den_graph(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> k2.Fsa:
         """
         Get the denominator graph for the loss computation.
 

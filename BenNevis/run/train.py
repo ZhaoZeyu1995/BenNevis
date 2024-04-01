@@ -39,9 +39,9 @@ from BenNevis.utils.misc import dynamic_import
 
 
 def get_opt(
-        opt_conf: dict,
-        model: torch.nn.Module,
-        ) -> Tuple[torch.optim.Optimizer, List[torch.optim.lr_scheduler.LRScheduler]]:
+    opt_conf: dict,
+    model: torch.nn.Module,
+) -> Tuple[torch.optim.Optimizer, List[torch.optim.lr_scheduler.LRScheduler]]:
     """
     Get and configure an optimizer and the corresponding lr_schedulers,
     given an optimiser configuration and a model.
@@ -91,9 +91,9 @@ def get_opt(
 
 
 def get_lr_schedulers(
-        lrs_conf: dict,
-        opt: torch.optim.Optimizer,
-        ) -> torch.optim.lr_scheduler.LRScheduler:
+    lrs_conf: dict,
+    opt: torch.optim.Optimizer,
+) -> torch.optim.lr_scheduler.LRScheduler:
     """
     Get and configure a learning rate scheduler, given a learning rate scheduler configuration and an optimizer.
 
@@ -117,7 +117,9 @@ def get_lr_schedulers(
     return lrs
 
 
-def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+def get_dl(
+    data_conf: dict,
+) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     """
     Get the training and validation dataloaders.
 
@@ -133,23 +135,25 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
     valid_dl : torch.utils.data.DataLoader
         The validation dataloader.
     """
-    train_ds = Dataset(data_conf["train_ds"],
-                       data_conf["lang"],
-                       ratio_th=data_conf["ratio_th"],
-                       load_wav=data_conf["load_wav"],
-                       load_feats=data_conf["load_feats"],
-                       sort=data_conf["sort"],
-                       min_duration=data_conf["min_dur"],
-                       max_duration=data_conf["max_dur"],
-                       )
-    valid_ds = Dataset(data_conf["valid_ds"],
-                       data_conf["lang"],
-                       ratio_th=data_conf["ratio_th"],
-                       load_wav=data_conf["load_wav"],
-                       load_feats=data_conf["load_feats"],
-                       min_duration=data_conf["min_dur"],
-                       max_duration=data_conf["max_dur"],
-                       )
+    train_ds = Dataset(
+        data_conf["train_ds"],
+        data_conf["lang"],
+        ratio_th=data_conf["ratio_th"],
+        load_wav=data_conf["load_wav"],
+        load_feats=data_conf["load_feats"],
+        sort=data_conf["sort"],
+        min_duration=data_conf["min_dur"],
+        max_duration=data_conf["max_dur"],
+    )
+    valid_ds = Dataset(
+        data_conf["valid_ds"],
+        data_conf["lang"],
+        ratio_th=data_conf["ratio_th"],
+        load_wav=data_conf["load_wav"],
+        load_feats=data_conf["load_feats"],
+        min_duration=data_conf["min_dur"],
+        max_duration=data_conf["max_dur"],
+    )
     collate_fn = CollateFunc(
         load_wav=train_ds.load_wav,
         load_feats=train_ds.load_feats,
@@ -170,13 +174,17 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
             num_workers=data_conf["num_workers"],
         )
     else:
-        logging.info(f"Using fixed batch size {data_conf['train_batch_size']} with DistributedSampler.")
+        logging.info(
+            f"Using fixed batch size {data_conf['train_batch_size']} with DistributedSampler."
+        )
         train_dl = torch.utils.data.DataLoader(
             train_ds,
             pin_memory=data_conf["pin_memory"],
             shuffle=False,
             batch_size=data_conf["train_batch_size"],
-            sampler=DistributedSampler(train_ds, shuffle=getattr(data_conf, "shuffle", True)),
+            sampler=DistributedSampler(
+                train_ds, shuffle=getattr(data_conf, "shuffle", True)
+            ),
             collate_fn=collate_fn,
             num_workers=data_conf["num_workers"],
         )
@@ -221,14 +229,18 @@ def main(cfg):
     )
     cfg.model["kwargs"]["odim"] = lang.num_nn_output
     cfg.data["load_wav"] = True if cfg.model["name"] in ["Wav2Vec2Model"] else False
-    cfg.data["load_feats"] = True if cfg.model["name"] not in ["Wav2Vec2Model"] else False
+    cfg.data["load_feats"] = (
+        True if cfg.model["name"] not in ["Wav2Vec2Model"] else False
+    )
     model = model_class(
         **cfg.model["kwargs"],
     )
     model.to(device)
 
     if getattr(cfg, "init_all", False):
-        logging.info(f"Initialising all parameters in the model as got cfg.init_all {cfg.init_all}.")
+        logging.info(
+            f"Initialising all parameters in the model as got cfg.init_all {cfg.init_all}."
+        )
         for name, param in model.named_parameters():
             if len(param.shape) > 1:
                 torch.nn.init.kaiming_uniform_(param)

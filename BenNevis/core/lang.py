@@ -83,18 +83,20 @@ class Lang(object):
     load_lexicon: bool
         Whether or not load lang_dir/k2/L_inv.pt. Generate one from lang_dir/L.fst if there is not. Default is False.
     """
-    def __init__(self,
-                 lang_dir: str,
-                 load_topo: bool = False,
-                 load_lexicon: bool = False,
-                 ):
+
+    def __init__(
+        self,
+        lang_dir: str,
+        load_topo: bool = False,
+        load_lexicon: bool = False,
+    ):
         self._lang_dir = lang_dir
         # with <eps> and disambig
-        self.words = read_keys(os.path.join(lang_dir, 'words.txt'))
+        self.words = read_keys(os.path.join(lang_dir, "words.txt"))
         # with <eps> and disambig
-        self.phones = read_keys(os.path.join(lang_dir, 'phones.txt'))
+        self.phones = read_keys(os.path.join(lang_dir, "phones.txt"))
         # no <eps> no disambig, to match the NN outputs
-        self.tokens = read_keys(os.path.join(lang_dir, 'k2', 'tokens.txt'))
+        self.tokens = read_keys(os.path.join(lang_dir, "k2", "tokens.txt"))
 
         self.num_nn_output = len(self.tokens)
 
@@ -126,11 +128,12 @@ class Lang(object):
             The lexicon mapping from word_id to phone_ids.
         """
 
-        self.lexicon = read_dict(os.path.join(self._lang_dir, 'phones', 'align_lexicon.int'),
-                                 value_start=2,
-                                 key_mapping=int,
-                                 mapping=lambda x: list(map(int, x.split())),
-                                 )
+        self.lexicon = read_dict(
+            os.path.join(self._lang_dir, "phones", "align_lexicon.int"),
+            value_start=2,
+            key_mapping=int,
+            mapping=lambda x: list(map(int, x.split())),
+        )
 
     def load_topo(self):
         """
@@ -139,10 +142,11 @@ class Lang(object):
         self.topo: k2.Fsa
             The topology FSA.
         """
-        assert os.path.exists(os.path.join(self._lang_dir, 'k2', 'T.fst')), \
-            f'{self._lang_dir}/k2/T.fst does not exist'
+        assert os.path.exists(
+            os.path.join(self._lang_dir, "k2", "T.fst")
+        ), f"{self._lang_dir}/k2/T.fst does not exist"
 
-        logging.info(f'Loading and processing topo from {self._lang_dir}/k2/T.fst')
+        logging.info(f"Loading and processing topo from {self._lang_dir}/k2/T.fst")
 
         cmd = (
             f"""fstprint {self._lang_dir}/k2/T.fst | """
@@ -150,7 +154,7 @@ class Lang(object):
         )
         openfst_txt = os.popen(cmd).read()
         self.topo = k2.Fsa.from_openfst(openfst_txt, acceptor=False)
-        logging.info(f'Finished loading topo from {self._lang_dir}/k2/T.fst')
+        logging.info(f"Finished loading topo from {self._lang_dir}/k2/T.fst")
 
     def load_lexicon(self):
         """
@@ -162,29 +166,30 @@ class Lang(object):
         self.L_inv: k2.Fsa
             The inverse of the lexicon FSA.
         """
-        L_inv_fst = os.path.join(self._lang_dir, 'k2', 'L_inv.pt')
+        L_inv_fst = os.path.join(self._lang_dir, "k2", "L_inv.pt")
         if os.path.exists(L_inv_fst):
-            logging.info(f'Loading L_inv from {self._lang_dir}/k2/L_inv.pt')
+            logging.info(f"Loading L_inv from {self._lang_dir}/k2/L_inv.pt")
             self.L_inv = k2.arc_sort(k2.Fsa.from_dict(torch.load(L_inv_fst)))
             self.L = k2.arc_sort(self.L_inv.invert())
         else:
             logging.info(
-                f'Loading {self._lang_dir}/L.fst and generating {self._lang_dir}/k2/L_inv.pt.')
+                f"Loading {self._lang_dir}/L.fst and generating {self._lang_dir}/k2/L_inv.pt."
+            )
 
             cmd = (
                 f"""fstprint {self._lang_dir}/L.fst | """
                 f"""awk -F '\t' '{{if (NF==4) {{print $0 FS "0.0"; }} else {{print $0;}}}}'"""
             )
             openfst_txt = os.popen(cmd).read()
-            self.L = k2.arc_sort(k2.Fsa.from_openfst(
-                openfst_txt, acceptor=False))
+            self.L = k2.arc_sort(k2.Fsa.from_openfst(openfst_txt, acceptor=False))
             self.L_inv = k2.arc_sort(self.L.invert())
             torch.save(self.L_inv.as_dict(), L_inv_fst)
 
-    def compile_training_graph(self,
-                               word_ids_list: List[List[int]],
-                               device: torch.device,
-                               ) -> k2.Fsa:
+    def compile_training_graph(
+        self,
+        word_ids_list: List[List[int]],
+        device: torch.device,
+    ) -> k2.Fsa:
         """
         Compile the training graph according to the word_ids_list.
 
@@ -206,15 +211,18 @@ class Lang(object):
 
         word_fsa = k2.linear_fsa(word_ids_list, device=device)
         word_fsa_with_self_loop = k2.add_epsilon_self_loops(word_fsa)
-        fsa = k2.intersect(self.L_inv, word_fsa_with_self_loop,
-                           treat_epsilons_specially=False)
+        fsa = k2.intersect(
+            self.L_inv, word_fsa_with_self_loop, treat_epsilons_specially=False
+        )
 
         trans_fsa = k2.arc_sort(fsa.invert())  # trans_fsa: phones -> words
         trans_fsa_with_self_loop = k2.arc_sort(
-            k2.remove_epsilon_and_add_self_loops(trans_fsa))
+            k2.remove_epsilon_and_add_self_loops(trans_fsa)
+        )
 
         training_graph = k2.compose(
-            self.topo, trans_fsa_with_self_loop, treat_epsilons_specially=False)
+            self.topo, trans_fsa_with_self_loop, treat_epsilons_specially=False
+        )
 
         return training_graph
 
