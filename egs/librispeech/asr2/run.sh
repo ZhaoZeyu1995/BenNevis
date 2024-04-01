@@ -8,7 +8,6 @@
 nj=16
 ngpu=4
 topos="ctc mmictc mmictc-1 2state 2state-1 3state-skip 3state-skip-1 3state-skip-2"
-model="rnnp"
 
 # data
 datadir=$LOCAL_HOME/data/librispeech
