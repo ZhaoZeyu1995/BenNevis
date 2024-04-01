@@ -108,11 +108,7 @@ echo "<SIL> <SIL>" > $dst_dir/lexicon.txt
 echo "<UNK> <UNK>" >> $dst_dir/lexicon.txt
 # get character-level dictionary
 spm_encode --model=$tmpdir/${mtype}_${mtokens}.model --output_format=piece < $tmpdir/words.train_dev > $tmpdir/raw.lexicon.train_dev.txt
-<<<<<<< HEAD
-paste $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
-=======
 paste -d ' ' $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
->>>>>>> devel
 
 echo "$0: Done"
 exit 0
