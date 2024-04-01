@@ -2,8 +2,8 @@ train_ds: data/train
 valid_ds: data/dev
 lang: ???
 ratio_th: 4
-load_wav: False
-load_feats: True
+load_wav: null
+load_feats: null
 sort: ascending
 min_dur: 0.5
 max_dur: 35.0

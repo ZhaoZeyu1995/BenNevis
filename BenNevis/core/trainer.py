@@ -95,29 +95,70 @@ class Trainer:
         self.config = config
 
         if self.gpu_id == 0:
-            summary(self.model, depth=5, verbose=1)
+            summary(self.model, depth=6, verbose=1)
 
         self.exp_dir = exp_dir
         if self.exp_dir:
             os.makedirs(self.exp_dir, exist_ok=True)
         else:
-            logging.warning("No experiment directory is provided. Please make sure to only do prediction with the model.")
+            logging.warning(
+                "No experiment directory is provided. Please make sure to only do prediction with the model."
+            )
 
         if save_every_n_epochs:
+
+            def check_valid(save_every_n_epochs):
+                if isinstance(save_every_n_epochs, int):
+                    if save_every_n_epochs >= 1:
+                        return True
+                    else:
+                        return False
+                elif isinstance(save_every_n_epochs, float):
+                    if 0 < save_every_n_epochs and save_every_n_epochs < 1.0:
+                        return True
+                    elif (
+                        save_every_n_epochs.is_integer() and save_every_n_epochs >= 1.0
+                    ):
+                        return True
+                    else:
+                        return False
+                else:
+                    return False
+
+            if not check_valid(save_every_n_epochs):
+                raise ValueError(
+                    "save_every_n_epochs should be a positive float number smaller than 1.0. \
+                        Otherwise it must be a positive integer."
+                )
+
             self.save_every_n_epochs = save_every_n_epochs
             self.save_every_n_steps = None
-            logging.info(f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_epochs} epochs")
+            logging.info(
+                f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_epochs} epochs"
+            )
             if save_every_n_steps is not None:
                 logging.warning(
                     f"RANK {self.gpu_id}: Both save_every_n_epochs and save_every_n_step are set. \
-                            Ignoring save_every_n_step.")
+                            Ignoring save_every_n_step."
+                )
         else:
             self.save_every_n_epochs = None
             self.save_every_n_steps = save_every_n_steps
-            logging.info(f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_steps} steps")
+            if save_every_n_steps:
+                logging.info(
+                    f"RANK {self.gpu_id}: Model will be saved every {self.save_every_n_steps} steps"
+                )
+            else:
+                self.save_every_n_epochs = 1
+                logging.warning(
+                    f"RANK {self.gpu_id}: No save_every_n_epochs or save_every_n_steps is set. \
+                        Model will be saved every 1 epoch by default."
+                )
 
         if save_top_k:
-            assert isinstance(save_top_k, int) and save_top_k > 0, "save_top_k should be a positive integer."
+            assert (
+                isinstance(save_top_k, int) and save_top_k > 0
+            ), "save_top_k should be a positive integer."
         else:
             save_top_k = None
         self.save_top_k = save_top_k
@@ -187,7 +228,9 @@ class Trainer:
         valid_loss: float
             The current validation loss.
         """
-        ckpt_name = f"epoch_{self.epoch:d}_step_{self.step:d}_val_loss_{valid_loss:.4f}.pt"
+        ckpt_name = (
+            f"epoch_{self.epoch:d}_step_{self.step:d}_val_loss_{valid_loss:.4f}.pt"
+        )
         best_ckpt = os.path.join(self.ckpt_dir, "best.pt")
         best_loss = self.top_k[0][0] if self.top_k else float("inf")
         last_ckpt = None
@@ -209,7 +252,9 @@ class Trainer:
         for i, scheduler in enumerate(self.schedulers):
             snapshot[f"SCHEDULER_{i}"] = scheduler.state_dict()
         torch.save(snapshot, os.path.join(self.ckpt_dir, ckpt_name))
-        logging.debug(f"RANK {self.gpu_id}: Saved checkpoint at {os.path.join(self.ckpt_dir, ckpt_name)}")
+        logging.debug(
+            f"RANK {self.gpu_id}: Saved checkpoint at {os.path.join(self.ckpt_dir, ckpt_name)}"
+        )
         # delete the last checkpoint
         if last_ckpt is not None:
             os.remove(os.path.join(self.ckpt_dir, last_ckpt[1]))
@@ -218,7 +263,9 @@ class Trainer:
             if os.path.exists(best_ckpt):
                 os.remove(best_ckpt)
             os.symlink(ckpt_name, best_ckpt)
-            logging.debug(f"RANK {self.gpu_id}: Updated the best checkpoint at {best_ckpt}")
+            logging.debug(
+                f"RANK {self.gpu_id}: Updated the best checkpoint at {best_ckpt}"
+            )
 
     def _load_weights(self, ckpt_path: str):
         """
@@ -232,7 +279,9 @@ class Trainer:
         ckpt = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(ckpt["MODEL_STATE"])
 
-    def _compute_loss(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def _compute_loss(
+        self, batch: Dict[str, Any], pin_memory: bool = False
+    ) -> torch.Tensor:
         """
         Compute the loss for the given batch.
 
@@ -240,25 +289,36 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
         loss: torch.Tensor
             The computed loss.
         """
-        assert self.loss_func.reduction in ["mean", "sum"], "Currently GraphLoss.reduction must \
+        assert self.loss_func.reduction in [
+            "mean",
+            "sum",
+        ], "Currently GraphLoss.reduction must \
                 be either 'mean' or 'sum', but got {self.loss_func.reduction}"
         if "feats" in batch:
-            inputs = batch["feats"].to(self.device)
-            input_lens = batch["feats_len"].to(self.device)
+            inputs = batch["feats"].to(self.device, non_blocking=pin_memory)
+            input_lens = batch["feats_lens"].to(self.device, non_blocking=pin_memory)
         elif "wavs" in batch:
-            inputs = batch["wavs"].to(self.device)
-            input_lens = batch["wav_lens"].to(self.device)
+            inputs = batch["wavs"].to(self.device, non_blocking=pin_memory)
+            input_lens = batch["wav_lens"].to(self.device, non_blocking=pin_memory)
         else:
-            raise ValueError(f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}")
+            raise ValueError(
+                f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}"
+            )
+
         outputs = self.model(inputs, input_lens)
         log_probs, log_prob_lens = outputs[0], outputs[1]
-        target_lengths = batch["target_lengths"].to(self.device)
+
+        target_lengths = batch["target_lengths"].to(
+            self.device, non_blocking=pin_memory
+        )
         loss = self.loss_func(
             log_probs,
             log_prob_lens,
@@ -267,7 +327,7 @@ class Trainer:
         )
         return loss
 
-    def _train_batch(self, batch: Dict[str, Any]) -> float:
+    def _train_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Train the model on the given batch.
 
@@ -275,6 +335,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -282,20 +344,21 @@ class Trainer:
             The computed loss averaged on all GPUs.
         """
         self.model.train()
-        loss = self._compute_loss(batch)
+        loss = self._compute_loss(batch, pin_memory=pin_memory)
         loss.backward()
-        if (self.step+1) % self.accum_grad_steps == 0:
+        if (self.step + 1) % self.accum_grad_steps == 0:
             if self.grad_max_norm:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_max_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.grad_max_norm
+                )
             for opt in self.optimizers:
                 opt.step()
-                opt.zero_grad()
-
+                opt.zero_grad(set_to_none=True)
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
         return loss_item
 
-    def _valid_batch(self, batch: Dict[str, Any]) -> float:
+    def _valid_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Validate the model on the given batch.
 
@@ -303,6 +366,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -311,13 +376,13 @@ class Trainer:
         """
         self.model.eval()
         with torch.no_grad():
-            loss = self._compute_loss(batch)
+            loss = self._compute_loss(batch, pin_memory=pin_memory)
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
         return loss_item
 
-    def _test_batch(self, batch: Dict[str, Any]) -> float:
+    def _test_batch(self, batch: Dict[str, Any], pin_memory: bool = False) -> float:
         """
         Test the model on the given batch.
 
@@ -325,6 +390,8 @@ class Trainer:
         ---------
         batch: Dict[str, Any]
             The batch of data.
+        pin_memory: bool
+            Whether `batch` comes from a DataLoader with pin_memory=True.
 
         Returns
         -------
@@ -333,7 +400,7 @@ class Trainer:
         """
         self.model.eval()
         with torch.no_grad():
-            loss = self._compute_loss(batch)
+            loss = self._compute_loss(batch, pin_memory)
 
         dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         loss_item = loss.item() / self.world_size
@@ -366,12 +433,14 @@ class Trainer:
         self.model.eval()
         if "feats" in batch:
             inputs = batch["feats"].to(self.device)
-            input_lens = batch["feats_len"].to(self.device)
+            input_lens = batch["feats_lens"].to(self.device)
         elif "wavs" in batch:
             inputs = batch["wavs"].to(self.device)
             input_lens = batch["wav_lens"].to(self.device)
         else:
-            raise ValueError(f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}")
+            raise ValueError(
+                f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}"
+            )
         names = batch["names"]
         spks = batch["spks"]
         texts = batch["texts"]
@@ -397,6 +466,11 @@ class Trainer:
 
         num_steps = 0
         loss_value_sum = 0
+        if self.gpu_id == 0:
+            progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
+            progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
+            progress_bar.set_postfix(self.metrics_dict)
+            progress_bar.refresh()
 
         epoch_num_batches = None
         for batch in self.train_dl:
@@ -406,45 +480,60 @@ class Trainer:
                 elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
                     epoch_num_batches = self.train_sampler.num_batches
             batch_size = batch["batch_size"]
-            loss_value = self._train_batch(batch)
+            loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
-            loss_value_sum += loss_value
             if self.gpu_id == 0:
-                self.progress_bar.update(batch_size * self.world_size)
+                progress_bar.update(batch_size * self.world_size)
                 self.metrics_dict["loss"] = loss_value
-                self.progress_bar.set_postfix(self.metrics_dict)
+                progress_bar.set_postfix(self.metrics_dict)
+                loss_value_sum += loss_value
                 if self.step % self.log_every_n_steps == 0:
-                    wandb.log({"loss_step": loss_value, "step": self.step}, step=self.step)
+                    wandb.log(
+                        {"loss_step": loss_value, "step": self.step}, step=self.step
+                    )
                     for opt in self.optimizers:
                         wandb.log(
-                            {"lr_"+opt.nickname: opt.param_groups[0]["lr"], "step": self.step},
+                            {
+                                "lr_" + opt.nickname: opt.param_groups[0]["lr"],
+                                "step": self.step,
+                            },
                             step=self.step,
                         )
 
             # Save the model every n epochs, where n can be a float number
-            if num_steps % math.ceil(epoch_num_batches * self.save_every_n_epochs) == 0 and \
-                    num_steps != epoch_num_batches:
+            if (
+                num_steps % math.ceil(epoch_num_batches * self.save_every_n_epochs) == 0
+                and num_steps != epoch_num_batches
+            ):
                 valid_loss = self._valid_epoch()
                 if self.gpu_id == 0:
                     self._save_checkpoint(valid_loss)
-                    wandb.log({"valid.loss_epoch": valid_loss, "step": self.step}, step=self.step)
+                    wandb.log(
+                        {"valid.loss_epoch": valid_loss, "step": self.step},
+                        step=self.step,
+                    )
 
             self.step += 1
             if self.max_steps:
                 if self.step > self.max_steps:
-                    logging.info(f"RANK {self.gpu_id}: Reached maximum number of steps, exiting...")
+                    logging.info(
+                        f"RANK {self.gpu_id}: Reached maximum number of steps, exiting..."
+                    )
                     self._exit()
             if self.save_every_n_steps:
                 if self.step % self.save_every_n_steps == 0 and self.gpu_id == 0:
                     valid_loss = self._valid_epoch()
                     self._save_checkpoint(valid_loss)
-                    wandb.log({"valid.loss_epoch": valid_loss, "step": self.step}, step=self.step)
+                    wandb.log(
+                        {"valid.loss_epoch": valid_loss, "step": self.step},
+                        step=self.step,
+                    )
 
         train_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["loss_epoch"] = train_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
-            self.progress_bar.reset()
+            progress_bar.set_postfix(self.metrics_dict)
+            progress_bar.close()
         return train_loss
 
     def _valid_epoch(self):
@@ -454,11 +543,16 @@ class Trainer:
         num_steps = 0
         loss_value_sum = 0
         if self.gpu_id == 0:
-            valid_progress_bar = tqdm(total=self.num_val_samples, desc="Validating", position=1, unit="samples")
+            valid_progress_bar = tqdm(
+                total=self.num_val_samples,
+                desc="Validating",
+                position=1,
+                unit="samples",
+            )
 
         for batch in self.valid_dl:
             batch_size = batch["batch_size"]
-            loss_value = self._valid_batch(batch)
+            loss_value = self._valid_batch(batch, pin_memory=self.valid_dl.pin_memory)
             num_steps += 1
             loss_value_sum += loss_value
             if self.gpu_id == 0:
@@ -467,7 +561,6 @@ class Trainer:
         valid_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["val_loss"] = valid_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
             valid_progress_bar.close()
         return valid_loss
 
@@ -505,21 +598,30 @@ class Trainer:
             The directory to save the predictions.
         """
         if self.gpu_id == 0:
-            progress_bar = tqdm(total=self.num_predict_samples,
-                                desc="Predicting",
-                                position=0,
-                                unit="samples")
+            progress_bar = tqdm(
+                total=self.num_predict_samples,
+                desc="Predicting",
+                position=0,
+                unit="samples",
+            )
 
         if self.world_size > 1:
             predicted = set()
-            with open(os.path.join(output_dir, "ref.wrd.%d.trn" % (self.gpu_id+1)), 'w') as y:
+            with open(
+                os.path.join(output_dir, "ref.wrd.%d.trn" % (self.gpu_id + 1)), "w"
+            ) as y:
                 yc = ""
-                with WriteHelper("ark,scp:%s,%s" % (os.path.join(os.getcwd(),
-                                                                 output_dir,
-                                                                 "output.%d.ark" % (self.gpu_id+1)),
-                                                    os.path.join(os.getcwd(),
-                                                                 output_dir,
-                                                                 "output.%d.scp" % (self.gpu_id+1)))) as writer:
+                with WriteHelper(
+                    "ark,scp:%s,%s"
+                    % (
+                        os.path.join(
+                            os.getcwd(), output_dir, "output.%d.ark" % (self.gpu_id + 1)
+                        ),
+                        os.path.join(
+                            os.getcwd(), output_dir, "output.%d.scp" % (self.gpu_id + 1)
+                        ),
+                    )
+                ) as writer:
                     for batch in self.predict_dl:
                         prediction = self._predict_batch(batch)
                         if self.gpu_id == 0:
@@ -534,23 +636,22 @@ class Trainer:
                             if names[i] in predicted:
                                 continue
                             predicted.add(names[i])
-                            log_prob = log_probs[i, :log_prob_lens[i], :]
+                            log_prob = log_probs[i, : log_prob_lens[i], :]
                             writer(names[i], log_prob)
-                            yc += "%s (%s-%s)\n" % (texts[i],
-                                                    spks[i],
-                                                    names[i])
+                            yc += "%s (%s-%s)\n" % (texts[i], spks[i], names[i])
 
                 y.write(yc)
             logging.info(f"RANK {self.gpu_id}: Predicted {len(predicted)} samples")
         else:
-            with open(os.path.join(output_dir, "ref.wrd.trn"), 'w') as y:
+            with open(os.path.join(output_dir, "ref.wrd.trn"), "w") as y:
                 yc = ""
-                with WriteHelper("ark,scp:%s,%s" % (os.path.join(os.getcwd(),
-                                                                 output_dir,
-                                                                 "output.ark"),
-                                                    os.path.join(os.getcwd(),
-                                                                 output_dir,
-                                                                 "output.scp"))) as writer:
+                with WriteHelper(
+                    "ark,scp:%s,%s"
+                    % (
+                        os.path.join(os.getcwd(), output_dir, "output.ark"),
+                        os.path.join(os.getcwd(), output_dir, "output.scp"),
+                    )
+                ) as writer:
                     for batch in self.predict_dl:
                         prediction = self._predict_batch(batch)
                         if self.gpu_id == 0:
@@ -562,21 +663,20 @@ class Trainer:
                         texts = prediction["texts"]
                         batch_size = prediction["batch_size"]
                         for i in range(batch_size):
-                            log_prob = log_probs[i, :log_prob_lens[i], :]
+                            log_prob = log_probs[i, : log_prob_lens[i], :]
                             writer(names[i], log_prob)
-                            yc += "%s (%s-%s)\n" % (texts[i],
-                                                    spks[i],
-                                                    names[i])
+                            yc += "%s (%s-%s)\n" % (texts[i], spks[i], names[i])
 
                 y.write(yc)
             logging.info(f"Predicted {self.num_predict_samples} samples")
 
-    def fit(self,
-            train_dl: DataLoader,
-            valid_dl: DataLoader,
-            checkpoint: str = None,
-            load_weights_only: bool = False,
-            ):
+    def fit(
+        self,
+        train_dl: DataLoader,
+        valid_dl: DataLoader,
+        checkpoint: str = None,
+        load_weights_only: bool = False,
+    ):
         """
         Train the model.
 
@@ -594,8 +694,9 @@ class Trainer:
         self.train_dl = train_dl
         self.valid_dl = valid_dl
 
-        if isinstance(self.train_dl.batch_sampler,
-                      (DistributedSyncDynamicBatchSampler)):
+        if isinstance(
+            self.train_dl.batch_sampler, (DistributedSyncDynamicBatchSampler)
+        ):
             self.num_samples = len(self.train_dl.batch_sampler) * self.world_size
             self.train_sampler = self.train_dl.batch_sampler
         elif isinstance(self.train_dl.sampler, DistributedSampler):
@@ -605,10 +706,12 @@ class Trainer:
             raise ValueError(
                 f"RANK {self.gpu_id}: Unsupported sampler for training. \
                 Please make sure that the sampler is in [torch.utils.data.distributed.DistributedSampler, \
-                BenNevis.samplers.dynamic.DistributedSyncDynamicBatchSampler]")
+                BenNevis.samplers.dynamic.DistributedSyncDynamicBatchSampler]"
+            )
 
-        if isinstance(self.valid_dl.batch_sampler,
-                      (DistributedSyncDynamicBatchSampler)):
+        if isinstance(
+            self.valid_dl.batch_sampler, (DistributedSyncDynamicBatchSampler)
+        ):
             self.num_val_samples = len(self.valid_dl.batch_sampler) * self.world_size
         elif isinstance(self.valid_dl.sampler, DistributedSampler):
             self.num_val_samples = len(self.valid_dl.sampler) * self.world_size
@@ -616,7 +719,8 @@ class Trainer:
             raise ValueError(
                 f"RANK {self.gpu_id}: Unsupported sampler for validation. \
                 Please make sure that the sampler is in [torch.utils.data.distributed.DistributedSampler, \
-                BenNevis.samplers.dynamic.DistributedSyncDynamicBatchSampler]")
+                BenNevis.samplers.dynamic.DistributedSyncDynamicBatchSampler]"
+            )
 
         self.top_k = []
         self.best_valid_loss = 1e10
@@ -629,20 +733,23 @@ class Trainer:
         self.step = 0
 
         if self.gpu_id == 0:
-            self.progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
-            self.progress_bar.refresh()
-            self.metrics_dict = {}
-            self.wandb_dir = os.path.join(self.exp_dir, "wandb")
+            self.wandb_dir = os.path.join(self.exp_dir)
             os.makedirs(self.wandb_dir, exist_ok=True)
             wandb.init(
                 dir=self.wandb_dir,
-                project="BenNevis-%s-%s" % (
-                        os.path.basename(os.path.dirname(os.getcwd())),
-                        os.path.basename(os.getcwd()),
-                ) if self.config.logger["project"] is None else self.config.logger["project"],
+                project="BenNevis-%s-%s"
+                % (
+                    os.path.basename(os.path.dirname(os.getcwd())),
+                    os.path.basename(os.getcwd()),
+                )
+                if self.config.logger["project"] is None
+                else self.config.logger["project"],
                 name=self.config.logger["name"],
                 config=dict(self.config),
             )
+            self.metrics_dict = {}
+
+        dist.barrier()
 
         if checkpoint:
             if load_weights_only:
@@ -651,13 +758,9 @@ class Trainer:
                 self._load_checkpoint(checkpoint)
 
         while self.epoch < self.max_epochs:
-
-            if self.gpu_id == 0:
-                self.progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
-
             self.model.train()
             for opt in self.optimizers:
-                opt.zero_grad()
+                opt.zero_grad(set_to_none=True)
             train_loss = self._train_epoch()
 
             self.epoch += 1
@@ -669,23 +772,33 @@ class Trainer:
                 lrs.step(valid_loss)
 
             if self.gpu_id == 0:
-                wandb.log({"train.loss_epoch": train_loss,
-                           "valid.loss_epoch": valid_loss,
-                           "epoch": self.epoch,
-                           "step": self.step},
-                          step=self.step)
+                wandb.log(
+                    {
+                        "train.loss_epoch": train_loss,
+                        "valid.loss_epoch": valid_loss,
+                        "epoch": self.epoch,
+                        "step": self.step,
+                    },
+                    step=self.step,
+                )
 
-                if self.epoch % self.save_every_n_epochs == 0:
+                if (
+                    self.save_every_n_epochs > 1
+                    and self.epoch % self.save_every_n_epochs == 0
+                ):
+                    self._save_checkpoint(valid_loss)
+                else:
                     self._save_checkpoint(valid_loss)
         logging.info(f"RANK {self.gpu_id}: Training finished")
         if self.gpu_id == 0:
             wandb.finish()
 
-    def predict(self,
-                predict_dl: DataLoader,
-                output_dir: str = None,
-                checkpoint: str = None,
-                ) -> None:
+    def predict(
+        self,
+        predict_dl: DataLoader,
+        output_dir: str = None,
+        checkpoint: str = None,
+    ) -> None:
         """
         Perform prediction on the given DataLoader on each device (GPU).
         There are three files which will be saved in the output_dir:
@@ -704,8 +817,9 @@ class Trainer:
             The path to the checkpoint to load.
         """
         self.predict_dl = predict_dl
-        assert isinstance(self.predict_dl.sampler, DistributedSampler), \
-            f"RANK {self.gpu_id}: Unsupported sampler for prediction. \
+        assert isinstance(
+            self.predict_dl.sampler, DistributedSampler
+        ), f"RANK {self.gpu_id}: Unsupported sampler for prediction. \
             Please make sure that the sampler is torch.utils.data.distributed.DistributedSampler."
         self.num_predict_samples = len(self.predict_dl.sampler) * self.world_size
         if checkpoint:
@@ -714,7 +828,8 @@ class Trainer:
         else:
             logging.warning(
                 f"RANK {self.gpu_id}: No checkpoint is provided. \
-                        Using the current model. Please make sure this is intended.")
+                        Using the current model. Please make sure this is intended."
+            )
         if self.world_size > 1:
             output_dir = os.path.join(output_dir, "split%d" % self.world_size)
         os.makedirs(output_dir, exist_ok=True)
@@ -734,7 +849,7 @@ class Trainer:
             )
             progress_bar.set_description("Sanity check on validation set")
         for batch in self.valid_dl:
-            _ = self._valid_batch(batch)
+            _ = self._valid_batch(batch, pin_memory=self.valid_dl.pin_memory)
             check_steps -= 1
             if self.gpu_id == 0:
                 progress_bar.update(1)

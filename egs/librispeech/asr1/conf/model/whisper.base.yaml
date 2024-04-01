@@ -1,0 +1,8 @@
+module: BenNevis.models.whisper
+name: WhisperModel
+kwargs:
+  from_pretrained: base.en
+  whisper_odim: 512
+  finetune_last_n_layers: 6
+  fix_conv: false
+  odim: null  # determined by lang at training stage

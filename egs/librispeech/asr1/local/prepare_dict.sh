@@ -55,7 +55,7 @@ echo "<UNK> <UNK>" >> $dst_eval_dir/lexicon.txt
 echo "<UNK>" > $dst_eval_dir/nonsilence_phones.txt
 # get character-level dictionary
 cat $tmpdir/words.eval | sed 's/./& /g' | awk '{print $0, "<eow>"}' > $tmpdir/raw.lexicon.txt
-paste $tmpdir/words.eval $tmpdir/raw.lexicon.txt | sort | uniq >> $dst_eval_dir/lexicon.txt
+paste -d ' ' $tmpdir/words.eval $tmpdir/raw.lexicon.txt | sort | uniq >> $dst_eval_dir/lexicon.txt
 cat $tmpdir/raw.lexicon.txt | tr ' ' '\n' | sort | uniq | grep -v -w "<SIL>" | awk 'NF>0' >> $dst_eval_dir/nonsilence_phones.txt
 
 echo "$0: Done"
@@ -71,7 +71,7 @@ echo "<SIL> <SIL>" > $dst_dir/lexicon.txt
 echo "<UNK> <UNK>" >> $dst_dir/lexicon.txt
 # get character-level dictionary
 cat $tmpdir/words.train_dev | sed 's/./& /g' | awk '{print $0, "<eow>"}' >> $tmpdir/raw.lexicon.train_dev.txt
-paste $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
+paste -d ' ' $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
 
 echo "$0: Done"
 exit 0

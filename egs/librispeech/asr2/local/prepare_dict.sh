@@ -92,7 +92,7 @@ echo "<UNK>" > $dst_eval_dir/nonsilence_phones.txt
 # get sentencepiece dictionary
 spm_train --input=$tmpdir/text.train --model_prefix=$tmpdir/${mtype}_${mtokens} --vocab_size=${mtokens} --character_coverage=1.0 --model_type=${mtype}
 spm_encode --model=$tmpdir/${mtype}_${mtokens}.model --output_format=piece < $tmpdir/words.eval > $tmpdir/raw.lexicon.txt
-paste $tmpdir/words.eval $tmpdir/raw.lexicon.txt | sort | uniq >> $dst_eval_dir/lexicon.txt
+paste -d ' ' $tmpdir/words.eval $tmpdir/raw.lexicon.txt | sort | uniq >> $dst_eval_dir/lexicon.txt
 cat $tmpdir/${mtype}_${mtokens}.vocab | awk '{print $1}'| grep -v -w "<unk>" | grep -v -w "<s>" | grep -v -w "</s>" | awk 'NF>0' >> $dst_eval_dir/nonsilence_phones.txt
 
 echo "$0: Done"
@@ -108,7 +108,11 @@ echo "<SIL> <SIL>" > $dst_dir/lexicon.txt
 echo "<UNK> <UNK>" >> $dst_dir/lexicon.txt
 # get character-level dictionary
 spm_encode --model=$tmpdir/${mtype}_${mtokens}.model --output_format=piece < $tmpdir/words.train_dev > $tmpdir/raw.lexicon.train_dev.txt
+<<<<<<< HEAD
 paste $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
+=======
+paste -d ' ' $tmpdir/words.train_dev $tmpdir/raw.lexicon.train_dev.txt | sort | uniq >> $dst_dir/lexicon.txt
+>>>>>>> devel
 
 echo "$0: Done"
 exit 0

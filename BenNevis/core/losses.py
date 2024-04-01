@@ -127,7 +127,6 @@ class GraphLoss(torch.nn.Module):
 
         lattice = k2.intersect_dense(graph, dense_fsa_vec,
                                      self.output_beam)
-
         tot_scores = lattice.get_tot_scores(log_semiring=True, use_double_scores=False)
         loss = -1 * tot_scores
         loss = loss.to(torch.float32)

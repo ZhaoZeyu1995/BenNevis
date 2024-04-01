@@ -155,18 +155,31 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
         load_feats=train_ds.load_feats,
         ctc_target=train_ds.ctc_target,
     )
-    train_dl = torch.utils.data.DataLoader(
-        train_ds,
-        pin_memory=data_conf["pin_memory"],
-        shuffle=False,
-        batch_sampler=DistributedSyncDynamicBatchSampler(
+    if "train_batch_size" not in data_conf:
+        logging.info("Using dynamic batch size as 'train_batch_size' is not specified.")
+        train_dl = torch.utils.data.DataLoader(
             train_ds,
-            shuffle=True,
-            max_sum_dur=data_conf["max_sum_dur"],
-        ),
-        collate_fn=collate_fn,
-        num_workers=data_conf["num_workers"],
-    )
+            pin_memory=data_conf["pin_memory"],
+            shuffle=False,
+            batch_sampler=DistributedSyncDynamicBatchSampler(
+                train_ds,
+                shuffle=True,
+                max_sum_dur=data_conf["max_sum_dur"],
+            ),
+            collate_fn=collate_fn,
+            num_workers=data_conf["num_workers"],
+        )
+    else:
+        logging.info(f"Using fixed batch size {data_conf['train_batch_size']} with DistributedSampler.")
+        train_dl = torch.utils.data.DataLoader(
+            train_ds,
+            pin_memory=data_conf["pin_memory"],
+            shuffle=False,
+            batch_size=data_conf["train_batch_size"],
+            sampler=DistributedSampler(train_ds, shuffle=getattr(data_conf, "shuffle", True)),
+            collate_fn=collate_fn,
+            num_workers=data_conf["num_workers"],
+        )
     valid_dl = torch.utils.data.DataLoader(
         valid_ds,
         pin_memory=data_conf["pin_memory"],
@@ -185,7 +198,7 @@ def get_dl(data_conf: dict) -> Tuple[torch.utils.data.DataLoader, torch.utils.da
     config_name="config",
 )
 def main(cfg):
-    setup_seed(0)
+    setup_seed(1368)
     dist.init_process_group(backend="nccl")
     torch.cuda.set_device(int(os.environ["RANK"]))
     gpu_id = dist.get_rank()
@@ -207,10 +220,20 @@ def main(cfg):
         cfg.model["name"],
     )
     cfg.model["kwargs"]["odim"] = lang.num_nn_output
+    cfg.data["load_wav"] = True if cfg.model["name"] in ["Wav2Vec2Model"] else False
+    cfg.data["load_feats"] = True if cfg.model["name"] not in ["Wav2Vec2Model"] else False
     model = model_class(
         **cfg.model["kwargs"],
     )
     model.to(device)
+
+    if getattr(cfg, "init_all", False):
+        logging.info(f"Initialising all parameters in the model as got cfg.init_all {cfg.init_all}.")
+        for name, param in model.named_parameters():
+            if len(param.shape) > 1:
+                torch.nn.init.kaiming_uniform_(param)
+            else:
+                torch.nn.init.zeros_(param)
 
     optimisers = []
     lr_schedulers = []

@@ -2,8 +2,8 @@ train_ds: data/train_yesno
 valid_ds: data/test_yesno
 lang: ???
 ratio_th: 4
-load_wav: False
-load_feats: True
+load_wav: null # decided by the model
+load_feats: null # decided by the model
 sort: ascending
 min_dur: 1.0
 max_dur: 35.0

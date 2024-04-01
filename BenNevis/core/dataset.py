@@ -355,10 +355,11 @@ class CollateFunc:
             batch_feats = [sample['feats'] for sample in list_of_samples]
             batch_feats_lens = [sample['feats_len'] for sample in list_of_samples]
             batch['feats'] = pad_sequence(batch_feats, batch_first=True)
-            batch['feats_len'] = torch.tensor(batch_feats_lens, dtype=torch.int32)
+            batch['feats_lens'] = torch.tensor(batch_feats_lens, dtype=torch.int32)
 
         if self.ctc_target:
-            assert all('target_ctc' in sample for sample in list_of_samples), "target_ctc is not available in the samples"
+            assert all('target_ctc' in sample for sample in list_of_samples), \
+                    "target_ctc is not available in the samples"
             batch_targets_ctc = [sample['target_ctc'] for sample in list_of_samples]
             batch['target_ctc'] = pad_sequence(batch_targets_ctc, batch_first=True)
 
