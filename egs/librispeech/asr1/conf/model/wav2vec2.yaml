@@ -1,7 +1,0 @@
-module: BenNevis.models.wav2vec2
-name: Wav2Vec2Model
-kwargs:
-  from_pretrained: WAV2VEC2_LARGE_LV60K
-  wav2vec2_odim: 1024
-  finetune_last_n_layers: 24
-  odim: null  # determined by lang at training stage
