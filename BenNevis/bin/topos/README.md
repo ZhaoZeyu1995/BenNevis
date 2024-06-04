@@ -16,7 +16,7 @@ We may get a epsilon-free (on the input side) `T.fst` easily by running a epsilo
 but this usually results in an FST which is much much much larger than the original one.
 By using `get_token_fst_*_k2.py`, we can have a epsilon-free `T.fst` by sacrificing the deterministic property.
 
-# Adding your
+# Adding yours
 
 You may have a look at one pair of `get_token_fst_*.py` and `get_token_fst_*_k2.py`, possibly run them
 and mimic them to get your own topologies.
