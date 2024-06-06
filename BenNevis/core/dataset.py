@@ -196,6 +196,10 @@ class Dataset(torch.utils.data.Dataset):
                     self.uttids, key=lambda x: self.utt2dur[x], reverse=True
                 )
 
+        self.noise_pointer = 0
+        self.num_noises = 843
+        self.noise_dir = "/disk/scratch3/zzhao/data/musan/noise/free-sound"
+
     def __len__(self):
         return len(self.uttids)
 
@@ -295,6 +299,13 @@ class Dataset(torch.utils.data.Dataset):
             wav = torch.tensor(wav, dtype=torch.float32)
             if rate != self.resample_rate:
                 wav = torchaudio.functional.resample(wav, rate, self.resample_rate)
+            # the file name is noise-free-sound-xxxx.wav with four digits
+            noise_file = os.path.join(self.noise_dir, "noise-free-sound-%04d.wav" % (self.noise_pointer))
+            noise, _ = torchaudio.load(noise_file)
+            noise = noise.squeeze(0)
+            SNR = 3
+            wav = self.__addnoise__(wav, noise, SNR)
+            self.noise_pointer = (self.noise_pointer + 1) % self.num_noises
 
             wav = (wav - wav.mean()) / (torch.sqrt(wav.var()) + 1e-5)  # normalize
             sample["wav"] = wav
@@ -312,6 +323,33 @@ class Dataset(torch.utils.data.Dataset):
             return self.transforms(sample)
         else:
             return sample
+
+    def __addnoise__(self, speech: torch.Tensor, noise: torch.Tensor, SNR: int) -> torch.Tensor:
+        """
+        Add noise to the speech signal with a given signal-to-noise ratio (SNR) applying torchaudio.functional.add_noise
+
+        Arguments
+        ---------
+        speech: torch.Tensor
+            The speech signal with shape (Ts,)
+        noise: torch.Tensor
+            The noise signal with shape (Tn,)
+        SNR: int
+            The signal-to-noise ratio in dB
+
+        Returns
+        -------
+        noisy_speech: torch.Tensor
+            The noisy speech signal with shape (Ts,)
+        """
+        if speech.shape[0] < noise.shape[0]:
+            noise = noise[: speech.shape[0]]
+        else:
+            noise = torch.cat([noise] * (speech.shape[0] // noise.shape[0] + 1))[: speech.shape[0]]
+        speech = speech.unsqueeze(0)
+        noise = noise.unsqueeze(0)
+        noisy_speech = torchaudio.functional.add_noise(speech, noise, torch.tensor([SNR]))
+        return noisy_speech.squeeze(0)
 
 
 class CollateFunc:
