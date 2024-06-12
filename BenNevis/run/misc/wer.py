@@ -172,6 +172,8 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
     Ndel = 0
     Nins = 0
     Nsub = 0
+    NdelOpt = 0
+    NsubOpt = 0
     Ntotal = 0
     Ncor = 0
     NSetenceCor = 0
@@ -179,9 +181,10 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
     fc = ""
     for uttid, hyp in hyp_dict.items():
         ref = ref_dict[uttid]
+        Ntotal += len(ref) - len([x for x in ref if x.startswith("(") and x.endswith(")")])
+        NSetence += 1
         error, res = run(hyp, ref)
         align(hyp, ref, res)
-        NSetence += 1
         if error == 0:
             NSetenceCor += 1
 
@@ -189,15 +192,18 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
         Ndel += res.count("D")
         Nins += res.count("I")
         Nsub += res.count("S")
-        Ntotal += len(ref)
+        NdelOpt += res.count("DO")
+        NsubOpt += res.count("SO")
         Ncor += res.count("")
 
         fc += "id: %s\n" % (uttid)
-        fc += "Scores: (#C #S #D #I) %d %d %d %d\n" % (
+        fc += "Scores: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n" % (
             res.count(""),
             res.count("S"),
             res.count("D"),
             res.count("I"),
+            res.count("DO"),
+            res.count("SO"),
         )
 
         max_lengths = [
@@ -219,16 +225,18 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
     fc = "#Sentence: %d\n" % NSetence + fc
     fc = "WER: %.2f%%\n" % (Nerror / Ntotal * 100) + fc
     fc = (
-        "RATE: (#C #S #D #I) %.2f%% %.2f%% %.2f%% %.2f%%\n"
+        "RATE: (#C #S #D #I #DO #SO) %.2f%% %.2f%% %.2f%% %.2f%% %.2f%% %.2f%%\n"
         % (
             Ncor / Ntotal * 100,
             Nsub / Ntotal * 100,
             Ndel / Ntotal * 100,
             Nins / Ntotal * 100,
+            NdelOpt / Ntotal * 100,
+            NsubOpt / Ntotal * 100,
         )
         + fc
     )
-    fc = "Total: (#C #S #D #I) %d %d %d %d\n" % (Ncor, Nsub, Ndel, Nins) + fc
+    fc = "Total: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n" % (Ncor, Nsub, Ndel, Nins, NdelOpt, NsubOpt) + fc
     f.write(fc)
     f.close()
 
@@ -376,10 +384,9 @@ def align(hyp: List[str], ref: List[str], res: List[str]):
         elif item == "":
             pass
         elif item == "SO":
-            res[i] = ""
+            pass
         elif item == "DO":
-            hyp.insert(i, "")
-            res[i] = ""
+            hyp.insert(i, "*" * len(ref[i]))
 
 
 if __name__ == "__main__":
