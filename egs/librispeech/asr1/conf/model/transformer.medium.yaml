@@ -1,0 +1,10 @@
+module: BenNevis.models.transformer
+name: TransformerModel
+kwargs:
+  n_mels: 80
+  n_ctx: 3000  # 3000 output frames = 60 seconds with a subsampling factor of 2
+  n_state: 1024
+  n_head: 16
+  n_layer: 24
+  odim: null  # determined by lang at training stage
+  input_layer: ConvSub2  # ConvSub2 for a subsampling factor of 2, ConvSub3 for a subsampling factor of 3, etc.

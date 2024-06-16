@@ -1,0 +1,30 @@
+- module: torch.optim
+  name: AdamW
+  nickname: whisper.AdamW  # nickname to show on WandB logger
+  param: ["conv", "blocks", "ln_post"]
+  kwargs:
+    lr: 1e-4
+  lr_schedulers:
+    - module: torch.optim.lr_scheduler
+      name: ReduceLROnPlateau
+      kwargs:
+        mode: min
+        factor: 0.5
+        patience: 1
+        verbose: True
+- module: torch.optim
+  name: Adadelta
+  nickname: olayer.Adadelta
+  param: olayer
+  kwargs:
+    lr: 0.9
+    rho: 0.95
+    eps: 1e-8
+  lr_schedulers:
+    - module: torch.optim.lr_scheduler
+      name: ReduceLROnPlateau
+      kwargs:
+        mode: min
+        factor: 0.5
+        patience: 1
+        verbose: True

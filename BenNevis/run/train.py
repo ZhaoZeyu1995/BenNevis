@@ -27,6 +27,7 @@ import torch
 import logging
 import os
 import hydra
+import omegaconf
 from typing import Tuple, List
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
@@ -70,12 +71,25 @@ def get_opt(
         opt_conf["name"],
     )
     if opt_conf["param"]:
-        param = getattr(model, opt_conf["param"], None)
-        assert param is not None, f"Model has no attribute {opt_conf['param']}"
-        opt = opt_class(
-            param.parameters(),
-            **opt_conf["kwargs"],
-        )
+        if isinstance(opt_conf["param"], omegaconf.listconfig.ListConfig):
+            params = []
+            for p in opt_conf["param"]:
+                param = getattr(model, p, None)
+                assert param is not None, f"Model has no attribute {p}"
+                params.append({"params": param.parameters()})
+            opt = opt_class(
+                params,
+                **opt_conf["kwargs"],
+            )
+        elif isinstance(opt_conf["param"], str):
+            param = getattr(model, opt_conf["param"], None)
+            assert param is not None, f"Model has no attribute {opt_conf['param']}"
+            opt = opt_class(
+                param.parameters(),
+                **opt_conf["kwargs"],
+            )
+        else:
+            raise ValueError(f"Unknown type of opt_conf['param']: {type(opt_conf['param'])}")
     else:
         opt = opt_class(
             model.parameters(),
