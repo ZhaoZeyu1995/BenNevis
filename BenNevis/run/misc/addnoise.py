@@ -139,7 +139,7 @@ def main(args):
 
         torchaudio.save(
             os.path.join(
-                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr}-{key}.flac"
+                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.flac"
             ),
             wav,
             sample_rate=sr,
@@ -148,7 +148,7 @@ def main(args):
         )
         output_utt2wav["noise-SNR-%d-%s" % (args.snr, key)] = os.path.abspath(
             os.path.join(
-                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr}-{key}.wav"
+                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.wav"
             )
         )
         noise_pointer = (noise_pointer + 1) % num_noises
@@ -166,7 +166,7 @@ def main(args):
         fc = ""
         with open(os.path.join(args.output_dir, "utt2spk"), "w") as f:
             for key, value in utt2spk.items():
-                fc += f"noise-SNR-{args.snr}-{key} noise-SNR-{args.snr}-{value}\n"
+                fc += f"noise-SNR-{args.snr:d}-{key} noise-SNR-{args.snr:d}-{value}\n"
             f.write(fc)
 
     if os.path.exists(os.path.join(args.data_dir, "text")):
@@ -174,7 +174,7 @@ def main(args):
         fc = ""
         with open(os.path.join(args.output_dir, "text"), "w") as f:
             for key, value in text.items():
-                fc += f"noise-SNR-{args.snr}-{key} {value}\n"
+                fc += f"noise-SNR-{args.snr:d}-{key} {value}\n"
             f.write(fc)
 
     if os.path.exists(os.path.join(args.data_dir, "spk2gender")):
@@ -182,7 +182,7 @@ def main(args):
         fc = ""
         with open(os.path.join(args.output_dir, "spk2gender"), "w") as f:
             for key, value in spk2gender.items():
-                fc += f"noise-SNR-{args.snr}-{key} {value}\n"
+                fc += f"noise-SNR-{args.snr:d}-{key} {value}\n"
             f.write(fc)
 
     if os.path.exists(os.path.join(args.data_dir, "utt2dur")):
@@ -190,7 +190,7 @@ def main(args):
         fc = ""
         with open(os.path.join(args.output_dir, "utt2dur"), "w") as f:
             for key, value in utt2dur.items():
-                fc += f"noise-SNR-{args.snr}-{key} {value}\n"
+                fc += f"noise-SNR-{args.snr:d}-{key} {value}\n"
             f.write(fc)
 
     if os.path.exists(os.path.join(args.data_dir, "utt2num_frames")):
@@ -198,7 +198,7 @@ def main(args):
         fc = ""
         with open(os.path.join(args.output_dir, "utt2num_frames"), "w") as f:
             for key, value in utt2num_frames.items():
-                fc += f"noise-SNR-{args.snr}-{key} {value}\n"
+                fc += f"noise-SNR-{args.snr:d}-{key} {value}\n"
             f.write(fc)
 
 
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         help="The root directory of MUSAN dataset, the script will find the noise files itself from <musan-dir>/noise/free-sound.",
     )
     parser.add_argument(
-        "--snr", type=float, default=20, help="The signal-to-noise ratio (SNR) in dB"
+        "--snr", type=int, default=20, help="The signal-to-noise ratio (SNR) in dB"
     )
 
     args = parser.parse_args()
