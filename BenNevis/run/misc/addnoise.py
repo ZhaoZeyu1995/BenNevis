@@ -114,7 +114,10 @@ def main(args):
     # Note that the noise file name has the pattern "noise-free-sound-xxxx.wav" where x is a digit.
     output_utt2wav = dict()
     for key, (sr, wav) in tqdm(utt2wav.items()):
+        print("key", key)
+        print("clean-wav", wav[:25])
         wav = torch.tensor(wav, dtype=torch.float32)
+        print("clean-wav, wav[:25]", wav[:25])
         assert os.path.exists(
             os.path.join(
                 args.musan_dir,
@@ -131,19 +134,20 @@ def main(args):
         )
         noise, sr_noise = torchaudio.load(noise_file)
         noise.squeeze_(0)
-        if sr_noise != sr:
-            noise = torchaudio.functional.resample(noise, sr_noise, sr)
 
         wav = addnoise(wav, noise, args.snr)
         wav.unsqueeze_(0)
 
+        print("noisy-wav, wav[0, :25]", wav[0, :25])
+        print("noise-wav, wav.shape", wav.shape)
+        print("noise, noise[:25]", noise[:25])
         torchaudio.save(
             os.path.join(
-                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.flac"
+                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.wav"
             ),
             wav,
             sample_rate=sr,
-            format="flac",
+            format="wav",
             bits_per_sample=16,
         )
         output_utt2wav["noise-SNR-%d-%s" % (args.snr, key)] = os.path.abspath(
@@ -152,6 +156,10 @@ def main(args):
             )
         )
         noise_pointer = (noise_pointer + 1) % num_noises
+        wav, rate = torchaudio.load(os.path.join(args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.wav"))
+        print("loaded-wav, wav[0, :25]", wav[0, :25])
+        print("loaded-wav, wav.shape", wav.shape)
+        exit()
 
     # Write the output data directory
     with open(os.path.join(args.output_dir, "wav.scp"), "w") as f:

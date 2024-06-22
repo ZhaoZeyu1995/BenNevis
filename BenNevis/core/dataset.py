@@ -296,6 +296,9 @@ class Dataset(torch.utils.data.Dataset):
 
         if self.load_wav:
             rate, wav = self.utt2wav[uttid]
+            print("uttid", uttid)
+            print("wav.shape", wav.shape)
+            print("wav[:25]", wav[:25])
             wav = torch.tensor(wav, dtype=torch.float32)
             if rate != self.resample_rate:
                 wav = torchaudio.functional.resample(wav, rate, self.resample_rate)
@@ -303,11 +306,13 @@ class Dataset(torch.utils.data.Dataset):
             noise_file = os.path.join(self.noise_dir, "noise-free-sound-%04d.wav" % (self.noise_pointer))
             noise, _ = torchaudio.load(noise_file)
             noise = noise.squeeze(0)
-            SNR = 3
-            wav = self.__addnoise__(wav, noise, SNR)
+            SNR = 100
+            # wav = self.__addnoise__(wav, noise, SNR)
             self.noise_pointer = (self.noise_pointer + 1) % self.num_noises
 
             wav = (wav - wav.mean()) / (torch.sqrt(wav.var()) + 1e-5)  # normalize
+            print("normalized-wav, wav[:25]", wav[:25])
+            exit()
             sample["wav"] = wav
             sample["wav_len"] = len(wav)
 
@@ -479,3 +484,11 @@ class CollateFunc:
             batch["target_ctc"] = pad_sequence(batch_targets_ctc, batch_first=True)
 
         return batch
+
+
+if __name__ == "__main__":
+    data_dir = "/disk/scratch3/zzhao/BenNevis/egs/librispeech/asr1/data/test"
+    lang_dir = "/disk/scratch3/zzhao/BenNevis/egs/librispeech/asr1/data/lang_ctc"
+    dataset = Dataset(data_dir, lang_dir, load_wav=True, load_feats=False)
+    dataset.__getitem__(0)
+
