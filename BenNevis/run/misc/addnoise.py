@@ -148,7 +148,7 @@ def main(args):
         )
         output_utt2wav["noise-SNR-%d-%s" % (args.snr, key)] = os.path.abspath(
             os.path.join(
-                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.wav"
+                args.output_dir, "data", "wavs", f"noise-SNR-{args.snr:d}-{key}.flac"
             )
         )
         noise_pointer = (noise_pointer + 1) % num_noises
