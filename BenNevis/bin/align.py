@@ -111,7 +111,7 @@ def main(args):
             )
 
             logging.info(f"Processing utterance {utt}")
-            best_path = k2.shortest_path(lattice, use_double_scores=False)
+            best_path = k2.shortest_path(lattice, use_double_scores=True)
             labels = best_path.labels.numpy()
             aux_labels = best_path.aux_labels.numpy()
             writer(utt, labels)

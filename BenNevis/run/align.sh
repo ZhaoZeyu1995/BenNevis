@@ -1,5 +1,5 @@
 #!/bin/bash
-# This is a wrapper script that conducts aligning with run/align.py.
+# This is a wrapper script that conducts aligning with BenNevis/bin/align.py.
 # Usage:
 # run/align.sh [options] <data_dir> <lang_dir> <predict_dir> [<decode_dir>]
 # e.g.:
