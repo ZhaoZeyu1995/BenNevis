@@ -14,6 +14,7 @@ echo "$0 $@"  # Print the command line for logging
 
 nj=4
 frame_shift=0.02
+ignore_labels=""
 
 . ./utils/parse_options.sh
 
@@ -78,8 +79,9 @@ run.pl JOB=1:$nj $output_dir/align/log/align.JOB.log \
     align.py \
         $opts \
         --output_ctm_path=$output_dir/split$nj/ctm.JOB \
-        --output_align_path=$output_dir/align/ali.JOB.ark.gz \
-        --output_word_align_path=$output_dir/align/word.ali.JOB.ark.gz \
+        --output_align_path=$output_dir/align/ali.JOB.gz \
+        --output_word_align_path=$output_dir/align/word.ali.JOB.gz \
+        --ignore_labels="$ignore_labels" \
         $lang_dir \
         $output_dir/split$nj/output.JOB.scp \
         $text

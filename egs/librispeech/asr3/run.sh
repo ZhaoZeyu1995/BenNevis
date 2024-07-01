@@ -22,6 +22,7 @@ dev_set=dev_clean
 recog_sets="dev_clean dev_other test_clean test_other"
 model="wav2vec2.large.lv60k"
 opts="wav2vec2"
+expsuffix=
 hydra_opts=""
 
 acwts="0.5 0.75 1.0 1.25 1.5"
@@ -97,9 +98,17 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     done
 fi
 
+
 # Model training
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     for topo in ${topos}; do
+        if [ -z ${expsuffix} ]; then
+            expdir=${model}-${topo}
+            loggername=${model}-${topo}
+        else
+            expdir=${model}-${topo}-${expsuffix}
+            loggername=${model}-${topo}-${expsuffix}
+        fi
         if [ $topo == "ctc" ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
@@ -111,8 +120,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
                 model=${model} \
                 opts=${opts} \
                 loss.kwargs.use_den=false \
-                logger.name=${model}-${topo} \
-                hydra.run.dir=exp/${model}-${topo} \
+                logger.name=${loggername} \
+                hydra.run.dir=exp/${expdir} \
                 ${hydra_opts} || exit 1;
         else
             torchrun --standalone --nproc_per_node=${ngpu} \
@@ -124,8 +133,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
                 data.valid_ds=data/${dev_set} \
                 model=${model} \
                 opts=${opts} \
-                logger.name=${model}-${topo} \
-                hydra.run.dir=exp/${model}-${topo} \
+                logger.name=${loggername} \
+                hydra.run.dir=exp/${expdir} \
                 ${hydra_opts} || exit 1;
         fi
     done
@@ -134,10 +143,15 @@ fi
 # Prediction
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     for topo in ${topos}; do
+        if [ -z ${expsuffix} ]; then
+            expdir=${model}-${topo}
+        else
+            expdir=${model}-${topo}-${expsuffix}
+        fi
         for x in ${recog_sets}; do
             ./run/predict.sh --ngpu ${ngpu} \
                 data/${x} data/lang_test_nolm_${topo} \
-                exp/${model}-${topo}/checkpoints/best.pt exp/${model}-${topo}/pred_${x} || exit 1;
+                exp/${expdir}/checkpoints/best.pt exp/${expdir}/pred_${x} || exit 1;
         done
     done
 fi
@@ -145,17 +159,22 @@ fi
 # Decoding
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
     for topo in ${topos}; do
+        if [ -z ${expsuffix} ]; then
+            expdir=${model}-${topo}
+        else
+            expdir=${model}-${topo}-${expsuffix}
+        fi
         for x in ${recog_sets}; do
             for lm in $lms; do
                 if [ $lm == "nolm" ]; then
                     ./run/decode_faster.sh --nj ${nj} \
                         data/${x} data/lang_test_nolm_${topo} \
-                        exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x} || exit 1;
+                        exp/${expdir}/pred_${x} exp/${expdir}/dec_nolm_${x} || exit 1;
                 else
                     for acwt in ${acwts}; do
                         ./run/decode_faster.sh --nj ${nj} --acoustic_scale $acwt \
                             data/${x} data/lang_test_${lm}_${topo} \
-                            exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${lm}_${x} || exit 1;
+                            exp/${expdir}/pred_${x} exp/${expdir}/dec_${lm}_${x} || exit 1;
                     done
                 fi
             done
@@ -166,8 +185,19 @@ fi
 # Align with the ground truth
 if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
     for topo in ${topos}; do
+        if [ -z ${expsuffix} ]; then
+            expdir=${model}-${topo}
+        else
+            expdir=${expdir}-${topo}-${expsuffix}
+        fi
+        if [[ -z $(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>") ]]; then
+            ignore_labels=""
+        else
+            ignore_labels=$(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>" | awk '{print $2}' | paste -sd ",")
+        fi
+        echo "Ignore labels ids related to <eow>: $ignore_labels"
         for x in ${recog_sets}; do
-            run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} || exit 1;
+            run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} || exit 1;
         done
     done
 fi
@@ -175,13 +205,26 @@ fi
 # Align with the decoding results
 if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     for topo in ${topos}; do
+        if [ -z ${expsuffix} ]; then
+            expdir=${model}-${topo}
+        else
+            expdir=${model}-${topo}-${expsuffix}
+        fi
+        if [[ -z $(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>") ]]; then
+            ignore_labels=""
+        else
+            ignore_labels=$(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>" | awk '{print $2}' | paste -sd ",")
+        fi
+        echo "Ignore labels ids related to <eow>: $ignore_labels"
         for x in ${recog_sets}; do
             for lm in $lms; do
                 if [ $lm == "nolm" ]; then
-                    run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+                    run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} \
+                        exp/${expdir}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
                 else
                     for acwt in ${acwts}; do
-                        run/align.sh --nj ${nj} data/${x} data/lang_test_${lm}_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${lm}_${x}/aw_${acwt}-ma_5000-bm_32 || exit 1;
+                        run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_${lm}_${topo} \
+                            exp/${expdir}/pred_${x} exp/${expdir}/dec_${lm}_${x}/aw_${acwt}-ma_5000-bm_32 || exit 1;
                     done
                 fi
             done

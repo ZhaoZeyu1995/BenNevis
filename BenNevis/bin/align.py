@@ -68,10 +68,75 @@ def read_reco2file_and_channel(reco2file_and_channel: str) -> dict:
     return reco2file_and_channel
 
 
+def get_lattice(
+    log_prob: torch.Tensor,
+    log_prob_len: torch.Tensor,
+    decoding_graph: k2.fsa.Fsa,
+) -> k2.fsa.Fsa:
+    """
+    Get the decoding lattice from a decoding graph and  log_softmax output.
+    Note that this is modified from k2's `get_lattice` function but we use
+    `intersect_dense` instead of `intersect_dense_pruned`.
+    Arguments
+    ---------
+    log_prob : torch.Tensor
+        A 3-D tensor of shape (N, T, C), where
+        N is the number of utterances in a batch,
+        T is the number of frames, and
+        C is the number of classes (or tokens).
+    log_prob_len : torch.Tensor
+        A 1-D tensor of shape (N,) that contains the number of frames
+        for each utterance.
+    decoding_graph : k2.fsa.Fsa
+        The decoding graph. It is usually obtained by calling the `Lang.compile_training_graph`
+
+    Returns
+    -------
+      An FsaVec containing the decoding result. It has axes [utt][state][arc].
+    """
+    assert log_prob.ndim == 3, log_prob.shape
+    assert log_prob_len.ndim == 1, log_prob_len.shape
+    assert log_prob.size(0) == log_prob_len.size(0), (
+        log_prob.shape,
+        log_prob_len.shape,
+    )
+
+    batch_size = log_prob.size(0)
+
+    supervision_segment = (
+        torch.stack(
+            [
+                torch.arange(batch_size),
+                torch.zeros(batch_size),
+                log_prob_len.cpu(),
+            ],
+        )
+        .t()
+        .to(torch.int32)
+    )
+
+    dense_fsa_vec = k2.DenseFsaVec(
+        log_prob,
+        supervision_segment,
+    )
+
+    lattice = k2.intersect_dense(
+        decoding_graph,
+        dense_fsa_vec,
+        5.0,
+    )
+
+    return lattice
+
+
 def main(args):
     lang = Lang(args.lang_dir, load_topo=True, load_lexicon=True)
     utt2log_prob = kaldiio.load_scp(args.log_prob_scp)
     text = read_dict(args.text)
+    if args.ignore_labels:
+        ignore_labels = [int(label) for label in args.ignore_labels.split(",")]
+    else:
+        ignore_labels = []
 
     if args.segments is not None:
         segments = read_segments(args.segments)
@@ -93,9 +158,19 @@ def main(args):
     ) as ctm_file:
         ctm = ""
         for utt, log_prob in utt2log_prob.items():
+            logging.info(f"Processing utterance {utt}")
             log_prob = torch.tensor(np.array([log_prob]))
             log_prob_len = torch.tensor([log_prob.shape[1]])
-            targets = [[lang.word2idx[word] for word in text[utt].split()]]
+            targets = [
+                [
+                    (
+                        lang.word2idx[word]
+                        if word in lang.word2idx
+                        else lang.word2idx["<UNK>"]
+                    )
+                    for word in text[utt].split()
+                ]
+            ]
             channel = (
                 "1"
                 if args.reco2file_and_channel is None or args.segments is None
@@ -104,16 +179,17 @@ def main(args):
 
             graph = lang.compile_training_graph(targets, log_prob.device)
 
-            lattice = k2.get_lattice(
+            lattice = get_lattice(
                 log_prob=log_prob,
                 log_prob_len=log_prob_len,
                 decoding_graph=graph,
             )
 
-            logging.info(f"Processing utterance {utt}")
             best_path = k2.shortest_path(lattice, use_double_scores=True)
             labels = best_path.labels.numpy()
             aux_labels = best_path.aux_labels.numpy()
+            logging.info("Best path labels: " + str(labels))
+            logging.info("Best path aux labels: " + str(aux_labels))
             writer(utt, labels)
             word_writer(utt, aux_labels)
             labels = labels.tolist()
@@ -126,7 +202,7 @@ def main(args):
             while p < len(labels):
                 if not aux_labels[p]:
                     if e:
-                        if labels[p]:
+                        if labels[p] and labels[p] not in ignore_labels:
                             e[2] = p + 1
                 else:
                     if e:
@@ -190,6 +266,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="The reco2file_and_channel file",
+    )
+    parser.add_argument(
+        "--ignore_labels",
+        type=str,
+        default="",
+        help="The input labels to ignore when generating the ctm file. The input should be a sequence of input label ids separated by a comma. For example, '0,1,2' will ignore the labels 0, 1, and 2. Default is an empty string. The ignored labels will be treated as silence.",
     )
 
     args = parser.parse_args()

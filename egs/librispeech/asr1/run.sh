@@ -104,8 +104,10 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     for topo in ${topos}; do
         if [ -z ${expsuffix} ]; then
             expdir=${model}-${topo}
+            loggername=${model}-${topo}
         else
             expdir=${model}-${topo}-${expsuffix}
+            loggername=${model}-${topo}-${expsuffix}
         fi
         if [ $topo == "ctc" ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
@@ -118,7 +120,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
                 model=${model} \
                 opts=${opts} \
                 loss.kwargs.use_den=false \
-                logger.name=${model}-${topo} \
+                logger.name=${loggername} \
                 hydra.run.dir=exp/${expdir} \
                 ${hydra_opts} || exit 1;
         else
@@ -131,7 +133,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
                 data.valid_ds=data/${dev_set} \
                 model=${model} \
                 opts=${opts} \
-                logger.name=${model}-${topo} \
+                logger.name=${loggername} \
                 hydra.run.dir=exp/${expdir} \
                 ${hydra_opts} || exit 1;
         fi
@@ -188,8 +190,14 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
         else
             expdir=${expdir}-${topo}-${expsuffix}
         fi
+        if [[ -z $(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>") ]]; then
+            ignore_labels=""
+        else
+            ignore_labels=$(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>" | awk '{print $2}' | paste -sd ",")
+        fi
+        echo "Ignore labels ids related to <eow>: $ignore_labels"
         for x in ${recog_sets}; do
-            run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} || exit 1;
+            run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} || exit 1;
         done
     done
 fi
@@ -202,14 +210,20 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
         else
             expdir=${model}-${topo}-${expsuffix}
         fi
+        if [[ -z $(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>") ]]; then
+            ignore_labels=""
+        else
+            ignore_labels=$(cat data/lang_test_nolm_${topo}/k2/tokens.txt | grep "<eow>" | awk '{print $2}' | paste -sd ",")
+        fi
+        echo "Ignore labels ids related to <eow>: $ignore_labels"
         for x in ${recog_sets}; do
             for lm in $lms; do
                 if [ $lm == "nolm" ]; then
-                    run/align.sh --nj ${nj} data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} \
+                    run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_nolm_${topo} exp/${expdir}/pred_${x} \
                         exp/${expdir}/dec_nolm_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
                 else
                     for acwt in ${acwts}; do
-                        run/align.sh --nj ${nj} data/${x} data/lang_test_${lm}_${topo} \
+                        run/align.sh --nj ${nj} --ignore_labels $ignore_labels data/${x} data/lang_test_${lm}_${topo} \
                             exp/${expdir}/pred_${x} exp/${expdir}/dec_${lm}_${x}/aw_${acwt}-ma_5000-bm_32 || exit 1;
                     done
                 fi
