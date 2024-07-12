@@ -181,7 +181,9 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
     fc = ""
     for uttid, hyp in hyp_dict.items():
         ref = ref_dict[uttid]
-        Ntotal += len(ref) - len([x for x in ref if x.startswith("(") and x.endswith(")")])
+        Ntotal += len(ref) - len(
+            [x for x in ref if x.startswith("(") and x.endswith(")")]
+        )
         NSetence += 1
         error, res = run(hyp, ref)
         align(hyp, ref, res)
@@ -236,7 +238,11 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
         )
         + fc
     )
-    fc = "Total: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n" % (Ncor, Nsub, Ndel, Nins, NdelOpt, NsubOpt) + fc
+    fc = (
+        "Total: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n"
+        % (Ncor, Nsub, Ndel, Nins, NdelOpt, NsubOpt)
+        + fc
+    )
     f.write(fc)
     f.close()
 

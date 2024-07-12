@@ -8,6 +8,7 @@ by simply setting --nproc_per_node=1 in the torchrun command.
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import os
 import torch
 import math
@@ -737,13 +738,15 @@ class Trainer:
             os.makedirs(self.wandb_dir, exist_ok=True)
             wandb.init(
                 dir=self.wandb_dir,
-                project="BenNevis-%s-%s"
-                % (
-                    os.path.basename(os.path.dirname(os.getcwd())),
-                    os.path.basename(os.getcwd()),
-                )
-                if self.config.logger["project"] is None
-                else self.config.logger["project"],
+                project=(
+                    "BenNevis-%s-%s"
+                    % (
+                        os.path.basename(os.path.dirname(os.getcwd())),
+                        os.path.basename(os.getcwd()),
+                    )
+                    if self.config.logger["project"] is None
+                    else self.config.logger["project"]
+                ),
                 name=self.config.logger["name"],
                 config=dict(self.config),
             )

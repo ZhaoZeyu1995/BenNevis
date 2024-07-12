@@ -36,6 +36,7 @@ on each process, but not the number of batches with a `BatchSampler` as usual.
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import math
 from typing import Optional, Iterator, List
 import torch

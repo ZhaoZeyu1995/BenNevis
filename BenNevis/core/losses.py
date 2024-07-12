@@ -5,6 +5,7 @@ The GraphLoss class is used to compute the graph loss in k2, which is inspired b
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import k2
 import torch
 from typing import Optional, Tuple, Dict, Any, List

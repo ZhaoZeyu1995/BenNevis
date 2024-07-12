@@ -23,6 +23,7 @@ Example:
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import torch
 import logging
 import os
@@ -89,7 +90,9 @@ def get_opt(
                 **opt_conf["kwargs"],
             )
         else:
-            raise ValueError(f"Unknown type of opt_conf['param']: {type(opt_conf['param'])}")
+            raise ValueError(
+                f"Unknown type of opt_conf['param']: {type(opt_conf['param'])}"
+            )
     else:
         opt = opt_class(
             model.parameters(),

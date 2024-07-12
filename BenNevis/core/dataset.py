@@ -6,6 +6,7 @@ There is also CollateFunc class which is used by the DataLoader class to collate
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import torch
 import os
 import logging
@@ -215,9 +216,11 @@ class Dataset(torch.utils.data.Dataset):
         """
         words = self.utt2text[uttid].split(" ")
         word_ids = [
-            self.lang.word2idx[word]
-            if word in self.lang.word2idx
-            else self.lang.word2idx["<UNK>"]
+            (
+                self.lang.word2idx[word]
+                if word in self.lang.word2idx
+                else self.lang.word2idx["<UNK>"]
+            )
             for word in words
         ]
         phone_ids = self.lang.wids2pids([word_ids])[0]
@@ -263,9 +266,11 @@ class Dataset(torch.utils.data.Dataset):
         text = self.utt2text[uttid]
         words = text.split(" ")
         word_ids = [
-            self.lang.word2idx[word]
-            if word in self.lang.word2idx
-            else self.lang.word2idx["<UNK>"]
+            (
+                self.lang.word2idx[word]
+                if word in self.lang.word2idx
+                else self.lang.word2idx["<UNK>"]
+            )
             for word in words
         ]
         pids = self.lang.wids2pids([word_ids])[0]

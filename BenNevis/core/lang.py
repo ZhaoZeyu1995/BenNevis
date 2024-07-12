@@ -39,6 +39,7 @@ make sure that path/to/openfst/bin is in your PATH.
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
+
 import os
 import logging
 import k2

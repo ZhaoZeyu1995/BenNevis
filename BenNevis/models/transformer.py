@@ -12,6 +12,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 from typing import Optional, Iterable
 from BenNevis.models.whisper import sinusoids
+from BenNevis.utils.nets import lens2mask
 
 
 class Conv1d(torch.nn.Conv1d):
@@ -101,8 +102,47 @@ class MultiHeadAttention(nn.Module):
         return self.out(wv), qk
 
     def qkv_attention(
-        self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
     ):
+        """
+        Function to compute the scaled dot-product attention.
+        This function is copied from the original implementation of the whisper model.
+        We modified it so that it takes an optional mask tensor as input.
+        The mask should have a shape of (B, 1, Tq, Tv), where B is the batch size and
+        Tq and Tv are the lengths of the query and value tensors, respectively.
+        Obvisouly, Tq and Tv should be the same when we use it as self-attention.
+
+        The mask tensor is added to the qk tensor before applying the softmax function.
+        You may also be interested in the function lens2mask() in BenNevis.utils.nets,
+        which can be used to create the mask tensor from a length tensor.
+
+        Arguments
+        ---------
+        q: torch.Tensor
+            The query tensor with shape (B, Tq, C), where B is the batch size,
+            Tq is the length of the query tensor, and C is the number of channels.
+        k: torch.Tensor
+            The key tensor with shape (B, Tv, C), where B is the batch size,
+            Tv is the length of the value tensor, and C is the number of channels.
+        v: torch.Tensor
+            The value tensor with shape (B, Tv, Cv), where B is the batch size,
+            Tv is the length of the value tensor, and C is the number of channels.
+        mask: Optional[torch.Tensor]
+            The mask tensor with shape (B, 1, Tq, Tv), where B is the batch size,
+            Tq and Tv are the lengths of the query and value tensors, respectively.
+            The mask tensor is added to the qk tensor before applying the softmax function.
+
+        Returns
+        -------
+        torch.Tensor
+            The output tensor with shape (B, Tq, Cv).
+        torch.Tensor
+            The attention logits tensor with shape (B, n_head, Tq, Tv).
+        """
         n_batch, n_ctx, n_state = q.shape
         scale = (n_state // self.n_head) ** -0.25
         q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3) * scale
@@ -111,7 +151,7 @@ class MultiHeadAttention(nn.Module):
 
         qk = q @ k
         if mask is not None:
-            qk = qk + mask[:n_ctx, :n_ctx]
+            qk = qk + mask
         qk = qk.float()
 
         w = F.softmax(qk, dim=-1).to(q.dtype)
@@ -463,8 +503,9 @@ class TransformerModel(torch.nn.Module):
         T = x.size(1)
         x = (x + self.positional_embedding[:T]).to(x.dtype)
 
+        xmasks = lens2mask(xlens, x.size(1))
         for block in self.blocks:
-            x = block(x)
+            x = block(x, mask=xmasks)
 
         x = self.ln_post(x)
         x = self.olayer(x)
