@@ -112,8 +112,6 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         if [ $topo == "ctc" ]; then
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
-                model=${model} \
-                opts=${model} \
                 data.lang=data/lang_${topo} \
                 data.train_ds=data/${train_set} \
                 data.valid_ds=data/${dev_set} \
@@ -126,8 +124,6 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         else
             torchrun --standalone --nproc_per_node=${ngpu} \
                 run/train.py \
-                model=${model} \
-                opts=${model} \
                 data.lang=data/lang_${topo} \
                 data.train_ds=data/${train_set} \
                 data.valid_ds=data/${dev_set} \
