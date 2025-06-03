@@ -9,19 +9,21 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import os
-import torch
-import math
-from torch.utils.data import DataLoader
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
 import logging
+import math
+import os
+from typing import Any, Dict, List, Optional
+
+import torch
+import torch.distributed as dist
 import wandb
-from typing import List, Dict, Any, Optional
-from tqdm import tqdm
-from torchinfo import summary
 from kaldiio import WriteHelper
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torchinfo import summary
+from tqdm import tqdm
+
 from BenNevis.core.losses import GraphLoss
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
 
@@ -473,13 +475,12 @@ class Trainer:
             progress_bar.set_postfix(self.metrics_dict)
             progress_bar.refresh()
 
-        epoch_num_batches = None
+        if isinstance(self.train_sampler, DistributedSampler):
+            epoch_num_batches = len(self.train_dl.batch_sampler)
+        elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
+            epoch_num_batches = self.train_sampler.num_batches
+
         for batch in self.train_dl:
-            if epoch_num_batches is None:
-                if isinstance(self.train_sampler, DistributedSampler):
-                    epoch_num_batches = len(self.train_dl.batch_sampler)
-                elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
-                    epoch_num_batches = self.train_sampler.num_batches
             batch_size = batch["batch_size"]
             loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
@@ -572,7 +573,12 @@ class Trainer:
         num_steps = 0
         loss_value_sum = 0
         if self.gpu_id == 0:
-            self.progress_bar.total = self.num_test_samples
+            test_progress_bar = tqdm(
+                total=self.num_test_samples,
+                desc="Testing",
+                position=1,
+                unit="samples",
+            )
 
         for batch in self.test_dl:
             batch_size = batch["batch_size"]
@@ -580,13 +586,13 @@ class Trainer:
             num_steps += 1
             loss_value_sum += loss_value
             if self.gpu_id == 0:
-                self.progress_bar.update(batch_size * self.world_size)
+                test_progress_bar.update(batch_size * self.world_size)
 
         test_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["test_loss"] = test_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
-            self.progress_bar.reset()
+            test_progress_bar.set_postfix(self.metrics_dict)
+            test_progress_bar.reset()
         return test_loss
 
     def _predict_epoch(self, output_dir) -> None:
