@@ -397,7 +397,8 @@ class Conv1dSubsampling8(nn.Module):
         Returns
         -------
         x : torch.Tensor
-            The output tensor of shape (B, T*, odim), where T* = (((T + 1) // 2 + 1) // 2 + 1) // 2 is the subsampled length.  # noqa: E501
+            The output tensor of shape (B, T*, odim), where
+            T* = (((T + 1) // 2 + 1) // 2 + 1) // 2 is the subsampled length.
         xlens : torch.Tensor
             The length of each output sequence in the batch with shape (B,).
         """

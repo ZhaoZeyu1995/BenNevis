@@ -122,7 +122,7 @@ class Dataset(torch.utils.data.Dataset):
 
         if self.min_duration is not None:
             num_short_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] < self.min_duration])
-            logging.info(  # noqa: E501
+            logging.info(
                 f"Filtering utterances with less than {self.min_duration} seconds, "
                 f"{num_short_utt} utterances are removed"
             )
@@ -130,7 +130,7 @@ class Dataset(torch.utils.data.Dataset):
 
         if self.max_duration is not None:
             num_long_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] > self.max_duration])
-            logging.info(  # noqa: E501
+            logging.info(
                 f"Filtering utterances with more than {self.max_duration} seconds, "
                 f"{num_long_utt} utterances are removed"
             )
@@ -143,13 +143,14 @@ class Dataset(torch.utils.data.Dataset):
         if self.ratio_th is not None:
             num_fast_utt = len([uttid for uttid in self.uttids if self.check_ratio(uttid) < self.ratio_th])
             self.uttids = [uttid for uttid in self.uttids if self.check_ratio(uttid) >= self.ratio_th]
-            logging.info(  # noqa: E501
+            logging.info(
                 f"Filtering utterances with ratio (num_frames (stride of 10ms) / num_phones) "
                 f"less than {self.ratio_th}, {num_fast_utt} utterances are removed."
             )
 
         logging.info(
-            f"Original number of utterances: {original_num_utt}. Current number of utterances: {len(self.uttids)} after filtering"  # noqa: E501
+            f"Original number of utterances: {original_num_utt}. "
+            f"Current number of utterances: {len(self.uttids)} after filtering"
         )
 
         if self.sort is not None:

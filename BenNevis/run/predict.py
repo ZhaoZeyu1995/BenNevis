@@ -1,8 +1,11 @@
 """
-This script is used to conduct prediction given a checkpoint, a dataset, a language directory and an output directory.
+This script is used to conduct prediction given a checkpoint, a dataset,
+a language directory and an output directory.
 
 Usage:
-    torchrun --standalone --nproc_per_node=<ngpu> predict.py <data_dir> <lang_dir> <ckpt_path> <output_dir> [--not_pin_memory] [--batch_size <batch_size>] [--num_workers <num_workers>]  # noqa: E501
+    torchrun --standalone --nproc_per_node=<ngpu> predict.py <data_dir> <lang_dir> \\
+        <ckpt_path> <output_dir> [--not_pin_memory] [--batch_size <batch_size>] \\
+        [--num_workers <num_workers>]
 
 Arguments:
     data_dir: str
@@ -20,7 +23,8 @@ Arguments:
     --num_workers: int
         The number of workers for the prediction dataloader, by default 4.
 Example:
-    torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4  # noqa: E501
+    torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang \\
+        /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
@@ -91,16 +95,18 @@ def main(args):
         if gpu_id == 0:
             logging.info("Merging predictions from multiple GPUs")
             os.system(
-                f"cat {args.output_dir}/split{world_size}/ref.wrd.*.trn | awk '!seen[$0]++' > {args.output_dir}/ref.wrd.trn"  # noqa: E501
+                f"cat {args.output_dir}/split{world_size}/ref.wrd.*.trn | "
+                f"awk '!seen[$0]++' > {args.output_dir}/ref.wrd.trn"
             )
             os.system(
-                f"cat {args.output_dir}/split{world_size}/output.*.scp | awk '!seen[$1]++' > {args.output_dir}/output.scp"  # noqa: E501
+                f"cat {args.output_dir}/split{world_size}/output.*.scp | "
+                f"awk '!seen[$1]++' > {args.output_dir}/output.scp"
             )
             with open(f"{args.output_dir}/ref.wrd.trn") as file:
                 num_ref = len(file.readlines())
             with open(f"{args.output_dir}/output.scp") as file:
                 num_scp = len(file.readlines())
-            assert num_ref == num_scp, (  # noqa: E501
+            assert num_ref == num_scp, (
                 f"Number of lines in {args.output_dir}/ref.wrd.trn ({num_ref}) and "
                 f"{args.output_dir}/output.scp ({num_scp}) do not match"
             )
@@ -116,13 +122,18 @@ if __name__ == "__main__":
     )
     parser = argparse.ArgumentParser(
         description="""
-            Conduct prediction given a checkpoint, a dataset, a language directory and an output directory.
-            Usage:  # noqa: E501
-            torchrun --standalone --nproc_per_node=<ngpu> predict.py <data_dir> <lang_dir> <ckpt_path> <output_dir> [--not_pin_memory] [--batch_size <batch_size>] [--num_workers <num_workers>]
+Conduct prediction given a checkpoint, a dataset, a language directory
+and an output directory.
 
-            Example:  # noqa: E501
-            torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
-            """
+Usage:
+    torchrun --standalone --nproc_per_node=<ngpu> predict.py <data_dir> <lang_dir> \\
+        <ckpt_path> <output_dir> [--not_pin_memory] [--batch_size <batch_size>] \\
+        [--num_workers <num_workers>]
+
+Example:
+    torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang \\
+        /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
+        """
     )
     parser.add_argument("data_dir", type=str, help="The directory of the dataset to predict on")
     parser.add_argument("lang_dir", type=str, help="The directory of the language directory")

@@ -766,9 +766,12 @@ class Trainer:
         """
         Perform prediction on the given DataLoader on each device (GPU).
         There are three files which will be saved in the output_dir:
-            - ref.wrd.%d.trn: The reference transcriptions with the pattern "text (speaker-name)" for each sample, produced by device %d-1.  # noqa: E501
-            - output.%d.scp: The scp file of the log probabilities for each sample predicted by device %d-1.
-            - output.%d.ark: The log probabilities for each sample predicted by device %d-1 in Kaldi's ark format.
+            - ref.wrd.%d.trn: The reference transcriptions with the pattern
+              "text (speaker-name)" for each sample, produced by device %d-1.
+            - output.%d.scp: The scp file of the log probabilities for each
+              sample predicted by device %d-1.
+            - output.%d.ark: The log probabilities for each sample predicted
+              by device %d-1 in Kaldi's ark format.
         Note that the deivce ids are 0-based but the scp and ark files are 1-based.
 
         Arguments

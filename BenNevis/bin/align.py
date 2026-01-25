@@ -204,10 +204,8 @@ def main(args):
                     e = [aux_labels[p], p, p + 1]
                 p += 1
             for e in aligns:
-                ctm += (  # noqa: E501
-                    f"{utt} {channel} {e[1] * args.frame_shift:.3f} "
-                    f"{args.frame_shift * (e[2] - e[1]):.3f} {lang.idx2word[e[0]]}\n"
-                )
+                ctm += f"{utt} {channel} {e[1] * args.frame_shift:.3f} "  # noqa: E501
+                ctm += f"{args.frame_shift * (e[2] - e[1]):.3f} {lang.idx2word[e[0]]}\n"
             count += 1
         ctm_file.write(ctm)
         logging.info(f"Processed {count} utterances")
@@ -260,10 +258,14 @@ if __name__ == "__main__":
         help="The reco2file_and_channel file",
     )
     parser.add_argument(
-        "--ignore_labels",  # noqa: E501
+        "--ignore_labels",
         type=str,
         default="",
-        help="The input labels to ignore when generating the ctm file. The input should be a sequence of input label ids separated by a comma. For example, '0,1,2' will ignore the labels 0, 1, and 2. Default is an empty string. The ignored labels will be treated as silence.",  # noqa: E501
+        help=(  # noqa: E501
+            "The input labels to ignore when generating the ctm file. The input should be a sequence of "
+            "input label ids separated by a comma. For example, '0,1,2' will ignore the labels 0, 1, and 2. "
+            "Default is an empty string. The ignored labels will be treated as silence."
+        ),
     )
 
     args = parser.parse_args()
