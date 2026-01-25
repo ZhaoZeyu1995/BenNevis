@@ -35,5 +35,4 @@ repos:
     rev: v1.4.1
     hooks:
       - id: mypy
-        additional_dependencies: [types-all]
         args: ['--ignore-missing-imports', '--python-version=3.8']
