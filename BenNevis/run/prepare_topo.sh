@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script copies the source lang directory to the destination lang directory and prepares the following files.
-# 1. tokens.txt, the input symbol table for T.fst, which contains <eps> 
+# 1. tokens.txt, the input symbol table for T.fst, which contains <eps>
 # 2. disambig.txt, the disambig symbols in T.fst. The disambig symbols are in the form of #1, #2, ... and are useful when composing T.fst with L_disambig.fst.
 # 3. disambig.int, the integer representation of disambig symbols
 # 4. tokens_disambig.txt, the input symbol table for T.fst, which contains <eps> and disambig symbols

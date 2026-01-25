@@ -32,7 +32,7 @@ local/prepare_lm.sh
 # Feature extraction
 fbankdir=fbank
 cmvndir=cmvn
-for x in train_yesno test_yesno; do 
+for x in train_yesno test_yesno; do
     steps/make_fbank_pitch.sh --nj ${nj} --write_utt2num_frames true \
         data/${x} exp/make_fbank/${x} data/${x}/${fbankdir}
     steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} data/${x}/$cmvndir || exit 1;
