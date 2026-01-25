@@ -204,10 +204,10 @@ def main(args):
                     e = [aux_labels[p], p, p + 1]
                 p += 1
             for e in aligns:
-                ctm += f"{utt} {channel} {e[1] *  # noqa: E501
-                                          args.frame_shift:.3f} {args.frame_shift *
-                                                                 (e[2] -
-                                                                  e[1]):.3f} {lang.idx2word[e[0]]}\n"
+                ctm += (  # noqa: E501
+                    f"{utt} {channel} {e[1] * args.frame_shift:.3f} "
+                    f"{args.frame_shift * (e[2] - e[1]):.3f} {lang.idx2word[e[0]]}\n"
+                )
             count += 1
         ctm_file.write(ctm)
         logging.info(f"Processed {count} utterances")

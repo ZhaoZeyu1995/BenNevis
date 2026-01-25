@@ -122,9 +122,9 @@ class Dataset(torch.utils.data.Dataset):
 
         if self.min_duration is not None:
             num_short_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] < self.min_duration])
-            logging.info(
-                f"Filtering utterances with less than {  # noqa: E501
-                    self.min_duration} seconds, {num_short_utt} utterances are removed"
+            logging.info(  # noqa: E501
+                f"Filtering utterances with less than {self.min_duration} seconds, "
+                f"{num_short_utt} utterances are removed"
             )
             self.uttids = [uttid for uttid in self.uttids if self.utt2dur[uttid] >= self.min_duration]
 

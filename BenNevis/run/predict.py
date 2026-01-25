@@ -100,11 +100,10 @@ def main(args):
                 num_ref = len(file.readlines())
             with open(f"{args.output_dir}/output.scp") as file:
                 num_scp = len(file.readlines())
-            assert (
-                num_ref == num_scp
-            ), f"Number of lines in {
-                args.output_dir}/ref.wrd.trn ({num_ref}) and {  # noqa: E501
-                args.output_dir}/output.scp ({num_scp}) do not match"
+            assert num_ref == num_scp, (  # noqa: E501
+                f"Number of lines in {args.output_dir}/ref.wrd.trn ({num_ref}) and "
+                f"{args.output_dir}/output.scp ({num_scp}) do not match"
+            )
             logging.info(f"Finally got {num_ref} samples in ref.wrd.trn and output.scp")
 
     dist.destroy_process_group()
