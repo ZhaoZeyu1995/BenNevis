@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "BenNevis: End-to-End ASR Toolkit based on DWFST"
+authors:
+  - family-names: "Zhao"
+    given-names: "Zeyu"
+    email: "zeyuhongwu1995@gmail.com"
+    affiliation: "The University of Edinburgh"
+repository-code: "https://github.com/zeyuzhao/BenNevis"
+url: "https://github.com/zeyuzhao/BenNevis"
+abstract: "BenNevis is an End-to-End Automatic Speech Recognition (ASR) toolkit based on Differentiable Weighted Finite-State Transducer (DWFST) with flexible topology definition support. It is implemented with PyTorch and k2."
+keywords:
+  - "automatic speech recognition"
+  - "ASR"
+  - "WFST"
+  - "k2"
+  - "PyTorch"
+  - "deep learning"
+  - "differentiable weighted finite-state transducer"
+license: Apache-2.0
+version: 0.1.0
+date-released: "2024-01-01"
