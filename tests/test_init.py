@@ -1,6 +1,11 @@
 """Tests for BenNevis package initialization."""
 
-import BenNevis
+import pytest
+
+# Skip all tests if k2 is not available (e.g., in CI without CUDA)
+pytest.importorskip("k2", reason="k2 module not available (requires CUDA)")
+
+import BenNevis  # noqa: E402
 
 
 def test_version():
