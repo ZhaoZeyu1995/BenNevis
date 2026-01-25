@@ -447,7 +447,7 @@ class Trainer:
         loss_value_sum = 0
         if self.gpu_id == 0:
             progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
-            progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
+            progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs - 1}")
             progress_bar.set_postfix(self.metrics_dict)
             progress_bar.refresh()
 
@@ -766,7 +766,7 @@ class Trainer:
         """
         Perform prediction on the given DataLoader on each device (GPU).
         There are three files which will be saved in the output_dir:
-            - ref.wrd.%d.trn: The reference transcriptions with the pattern "text (speaker-name)" for each sample, produced by device %d-1.
+            - ref.wrd.%d.trn: The reference transcriptions with the pattern "text (speaker-name)" for each sample, produced by device %d-1.  # noqa: E501
             - output.%d.scp: The scp file of the log probabilities for each sample predicted by device %d-1.
             - output.%d.ark: The log probabilities for each sample predicted by device %d-1 in Kaldi's ark format.
         Note that the deivce ids are 0-based but the scp and ark files are 1-based.

@@ -123,14 +123,16 @@ class Dataset(torch.utils.data.Dataset):
         if self.min_duration is not None:
             num_short_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] < self.min_duration])
             logging.info(
-                f"Filtering utterances with less than {self.min_duration} seconds, {num_short_utt} utterances are removed"
+                f"Filtering utterances with less than {  # noqa: E501
+                    self.min_duration} seconds, {num_short_utt} utterances are removed"
             )
             self.uttids = [uttid for uttid in self.uttids if self.utt2dur[uttid] >= self.min_duration]
 
         if self.max_duration is not None:
             num_long_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] > self.max_duration])
             logging.info(
-                f"Filtering utterances with more than {self.max_duration} seconds, {num_long_utt} utterances are removed"
+                f"Filtering utterances with more than {  # noqa: E501
+                    self.max_duration} seconds, {num_long_utt} utterances are removed"
             )
             self.uttids = [uttid for uttid in self.uttids if self.utt2dur[uttid] <= self.max_duration]
 
@@ -142,11 +144,12 @@ class Dataset(torch.utils.data.Dataset):
             num_fast_utt = len([uttid for uttid in self.uttids if self.check_ratio(uttid) < self.ratio_th])
             self.uttids = [uttid for uttid in self.uttids if self.check_ratio(uttid) >= self.ratio_th]
             logging.info(
-                f"Filtering utterances with ratio (num_frames (stride of 10ms) / num_phones) less than {self.ratio_th}, {num_fast_utt} utterances are removed."
+                f"Filtering utterances with ratio (num_frames (stride of 10ms) / num_phones) less than {  # noqa: E501
+                    self.ratio_th}, {num_fast_utt} utterances are removed."
             )
 
         logging.info(
-            f"Original number of utterances: {original_num_utt}. Current number of utterances: {len(self.uttids)} after filtering"
+            f"Original number of utterances: {original_num_utt}. Current number of utterances: {len(self.uttids)} after filtering"  # noqa: E501
         )
 
         if self.sort is not None:

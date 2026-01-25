@@ -29,10 +29,10 @@ for entry in fread.readlines():
         print(str(0) + " " + str(0) + " " + phone + " " + phone)
     else:
         print(str(0) + " " + str(nodeX) + " " + phone + "_0" + " " + phone)  # transition to the first state
-        print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  #  transition to the second state
-        print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  #  self-loop for the second state
-        print(str(nodeX + 1) + " " + str(0) + " " + phone + "_2" + " <eps>")  #  transition back to the initial state
-        print(str(nodeX) + " " + str(0) + " " + phone + "_2" + " <eps>")  #  transition back to the initial state
+        print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # transition to the second state
+        print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # self-loop for the second state
+        print(str(nodeX + 1) + " " + str(0) + " " + phone + "_2" + " <eps>")  # transition back to the initial state
+        print(str(nodeX) + " " + str(0) + " " + phone + "_2" + " <eps>")  # transition back to the initial state
     nodeX += 2
 
 print("0")

@@ -42,7 +42,7 @@ Authors:
 
 import logging
 import os
-from typing import List, Union
+from typing import List
 
 import k2
 import torch

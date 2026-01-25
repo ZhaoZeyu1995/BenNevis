@@ -8,7 +8,6 @@
           -> - - - - - - > 0
 """
 
-import logging
 import sys
 
 fread = open(sys.argv[1], "r")
@@ -43,8 +42,8 @@ for entry in fread.readlines():
     else:
         print(str(0) + " " + str(nodeX) + " " + phone + "_0" + " " + phone)  # transiting the first state
         print(str(nodeX) + " " + str(0) + " " + "<eps> <eps>")  # transiting back to the initial state
-        print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  #  transiting to the second state
-        print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  #  transiting to the second state
+        print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # transiting to the second state
+        print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # transiting to the second state
         print(str(nodeX + 1) + " " + str(0) + " " + "<eps> <eps>")  # transiting back to the initial state
         nodeX += 2
 
