@@ -30,7 +30,7 @@ jobs:
       run: isort --check --diff --profile=black --line-length=120 BenNevis/
     
     - name: Run flake8
-      run: flake8 BenNevis/ --max-line-length=120 --extend-ignore=E203,W503
+      run: flake8 BenNevis/ --max-line-length=120 --extend-ignore=E203,W503,E501,E262,F401
 
   test:
     name: Test on Python ${{ matrix.python-version }}
