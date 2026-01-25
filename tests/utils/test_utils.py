@@ -1,7 +1,5 @@
 """Tests for utility functions."""
 
-import pytest
-
 
 class TestRandomUtils:
     """Tests for random utility functions."""
@@ -9,11 +7,13 @@ class TestRandomUtils:
     def test_random_import(self):
         """Test that random utils can be imported."""
         from BenNevis.utils import random
+
         assert random is not None
 
     def test_setup_seed_exists(self):
         """Test that setup_seed function exists."""
         from BenNevis.utils.random import setup_seed
+
         assert callable(setup_seed)
 
 
@@ -23,9 +23,11 @@ class TestMiscUtils:
     def test_misc_import(self):
         """Test that misc utils can be imported."""
         from BenNevis.utils import misc
+
         assert misc is not None
 
     def test_dynamic_import_exists(self):
         """Test that dynamic_import function exists."""
         from BenNevis.utils.misc import dynamic_import
+
         assert callable(dynamic_import)
