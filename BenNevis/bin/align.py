@@ -39,13 +39,15 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import os
-import k2
-import torch
-import numpy as np
-import kaldiio
-import logging
 import argparse
+import logging
+import os
+
+import k2
+import kaldiio
+import numpy as np
+import torch
+
 from BenNevis.core.lang import Lang
 from BenNevis.utils.data import read_dict
 
@@ -149,13 +151,9 @@ def main(args):
 
     count = 0
 
-    with kaldiio.WriteHelper(
-        f"ark:| gzip -c > {args.output_align_path}"
-    ) as writer, kaldiio.WriteHelper(
+    with kaldiio.WriteHelper(f"ark:| gzip -c > {args.output_align_path}") as writer, kaldiio.WriteHelper(
         f"ark:| gzip -c > {args.output_word_align_path}"
-    ) as word_writer, open(
-        args.output_ctm_path, "w"
-    ) as ctm_file:
+    ) as word_writer, open(args.output_ctm_path, "w") as ctm_file:
         ctm = ""
         for utt, log_prob in utt2log_prob.items():
             logging.info(f"Processing utterance {utt}")
@@ -163,11 +161,7 @@ def main(args):
             log_prob_len = torch.tensor([log_prob.shape[1]])
             targets = [
                 [
-                    (
-                        lang.word2idx[word]
-                        if word in lang.word2idx
-                        else lang.word2idx["<UNK>"]
-                    )
+                    (lang.word2idx[word] if word in lang.word2idx else lang.word2idx["<UNK>"])
                     for word in text[utt].split()
                 ]
             ]
@@ -225,16 +219,11 @@ if __name__ == "__main__":
         description="Align the log-probabilities with the text using the K2 library",
     )
     parser.add_argument("lang_dir", type=str, help="The language directory")
-    parser.add_argument(
-        "log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format"
-    )
+    parser.add_argument("log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format")
     parser.add_argument(
         "text",
         type=str,
-        help=(
-            "The text in Kaldi format with the utterance ID "
-            "and the text separated by a space in each line"
-        ),
+        help=("The text in Kaldi format with the utterance ID " "and the text separated by a space in each line"),
     )
     parser.add_argument(
         "--output_ctm_path",

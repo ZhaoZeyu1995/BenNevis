@@ -25,9 +25,7 @@ else:
 print("0 0 <blk> <eps>")
 
 nodeX = 1
-nodes = (
-    []
-)  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
+nodes = []  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
 
 for entry in fread.readlines():
     entry = entry.replace("\n", "").strip()

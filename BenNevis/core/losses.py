@@ -6,9 +6,11 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
+from typing import Any, Dict, List, Optional, Tuple
+
 import k2
 import torch
-from typing import Optional, Tuple, Dict, Any, List
+
 from BenNevis.core.lang import Lang
 
 
@@ -227,9 +229,7 @@ class GraphLoss(torch.nn.Module):
         den_decoding_graph: k2.Fsa
             The denominator graph for the loss computation.
         """
-        den_decoding_graph = k2.create_fsa_vec(
-            [self.lang.topo.to(device) for _ in range(batch_size)]
-        )
+        den_decoding_graph = k2.create_fsa_vec([self.lang.topo.to(device) for _ in range(batch_size)])
 
         assert den_decoding_graph.requires_grad is False
         return den_decoding_graph

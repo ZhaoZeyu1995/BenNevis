@@ -29,9 +29,16 @@ This is an End-to-End (E2E) Automatic Speech Recognition (ASR) toolkit based on 
 
 ## Quick Install (Recommended)
 
+### 0. Clone the Repository
+
+```shell
+git clone https://github.com/zeyuzhao/BenNevis.git
+cd BenNevis
+```
+
 ### 1. Install Kaldi
 
-First, install [Kaldi](https://github.com/kaldi-asr/kaldi) and link it to BenNevis:
+Install [Kaldi](https://github.com/kaldi-asr/kaldi) and link it to BenNevis:
 ```shell
 cd tools
 ./put_kaldi.sh /path/to/kaldi
@@ -41,15 +48,11 @@ This creates a symbolic link to your Kaldi installation. Kaldi is used for data 
 ### 2. Install BenNevis
 
 ```shell
-# Clone the repository
-git clone https://github.com/zeyuzhao/BenNevis.git
-cd BenNevis
-
 # Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv tools/venv # Create a virtual environment in tools/venv
+source tools/venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install PyTorch (adjust CUDA version as needed)
+# Install PyTorch (adjust CUDA and PyTorch version as needed)
 pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
 
 # Install k2 (must match PyTorch and CUDA versions)
@@ -57,9 +60,6 @@ pip install k2==1.24.4.dev20231220+cuda11.8.torch2.1.0 -f https://k2-fsa.github.
 
 # Install BenNevis
 pip install -e .
-
-# Optional: Install additional features
-pip install -e ".[whisper,transformers,audio]"
 
 # For development
 pip install -e ".[dev]"

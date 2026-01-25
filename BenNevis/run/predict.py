@@ -26,13 +26,15 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import os
-import torch
-import logging
 import argparse
-from torch.utils.data.distributed import DistributedSampler
+import logging
+import os
+
+import torch
 import torch.distributed as dist
-from BenNevis.core.dataset import Dataset, CollateFunc
+from torch.utils.data.distributed import DistributedSampler
+
+from BenNevis.core.dataset import CollateFunc, Dataset
 from BenNevis.core.trainer import Trainer
 from BenNevis.utils.misc import dynamic_import
 
@@ -121,16 +123,10 @@ if __name__ == "__main__":
             torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
             """
     )
-    parser.add_argument(
-        "data_dir", type=str, help="The directory of the dataset to predict on"
-    )
-    parser.add_argument(
-        "lang_dir", type=str, help="The directory of the language directory"
-    )
+    parser.add_argument("data_dir", type=str, help="The directory of the dataset to predict on")
+    parser.add_argument("lang_dir", type=str, help="The directory of the language directory")
     parser.add_argument("ckpt_path", type=str, help="The path to the checkpoint")
-    parser.add_argument(
-        "output_dir", type=str, help="The directory to save the predictions."
-    )
+    parser.add_argument("output_dir", type=str, help="The directory to save the predictions.")
     parser.add_argument(
         "--not_pin_memory",
         action="store_false",

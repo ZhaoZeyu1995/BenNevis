@@ -13,13 +13,9 @@ fread = open(sys.argv[1], "r")
 
 
 nodeX = 1
-nodes = (
-    []
-)  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
+nodes = []  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
 
-print(
-    str(0) + " " + str(0) + " " + "<blk>" + " " + "<eps>"
-)  # <blk> self-loop on state 0
+print(str(0) + " " + str(0) + " " + "<blk>" + " " + "<eps>")  # <blk> self-loop on state 0
 
 for entry in fread.readlines():
     entry = entry.replace("\n", "").strip()
@@ -31,9 +27,7 @@ for entry in fread.readlines():
         print(str(0) + " " + str(nodeX) + " " + phone + "_0" + " " + phone)
         print(str(nodeX) + " " + str(0) + " " + phone + "_2" + " " + "<eps>")
         print(str(nodeX) + " " + str(nodeX + 2) + " " + phone + "_2" + " " + "<eps>")
-        print(
-            str(nodeX + 2) + " " + str(nodeX + 2) + " " + phone + "_2" + " " + "<eps>"
-        )
+        print(str(nodeX + 2) + " " + str(nodeX + 2) + " " + phone + "_2" + " " + "<eps>")
         print(str(nodeX + 2) + " " + str(0) + " " + phone + "_2" + " " + "<eps>")
         print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")
         print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")
