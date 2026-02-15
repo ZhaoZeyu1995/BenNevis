@@ -51,7 +51,7 @@ echo sil > $dir/optional_silence.txt
 # Create the lexicon, which is just an identity mapping
 cut -d' ' -f2- $srcdir/train.text | tr ' ' '\n' | sort -u > $dir/phones.txt
 paste $dir/phones.txt $dir/phones.txt > $dir/lexicon.txt || exit 1;
-grep -v -F -f $dir/silence_phones.txt $dir/phones.txt > $dir/nonsilence_phones.txt 
+grep -v -F -f $dir/silence_phones.txt $dir/phones.txt > $dir/nonsilence_phones.txt
 
 # A few extra questions that will be added to those obtained by automatically clustering
 # the "real" phones.  These ask about stress; there's also one for silence.

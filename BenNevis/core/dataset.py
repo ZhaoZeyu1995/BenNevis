@@ -7,15 +7,17 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import torch
-import os
 import logging
+import os
+from typing import Any, Callable, Dict, List, Optional
+
 import kaldiio
+import torch
 import torchaudio
 from torch.nn.utils.rnn import pad_sequence
-from typing import Callable, Dict, Any, List, Optional
-from BenNevis.utils.data import read_keys, read_dict
+
 from BenNevis.core.lang import Lang
+from BenNevis.utils.data import read_dict, read_keys
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -95,14 +97,10 @@ class Dataset(torch.utils.data.Dataset):
 
         if self.segments:
             self.uttids = read_keys(self.segments)
-            logging.info(
-                f"A segments file is found. Loading utterances according to {self.segments}"
-            )
+            logging.info(f"A segments file is found. Loading utterances according to {self.segments}")
         else:
             self.uttids = read_keys(self.wav_scp)
-            logging.info(
-                f"No segments file is found. Loading utterances according to {self.wav_scp}"
-            )
+            logging.info(f"No segments file is found. Loading utterances according to {self.wav_scp}")
 
         original_num_utt = len(self.uttids)
 
@@ -116,71 +114,43 @@ class Dataset(torch.utils.data.Dataset):
         self.utt2text = read_dict(os.path.join(self.data_dir, "text"))
 
         self.utt2dur = read_dict(os.path.join(self.data_dir, "utt2dur"), mapping=float)
-        self.utt2num_frames = read_dict(
-            os.path.join(self.data_dir, "utt2num_frames"), mapping=int
-        )
+        self.utt2num_frames = read_dict(os.path.join(self.data_dir, "utt2num_frames"), mapping=int)
 
         if load_feats:
             self.dump_feats = os.path.join(self.data_dir, "feats.cmvn.scp")
             self.utt2feats = kaldiio.load_scp(self.dump_feats)
 
         if self.min_duration is not None:
-            num_short_utt = len(
-                [
-                    uttid
-                    for uttid in self.uttids
-                    if self.utt2dur[uttid] < self.min_duration
-                ]
-            )
+            num_short_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] < self.min_duration])
             logging.info(
-                f"Filtering utterances with less than {self.min_duration} seconds, {num_short_utt} utterances are removed"
+                f"Filtering utterances with less than {self.min_duration} seconds, "
+                f"{num_short_utt} utterances are removed"
             )
-            self.uttids = [
-                uttid
-                for uttid in self.uttids
-                if self.utt2dur[uttid] >= self.min_duration
-            ]
+            self.uttids = [uttid for uttid in self.uttids if self.utt2dur[uttid] >= self.min_duration]
 
         if self.max_duration is not None:
-            num_long_utt = len(
-                [
-                    uttid
-                    for uttid in self.uttids
-                    if self.utt2dur[uttid] > self.max_duration
-                ]
-            )
+            num_long_utt = len([uttid for uttid in self.uttids if self.utt2dur[uttid] > self.max_duration])
             logging.info(
-                f"Filtering utterances with more than {self.max_duration} seconds, {num_long_utt} utterances are removed"
+                f"Filtering utterances with more than {self.max_duration} seconds, "
+                f"{num_long_utt} utterances are removed"
             )
-            self.uttids = [
-                uttid
-                for uttid in self.uttids
-                if self.utt2dur[uttid] <= self.max_duration
-            ]
+            self.uttids = [uttid for uttid in self.uttids if self.utt2dur[uttid] <= self.max_duration]
 
         # Check if the num_frame is enough
         # It is 8.5 when a common experiment setting with a subsampling facotr of 4 and the 2-state topology.
         # This leads to some loss of data by approximately 4% of the training data in WSJ. with BPE 100.
         # However, we should definitely keep ratio_th as None during evaluation.
         if self.ratio_th is not None:
-            num_fast_utt = len(
-                [
-                    uttid
-                    for uttid in self.uttids
-                    if self.check_ratio(uttid) < self.ratio_th
-                ]
-            )
-            self.uttids = [
-                uttid
-                for uttid in self.uttids
-                if self.check_ratio(uttid) >= self.ratio_th
-            ]
+            num_fast_utt = len([uttid for uttid in self.uttids if self.check_ratio(uttid) < self.ratio_th])
+            self.uttids = [uttid for uttid in self.uttids if self.check_ratio(uttid) >= self.ratio_th]
             logging.info(
-                f"Filtering utterances with ratio (num_frames (stride of 10ms) / num_phones) less than {self.ratio_th}, {num_fast_utt} utterances are removed."
+                f"Filtering utterances with ratio (num_frames (stride of 10ms) / num_phones) "
+                f"less than {self.ratio_th}, {num_fast_utt} utterances are removed."
             )
 
         logging.info(
-            f"Original number of utterances: {original_num_utt}. Current number of utterances: {len(self.uttids)} after filtering"
+            f"Original number of utterances: {original_num_utt}. "
+            f"Current number of utterances: {len(self.uttids)} after filtering"
         )
 
         if self.sort is not None:
@@ -193,9 +163,7 @@ class Dataset(torch.utils.data.Dataset):
                 self.uttids = sorted(self.uttids, key=lambda x: self.utt2dur[x])
             else:
                 logging.info("Sorting utterances by descending order of duration")
-                self.uttids = sorted(
-                    self.uttids, key=lambda x: self.utt2dur[x], reverse=True
-                )
+                self.uttids = sorted(self.uttids, key=lambda x: self.utt2dur[x], reverse=True)
 
     def __len__(self):
         return len(self.uttids)
@@ -216,12 +184,7 @@ class Dataset(torch.utils.data.Dataset):
         """
         words = self.utt2text[uttid].split(" ")
         word_ids = [
-            (
-                self.lang.word2idx[word]
-                if word in self.lang.word2idx
-                else self.lang.word2idx["<UNK>"]
-            )
-            for word in words
+            (self.lang.word2idx[word] if word in self.lang.word2idx else self.lang.word2idx["<UNK>"]) for word in words
         ]
         phone_ids = self.lang.wids2pids([word_ids])[0]
         num_frame = self.utt2num_frames[uttid]
@@ -266,21 +229,17 @@ class Dataset(torch.utils.data.Dataset):
         text = self.utt2text[uttid]
         words = text.split(" ")
         word_ids = [
-            (
-                self.lang.word2idx[word]
-                if word in self.lang.word2idx
-                else self.lang.word2idx["<UNK>"]
-            )
-            for word in words
+            (self.lang.word2idx[word] if word in self.lang.word2idx else self.lang.word2idx["<UNK>"]) for word in words
         ]
         pids = self.lang.wids2pids([word_ids])[0]
 
         tids = []  # for ctc only
         if self.ctc_target:
             for pid in pids:
-                assert self.lang.idx2phone[pid] in self.lang.token2idx, (
-                    "Cannot find the token %s from the token list, please make sure you are using CTC topo"
-                    % (self.lang.idx2phone[pid])
+                assert (
+                    self.lang.idx2phone[pid] in self.lang.token2idx
+                ), "Cannot find the token %s from the token list, please make sure you are using CTC topo" % (
+                    self.lang.idx2phone[pid]
                 )
                 tids.append(self.lang.token2idx[self.lang.idx2phone[pid]])
 
@@ -415,24 +374,16 @@ class CollateFunc:
         }
 
         if self.load_wav:
-            assert all(
-                "wav" in sample for sample in list_of_samples
-            ), "wav is not available in the samples"
-            assert all(
-                "wav_len" in sample for sample in list_of_samples
-            ), "wav_len is not available in the samples"
+            assert all("wav" in sample for sample in list_of_samples), "wav is not available in the samples"
+            assert all("wav_len" in sample for sample in list_of_samples), "wav_len is not available in the samples"
             batch_wavs = [sample["wav"] for sample in list_of_samples]
             batch_wav_lens = [sample["wav_len"] for sample in list_of_samples]
             batch["wavs"] = pad_sequence(batch_wavs, batch_first=True)
             batch["wav_lens"] = torch.tensor(batch_wav_lens, dtype=torch.int32)
 
         if self.load_feats:
-            assert all(
-                "feats" in sample for sample in list_of_samples
-            ), "feats is not available in the samples"
-            assert all(
-                "feats_len" in sample for sample in list_of_samples
-            ), "feats_len is not available in the samples"
+            assert all("feats" in sample for sample in list_of_samples), "feats is not available in the samples"
+            assert all("feats_len" in sample for sample in list_of_samples), "feats_len is not available in the samples"
             batch_feats = [sample["feats"] for sample in list_of_samples]
             batch_feats_lens = [sample["feats_len"] for sample in list_of_samples]
             batch["feats"] = pad_sequence(batch_feats, batch_first=True)

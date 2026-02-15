@@ -12,12 +12,13 @@ or a substitution of the word without penalty.
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
-import numpy as np
+import argparse
 import time
 from typing import List
+
+import numpy as np
 from numba import jit
 from numba.typed import List as NumbaList
-import argparse
 
 
 @jit(nopython=True)
@@ -52,10 +53,7 @@ def wer(hyp: NumbaList[str], ref: NumbaList[str], res: NumbaList[str]):
     for i in range(1, len_ref + 1):
         for j in range(1, len_hyp + 1):
             if ref[i - 1].startswith("(") and ref[i - 1].endswith(")"):
-                if (
-                    record[i - 1, j] <= record[i, j - 1] + 1
-                    and record[i - 1, j] <= record[i - 1, j - 1]
-                ):
+                if record[i - 1, j] <= record[i, j - 1] + 1 and record[i - 1, j] <= record[i - 1, j - 1]:
                     record[i, j] = record[i - 1, j]
                     hist[i, j] = [i - 1, j, 5]  # optional deletion
                 elif record[i - 1, j - 1] <= record[i - 1, j]:
@@ -66,10 +64,7 @@ def wer(hyp: NumbaList[str], ref: NumbaList[str], res: NumbaList[str]):
                     hist[i, j] = [i, j - 1, 1]  # insertion
             else:
                 if ref[i - 1] == hyp[j - 1]:
-                    if (
-                        record[i - 1, j - 1] <= record[i - 1, j] + 1
-                        and record[i - 1, j - 1] <= record[i, j - 1] + 1
-                    ):
+                    if record[i - 1, j - 1] <= record[i - 1, j] + 1 and record[i - 1, j - 1] <= record[i, j - 1] + 1:
                         record[i, j] = record[i - 1, j - 1]
                         hist[i, j] = [i - 1, j - 1, 3]  # match
                     elif record[i - 1, j] <= record[i, j - 1]:
@@ -79,10 +74,7 @@ def wer(hyp: NumbaList[str], ref: NumbaList[str], res: NumbaList[str]):
                         record[i, j] = record[i, j - 1] + 1
                         hist[i, j] = [i, j - 1, 1]  # insertion
                 else:
-                    if (
-                        record[i - 1, j - 1] <= record[i - 1, j]
-                        and record[i - 1, j - 1] <= record[i, j - 1]
-                    ):
+                    if record[i - 1, j - 1] <= record[i - 1, j] and record[i - 1, j - 1] <= record[i, j - 1]:
                         record[i, j] = record[i - 1, j - 1] + 1
                         hist[i, j] = [i - 1, j - 1, 2]  # substitution
                     elif record[i - 1, j] <= record[i, j - 1]:
@@ -121,9 +113,7 @@ def wer(hyp: NumbaList[str], ref: NumbaList[str], res: NumbaList[str]):
 def run(hyp: List[str], ref: List[str]):
     # if hyp is empty, then all should be deletions
     if len(hyp) == 0:
-        error = len(ref) - len(
-            [x for x in ref if x.startswith("(") and x.endswith(")")]
-        )
+        error = len(ref) - len([x for x in ref if x.startswith("(") and x.endswith(")")])
         res = ["D" if x.startswith("(") and x.endswith(")") else "DO" for x in ref]
         return error, res
     hyp = NumbaList[str](hyp)
@@ -181,9 +171,7 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
     fc = ""
     for uttid, hyp in hyp_dict.items():
         ref = ref_dict[uttid]
-        Ntotal += len(ref) - len(
-            [x for x in ref if x.startswith("(") and x.endswith(")")]
-        )
+        Ntotal += len(ref) - len([x for x in ref if x.startswith("(") and x.endswith(")")])
         NSetence += 1
         error, res = run(hyp, ref)
         align(hyp, ref, res)
@@ -208,10 +196,7 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
             res.count("SO"),
         )
 
-        max_lengths = [
-            max(len(word1), len(word2), len(word3))
-            for word1, word2, word3 in zip(hyp, ref, res)
-        ]
+        max_lengths = [max(len(word1), len(word2), len(word3)) for word1, word2, word3 in zip(hyp, ref, res)]
 
         hyp_txt = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)])
         ref_txt = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)])
@@ -238,11 +223,7 @@ def main(hyp_path: str, ref_path: str, format: str, output_path: str):
         )
         + fc
     )
-    fc = (
-        "Total: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n"
-        % (Ncor, Nsub, Ndel, Nins, NdelOpt, NsubOpt)
-        + fc
-    )
+    fc = "Total: (#C #S #D #I #DO #SO) %d %d %d %d %d %d\n" % (Ncor, Nsub, Ndel, Nins, NdelOpt, NsubOpt) + fc
     f.write(fc)
     f.close()
 
@@ -254,20 +235,11 @@ def debug():
     start = time.time()
     error, res = run(hyp, ref)
     align(hyp, ref, res)
-    max_lengths = [
-        max(len(word1), len(word2), len(word3))
-        for word1, word2, word3 in zip(hyp, ref, res)
-    ]
+    max_lengths = [max(len(word1), len(word2), len(word3)) for word1, word2, word3 in zip(hyp, ref, res)]
 
-    formatted_list1 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)]
-    )
-    formatted_list2 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)]
-    )
-    formatted_list3 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)]
-    )
+    formatted_list1 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)])
+    formatted_list2 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)])
+    formatted_list3 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)])
 
     print(formatted_list1)
     print(formatted_list2)
@@ -301,20 +273,11 @@ def debug():
     error, res = run(hyp, ref)
     print(error)
     align(hyp, ref, res)
-    max_lengths = [
-        max(len(word1), len(word2), len(word3))
-        for word1, word2, word3 in zip(hyp, ref, res)
-    ]
+    max_lengths = [max(len(word1), len(word2), len(word3)) for word1, word2, word3 in zip(hyp, ref, res)]
 
-    formatted_list1 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)]
-    )
-    formatted_list2 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)]
-    )
-    formatted_list3 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)]
-    )
+    formatted_list1 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)])
+    formatted_list2 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)])
+    formatted_list3 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)])
 
     print(formatted_list1)
     print(formatted_list2)
@@ -328,20 +291,11 @@ def debug():
     error, res = run(hyp, ref)
     print(error)
     align(hyp, ref, res)
-    max_lengths = [
-        max(len(word1), len(word2), len(word3))
-        for word1, word2, word3 in zip(hyp, ref, res)
-    ]
+    max_lengths = [max(len(word1), len(word2), len(word3)) for word1, word2, word3 in zip(hyp, ref, res)]
 
-    formatted_list1 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)]
-    )
-    formatted_list2 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)]
-    )
-    formatted_list3 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)]
-    )
+    formatted_list1 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)])
+    formatted_list2 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)])
+    formatted_list3 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)])
 
     print(formatted_list1)
     print(formatted_list2)
@@ -356,20 +310,11 @@ def debug():
     print(error)
     align(hyp, ref, res)
 
-    max_lengths = [
-        max(len(word1), len(word2), len(word3))
-        for word1, word2, word3 in zip(hyp, ref, res)
-    ]
+    max_lengths = [max(len(word1), len(word2), len(word3)) for word1, word2, word3 in zip(hyp, ref, res)]
 
-    formatted_list1 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)]
-    )
-    formatted_list2 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)]
-    )
-    formatted_list3 = " ".join(
-        [f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)]
-    )
+    formatted_list1 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(hyp)])
+    formatted_list2 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(ref)])
+    formatted_list3 = " ".join([f"{word:<{max_lengths[i]}}" for i, word in enumerate(res)])
 
     print(formatted_list1)
     print(formatted_list2)

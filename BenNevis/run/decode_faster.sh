@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 # This is a wrapper script that conducts decoding with the Kaldi decode-faster decoder.
 # The script is used to decode the output posterior probabilities from the neural network.
 # Usage:

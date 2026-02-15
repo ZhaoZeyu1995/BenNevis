@@ -17,11 +17,12 @@ Authors:
 
 import logging
 import os
+
 import torch
-import torch.nn as nn
-import torchaudio
-import torch.nn.functional as F
 import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
+import torchaudio
 
 
 class Wav2Vec2Model(torch.nn.Module):
@@ -65,9 +66,7 @@ class Wav2Vec2Model(torch.nn.Module):
             os.makedirs("exp/downloads", exist_ok=True)
             wav2vec2 = bundle.get_model(dl_kwargs={"model_dir": "exp/downloads"})
         dist.barrier()
-        logging.info(
-            f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}"
-        )
+        logging.info(f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}")
         bundle = getattr(torchaudio.pipelines, from_pretrained)
         wav2vec2 = bundle.get_model(dl_kwargs={"model_dir": "exp/downloads"})
         # If the model is not an instance of torchaudio.models.wav2vec2.Wav2Vec2Model, wrap it
@@ -86,9 +85,7 @@ class Wav2Vec2Model(torch.nn.Module):
             wav2vec2.append_star = False
 
         self.wav2vec2 = wav2vec2
-        self.wav2vec2.model.aux = (
-            None  # get rid of the output linear layer in wav2vec2 model
-        )
+        self.wav2vec2.model.aux = None  # get rid of the output linear layer in wav2vec2 model
 
         self.olayer = nn.Sequential(
             nn.Linear(self.wav2vec2_odim, self.wav2vec2_odim),
@@ -108,17 +105,13 @@ class Wav2Vec2Model(torch.nn.Module):
             f"transformer layers of the wav2vec2 encoder."
         )
         if self.finetune_last_n_layers > 0:
-            assert self.finetune_last_n_layers <= len(
-                self.wav2vec2.model.encoder.transformer.layers
-            ), (
+            assert self.finetune_last_n_layers <= len(self.wav2vec2.model.encoder.transformer.layers), (
                 f"RANK {self.rank}: finetune_last_n_layers should be less than or equal to "
                 f"the number of transformer layers in the wav2vec2 encoder"
                 f" but got {self.finetune_last_n_layers} and "
                 f"{len(self.wav2vec2.model.encoder.transformer.layers)} respectively."
             )
-            self.wav2vec2.model.encoder.transformer.layers[
-                -self.finetune_last_n_layers :
-            ].requires_grad_(True)
+            self.wav2vec2.model.encoder.transformer.layers[-self.finetune_last_n_layers :].requires_grad_(True)
 
     def forward(self, x, xlens):
         """

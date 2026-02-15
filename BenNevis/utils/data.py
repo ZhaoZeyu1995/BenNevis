@@ -4,7 +4,7 @@ Authors:
     Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-from typing import List, Optional, Callable, Dict, Any, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 def read_dict(
@@ -38,16 +38,9 @@ def read_dict(
             lc = line.strip().split()
             key = lc[0] if key_mapping is None else key_mapping(lc[0])
             assert value_start < len(lc), (
-                "Expect at least %d elements per line but got %d"
-                % (value_start + 1, len(lc))
-                + "Line content: "
-                + line
+                "Expect at least %d elements per line but got %d" % (value_start + 1, len(lc)) + "Line content: " + line
             )
-            temp[key] = (
-                " ".join(lc[value_start:])
-                if mapping is None
-                else mapping(" ".join(lc[value_start:]))
-            )
+            temp[key] = " ".join(lc[value_start:]) if mapping is None else mapping(" ".join(lc[value_start:]))
     return temp
 
 

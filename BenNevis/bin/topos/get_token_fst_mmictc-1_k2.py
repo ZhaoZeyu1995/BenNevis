@@ -14,14 +14,10 @@ fread = open(sys.argv[1], "r")
 
 
 nodeX = 1
-nodes = (
-    []
-)  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
+nodes = []  # list of tuple (phone, nodeX). Note each phone corresponds to one state id, nodeX
 
 
-print(
-    str(0) + " " + str(0) + " " + "<blk>" + " " + "<eps>"
-)  # <blk> self-loop on state 0
+print(str(0) + " " + str(0) + " " + "<blk>" + " " + "<eps>")  # <blk> self-loop on state 0
 
 for entry in fread.readlines():
     entry = entry.replace("\n", "").strip()
@@ -30,27 +26,13 @@ for entry in fread.readlines():
     if phone == "<eps>" or phone == "<SIL>" or phone.startswith("#"):
         continue
     else:
-        print(
-            str(0) + " " + str(0) + " " + phone + "_0" + " " + phone
-        )  # transiting the first state
-        print(
-            str(0) + " " + str(nodeX) + " " + phone + "_0" + " " + phone
-        )  # transiting the first state
-        print(
-            str(nodeX) + " " + str(nodeX) + " " + phone + "_0" + " " + "<eps>"
-        )  # first state self-loop
-        print(
-            str(nodeX) + " " + str(0) + " " + phone + "_1" + " " + "<eps>"
-        )  # transiting the first state
-        print(
-            str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>"
-        )  #  transiting to the second state
-        print(
-            str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>"
-        )  #  transiting to the second state
-        print(
-            str(nodeX + 1) + " " + str(0) + " " + phone + "_1" + " <eps>"
-        )  #  transiting to the second state
+        print(str(0) + " " + str(0) + " " + phone + "_0" + " " + phone)  # transiting the first state
+        print(str(0) + " " + str(nodeX) + " " + phone + "_0" + " " + phone)  # transiting the first state
+        print(str(nodeX) + " " + str(nodeX) + " " + phone + "_0" + " " + "<eps>")  # first state self-loop
+        print(str(nodeX) + " " + str(0) + " " + phone + "_1" + " " + "<eps>")  # transiting the first state
+        print(str(nodeX) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # transiting to the second state
+        print(str(nodeX + 1) + " " + str(nodeX + 1) + " " + phone + "_1" + " <eps>")  # transiting to the second state
+        print(str(nodeX + 1) + " " + str(0) + " " + phone + "_1" + " <eps>")  # transiting to the second state
     nodeX += 2
 
 print("0")

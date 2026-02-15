@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 # This script is used to prepare the decoding graph for decoding.
 # It first copies the source language directory to the destination directory.
 # Then it generates several files by running run/prepare_topo.sh in the destination directory.
@@ -71,7 +71,7 @@ else
     nondeterministic=false
 fi
 
-if [[ $nondeterministic == 'false' ]]; then 
+if [[ $nondeterministic == 'false' ]]; then
     fsttablecompose $des/T.fst $tmp/LG.fst | fstdeterminizestar --use-log=true | \
        fstrmsymbols $des/disambig.int | fstrmepslocal | fstminimizeencoded | fstarcsort --sort_type=ilabel > $des/TLG.fst || exit 1;
 else

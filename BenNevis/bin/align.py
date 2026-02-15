@@ -39,13 +39,15 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import os
-import k2
-import torch
-import numpy as np
-import kaldiio
-import logging
 import argparse
+import logging
+import os
+
+import k2
+import kaldiio
+import numpy as np
+import torch
+
 from BenNevis.core.lang import Lang
 from BenNevis.utils.data import read_dict
 
@@ -149,13 +151,9 @@ def main(args):
 
     count = 0
 
-    with kaldiio.WriteHelper(
-        f"ark:| gzip -c > {args.output_align_path}"
-    ) as writer, kaldiio.WriteHelper(
+    with kaldiio.WriteHelper(f"ark:| gzip -c > {args.output_align_path}") as writer, kaldiio.WriteHelper(
         f"ark:| gzip -c > {args.output_word_align_path}"
-    ) as word_writer, open(
-        args.output_ctm_path, "w"
-    ) as ctm_file:
+    ) as word_writer, open(args.output_ctm_path, "w") as ctm_file:
         ctm = ""
         for utt, log_prob in utt2log_prob.items():
             logging.info(f"Processing utterance {utt}")
@@ -163,11 +161,7 @@ def main(args):
             log_prob_len = torch.tensor([log_prob.shape[1]])
             targets = [
                 [
-                    (
-                        lang.word2idx[word]
-                        if word in lang.word2idx
-                        else lang.word2idx["<UNK>"]
-                    )
+                    (lang.word2idx[word] if word in lang.word2idx else lang.word2idx["<UNK>"])
                     for word in text[utt].split()
                 ]
             ]
@@ -210,7 +204,8 @@ def main(args):
                     e = [aux_labels[p], p, p + 1]
                 p += 1
             for e in aligns:
-                ctm += f"{utt} {channel} {e[1]*args.frame_shift:.3f} {args.frame_shift*(e[2]-e[1]):.3f} {lang.idx2word[e[0]]}\n"
+                ctm += f"{utt} {channel} {e[1] * args.frame_shift:.3f} "  # noqa: E501
+                ctm += f"{args.frame_shift * (e[2] - e[1]):.3f} {lang.idx2word[e[0]]}\n"
             count += 1
         ctm_file.write(ctm)
         logging.info(f"Processed {count} utterances")
@@ -225,16 +220,11 @@ if __name__ == "__main__":
         description="Align the log-probabilities with the text using the K2 library",
     )
     parser.add_argument("lang_dir", type=str, help="The language directory")
-    parser.add_argument(
-        "log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format"
-    )
+    parser.add_argument("log_prob_scp", type=str, help="The log-probabilities in Kaldi scp format")
     parser.add_argument(
         "text",
         type=str,
-        help=(
-            "The text in Kaldi format with the utterance ID "
-            "and the text separated by a space in each line"
-        ),
+        help=("The text in Kaldi format with the utterance ID " "and the text separated by a space in each line"),
     )
     parser.add_argument(
         "--output_ctm_path",
@@ -271,7 +261,11 @@ if __name__ == "__main__":
         "--ignore_labels",
         type=str,
         default="",
-        help="The input labels to ignore when generating the ctm file. The input should be a sequence of input label ids separated by a comma. For example, '0,1,2' will ignore the labels 0, 1, and 2. Default is an empty string. The ignored labels will be treated as silence.",
+        help=(  # noqa: E501
+            "The input labels to ignore when generating the ctm file. The input should be a sequence of "
+            "input label ids separated by a comma. For example, '0,1,2' will ignore the labels 0, 1, and 2. "
+            "Default is an empty string. The ignored labels will be treated as silence."
+        ),
     )
 
     args = parser.parse_args()

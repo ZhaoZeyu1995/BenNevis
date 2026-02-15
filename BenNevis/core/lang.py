@@ -40,12 +40,14 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import os
 import logging
+import os
+from typing import List
+
 import k2
 import torch
-from typing import List, Union
-from BenNevis.utils.data import read_keys, read_dict
+
+from BenNevis.utils.data import read_dict, read_keys
 
 
 class Lang(object):
@@ -143,9 +145,7 @@ class Lang(object):
         self.topo: k2.Fsa
             The topology FSA.
         """
-        assert os.path.exists(
-            os.path.join(self._lang_dir, "k2", "T.fst")
-        ), f"{self._lang_dir}/k2/T.fst does not exist"
+        assert os.path.exists(os.path.join(self._lang_dir, "k2", "T.fst")), f"{self._lang_dir}/k2/T.fst does not exist"
 
         logging.info(f"Loading and processing topo from {self._lang_dir}/k2/T.fst")
 
@@ -173,9 +173,7 @@ class Lang(object):
             self.L_inv = k2.arc_sort(k2.Fsa.from_dict(torch.load(L_inv_fst)))
             self.L = k2.arc_sort(self.L_inv.invert())
         else:
-            logging.info(
-                f"Loading {self._lang_dir}/L.fst and generating {self._lang_dir}/k2/L_inv.pt."
-            )
+            logging.info(f"Loading {self._lang_dir}/L.fst and generating {self._lang_dir}/k2/L_inv.pt.")
 
             cmd = (
                 f"""fstprint {self._lang_dir}/L.fst | """
@@ -212,18 +210,12 @@ class Lang(object):
 
         word_fsa = k2.linear_fsa(word_ids_list, device=device)
         word_fsa_with_self_loop = k2.add_epsilon_self_loops(word_fsa)
-        fsa = k2.intersect(
-            self.L_inv, word_fsa_with_self_loop, treat_epsilons_specially=False
-        )
+        fsa = k2.intersect(self.L_inv, word_fsa_with_self_loop, treat_epsilons_specially=False)
 
         trans_fsa = k2.arc_sort(fsa.invert())  # trans_fsa: phones -> words
-        trans_fsa_with_self_loop = k2.arc_sort(
-            k2.remove_epsilon_and_add_self_loops(trans_fsa)
-        )
+        trans_fsa_with_self_loop = k2.arc_sort(k2.remove_epsilon_and_add_self_loops(trans_fsa))
 
-        training_graph = k2.compose(
-            self.topo, trans_fsa_with_self_loop, treat_epsilons_specially=False
-        )
+        training_graph = k2.compose(self.topo, trans_fsa_with_self_loop, treat_epsilons_specially=False)
 
         return training_graph
 

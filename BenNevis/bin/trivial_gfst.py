@@ -18,9 +18,8 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import sys
 import re
-
+import sys
 
 with open(sys.argv[1]) as f:
     for line in f:

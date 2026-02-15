@@ -12,14 +12,16 @@ Authors:
 
 import logging
 import os
+from typing import Optional
+
+import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
-import numpy as np
 import whisper
+
 from BenNevis.utils.nets import lens2mask
-from typing import Optional
 
 
 def sinusoids(length, channels, max_timescale=10000):
@@ -141,18 +143,12 @@ class WhisperModel(torch.nn.Module):
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
 
-        logging.info(
-            f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}"
-        )
-        whisper_model = whisper.load_model(
-            from_pretrained, download_root="exp/downloads"
-        )
+        logging.info(f"RANK {self.rank}: Loading the pre-trained model {from_pretrained}")
+        whisper_model = whisper.load_model(from_pretrained, download_root="exp/downloads")
 
         self.whisper_enc = whisper_model.encoder
         assert max_len <= 10000, "max_len should be less than or equal to 10000"
-        self.whisper_enc.register_buffer(
-            "positional_embedding", sinusoids(max_len, whisper_odim)
-        )
+        self.whisper_enc.register_buffer("positional_embedding", sinusoids(max_len, whisper_odim))
         AttnClass = self.whisper_enc.blocks[0].attn.__class__
         AttnClass.qkv_attention = qkv_attention
 

@@ -1,9 +1,88 @@
-# cache
-__pycache__
-# debug
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Debug
 debug.*
 *.debug.*
-# egs
+
+# Logs
+*.log
+
+# Experiment outputs
 /egs/*/*/mfcc
 /egs/*/*/fbank
 /egs/*/*/cmvn
@@ -15,10 +94,14 @@ debug.*
 /egs/*/*/enhan
 /egs/*/*/db
 /egs/*/*/wandb
-# yesno
+
+# Dataset downloads
 egs/yesno/asr/waves_yesno
 egs/yesno/asr/waves_yesno.tar.gz
 
-# tools
+# Tools
 /tools/kaldi
 /tools/venv
+
+# WandB
+wandb/

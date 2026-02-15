@@ -21,90 +21,84 @@ This is an End-to-End (E2E) Automatic Speech Recognition (ASR) toolkit based on 
 
 # Installation
 
-## Kaldi
+## Prerequisites
 
-You need to install [Kaldi](https://github.com/kaldi-asr/kaldi) first and then run 
+- Python >= 3.8
+- CUDA-capable GPU (recommended for training)
+- [Kaldi](https://github.com/kaldi-asr/kaldi) (for data preparation and decoding)
+
+## Quick Install (Recommended)
+
+### 0. Clone the Repository
+
 ```shell
-cd BenNevis/tools
+git clone https://github.com/zeyuzhao/BenNevis.git
+cd BenNevis
+```
+
+### 1. Install Kaldi
+
+Install [Kaldi](https://github.com/kaldi-asr/kaldi) and link it to BenNevis:
+```shell
+cd tools
 ./put_kaldi.sh /path/to/kaldi
 ```
-This script simply makes a symbol link to your Kaldi.
+This creates a symbolic link to your Kaldi installation. Kaldi is used for data preparation, feature extraction, graph compilation (OpenFST), and WFST-based decoding.
 
-In BenNevis, Kaldi is applied for data preparation, feature extraction, graph compilation (based on OpenFST) and WFST-based decoding (`decode-faster` decoder).
+### 2. Install BenNevis
 
-## Virtual Environment
-
-You are supposed to create a virtual environment, named `venv`, in `BenNevis/tools/` to run the code in BenNevis.
-There are two ways of creating the virtual environment for BenNevis to run.
-### Automatic Script
-
-You may simply run
 ```shell
-cd BenNevis/tools
+# Create virtual environment
+python3 -m venv tools/venv # Create a virtual environment in tools/venv
+source tools/venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install PyTorch (adjust CUDA and PyTorch version as needed)
+pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
+
+# Install k2 (must match PyTorch and CUDA versions)
+pip install k2==1.24.4.dev20231220+cuda11.8.torch2.1.0 -f https://k2-fsa.github.io/k2/cuda.html
+
+# Install BenNevis
+pip install -e .
+
+# For development
+pip install -e ".[dev]"
+```
+
+See [k2 installation page](https://k2-fsa.github.io/k2/cuda.html) for available precompiled wheels matching your PyTorch and CUDA versions.
+
+## Alternative: Automated Setup Script
+
+For quick setup with default versions:
+```shell
+cd tools
 ./create_env.sh
 ```
-to create the following environment.
-You may notice that the versions of `PyTorch` and `k2` are hard coded in the script.
-However, please feel free to change it to your favourite versions.
 
-### Manually Configuration
+This creates a virtual environment with PyTorch 2.1.0 and k2. You can modify the script to use different versions.
 
-The automatic script is more recommended, but you may still do it yourself.
+## Installation from Requirements
+
+If you prefer using requirements files:
+
 ```shell
-cd BenNevis/tools/
-python3 -m venv venv
-```
-Currently, ``Python >= 3.8`` is recommended.
-Actually, you may choose whichever Python version as long as you can successfully install `PyTorch` and `k2`.
+# Install core dependencies
+pip install -r requirements.txt
 
-From now on, you need to activate this virtual environment and install libraries via `pip`.
-Assuming that you are now at `BenNevis/tools/`,
-```shell
-source venv/bin/activate
+# Install development dependencies
+pip install -r requirements-dev.txt
 ```
 
-#### PyTorch
-Here is the version that I am using.
-Please feel free to use other versions, but at least it should support [`torchrun`](https://pytorch.org/docs/stable/elastic/run.html).
-Besides, please make sure that your PyTorch supports CUDA.
-```shell
-pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
-```
+**Note:** You still need to install k2 separately with the correct PyTorch/CUDA version match.
 
-#### k2
+## Verify Installation
 
-The `k2` installation is a bit tricky as you need to make sure that the wheel matches your `PyTorch` version, including the `CUDA` version.
-For example, 
-```Shell
-pip install k2==1.24.4.dev20231220+cuda11.8.torch2.1.0 -f https://k2-fsa.github.io/k2/cuda.html
-```
-You can see that the CUDA and torch version exactly matches what I just installed.
-You may refer to [this page](https://k2-fsa.github.io/k2/cuda.html) for more available precompiled wheels.
+```python
+import BenNevis
+print(BenNevis.__version__)  # Should print: 0.1.0
 
-#### Misc
-
-Here are some other libraries you need to install by pip. Note that some of them are optional.
-I do not specify the versions for them but usually the latest versions should work.
-```shell
-# for the progress bar support
-pip install tqdm  
-# for configuration management
-pip install hydra-core 
-# a very powerful logger
-pip install wandb 
-# for model summary display
-pip install torchinfo 
-# for kaldi-format data IO
-pip install kaldiio 
-# for whisper finetuning
-pip install openai-whisper
-
-# Currently Optional
-pip install transformers
-pip install datasets
-pip install numba
-pip install librosa
-pip install soundfile
+# Test imports
+from BenNevis import Trainer, Dataset, Lang, GraphLoss
 ```
 
 # Quick Start
@@ -121,6 +115,43 @@ It usually includes
 6. Predicting (obtaining the posterior from the NN model, see `run/predict.sh` for details)
 7. Decoding (taking the decoding graph and the posterior as inputs, see `run/decode_faster.sh` for details)
 8. Alignment (optional, supporting alignment with ground truth or decoding results, see `run/align.sh` for details)
+
+# Contributing
+
+We welcome contributions from the community! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute.
+
+## Development Setup
+
+```bash
+# Install with development dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+
+# Run tests
+pytest tests/
+
+# Format code
+black BenNevis/
+isort BenNevis/
+```
+
+# Citation
+
+If you use BenNevis in your research, please cite it:
+
+```bibtex
+@software{bennevis2024,
+  author = {Zhao, Zeyu},
+  title = {BenNevis: End-to-End ASR Toolkit based on DWFST},
+  year = {2024},
+  url = {https://github.com/zeyuzhao/BenNevis},
+  version = {0.1.0}
+}
+```
+
+You can also use the [CITATION.cff](CITATION.cff) file for automatic citation generation.
 
 # Contact
 

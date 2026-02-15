@@ -34,11 +34,11 @@ for x in train_clean_100 train_clean_360 train_other_500; do
 done
 
 for x in train_clean_100 train_clean_360 train_other_500; do
-    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n' 
+    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n'
 done | grep -v -w '<UNK>' | grep -v -w '<SIL>' | sort | uniq > $tmpdir/words.train
 for x in dev_clean dev_other; do
     [ ! -f data/$x/text ] && echo "$0: expected file data/$x/text to exist" && exit 1;
-    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n' 
+    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n'
 done | grep -v -w '<UNK>' | grep -v -w '<SIL>' | sort | uniq > $tmpdir/words.dev
 cat $vocab | sort | uniq > $tmpdir/words.vocab
 

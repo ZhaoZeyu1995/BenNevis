@@ -7,10 +7,12 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
+from typing import Iterable, Optional
+
 import torch
-from torch import nn, Tensor
 import torch.nn.functional as F
-from typing import Optional, Iterable
+from torch import Tensor, nn
+
 from BenNevis.models.whisper import sinusoids
 from BenNevis.utils.nets import lens2mask
 
@@ -21,12 +23,8 @@ class Conv1d(torch.nn.Conv1d):
     Note that this is copied from the whisper implementation.
     """
 
-    def _conv_forward(
-        self, x: Tensor, weight: Tensor, bias: Optional[Tensor]
-    ) -> Tensor:
-        return super()._conv_forward(
-            x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype)
-        )
+    def _conv_forward(self, x: Tensor, weight: Tensor, bias: Optional[Tensor]) -> Tensor:
+        return super()._conv_forward(x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype))
 
 
 class LayerNorm(nn.LayerNorm):
@@ -178,9 +176,7 @@ class ResidualAttentionBlock(nn.Module):
         self.attn_ln = LayerNorm(n_state)
 
         n_mlp = n_state * 4
-        self.mlp = nn.Sequential(
-            Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state)
-        )
+        self.mlp = nn.Sequential(Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state))
         self.mlp_ln = LayerNorm(n_state)
 
     def forward(
@@ -401,7 +397,8 @@ class Conv1dSubsampling8(nn.Module):
         Returns
         -------
         x : torch.Tensor
-            The output tensor of shape (B, T*, odim), where T* = (((T + 1) // 2 + 1) // 2 + 1) // 2 is the subsampled length.
+            The output tensor of shape (B, T*, odim), where
+            T* = (((T + 1) // 2 + 1) // 2 + 1) // 2 is the subsampled length.
         xlens : torch.Tensor
             The length of each output sequence in the batch with shape (B,).
         """

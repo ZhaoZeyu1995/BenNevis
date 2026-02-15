@@ -93,6 +93,3 @@ done > $output_dir/align/ctm
 
 # sort the ctm
 cat $output_dir/align/ctm | sort -k1,1 -k3,3n > $output_dir/align/tmp && mv $output_dir/align/tmp $output_dir/align/ctm
-
-
-

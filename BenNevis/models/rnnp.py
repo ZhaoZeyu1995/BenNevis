@@ -8,11 +8,13 @@ Authors:
 """
 
 import logging
+from typing import List, Optional, Tuple, Union
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from typing import List, Union, Tuple, Optional
+
 from BenNevis.utils.nets import make_pad_mask
 
 
@@ -91,9 +93,7 @@ class RNNP(torch.nn.Module):
         self.elayers = elayers
         self.cdim = cdim
         self.subsample = subsample
-        assert (
-            len(self.subsample) == self.elayers
-        ), "#subsample {} and elayers {} mismatch".format(
+        assert len(self.subsample) == self.elayers, "#subsample {} and elayers {} mismatch".format(
             len(self.subsample), self.elayers
         )
         self.typ = typ
@@ -104,12 +104,8 @@ class RNNP(torch.nn.Module):
         self,
         xs_pad: torch.Tensor,
         ilens: Union[List[int], torch.Tensor],
-        prev_state: Optional[
-            Union[List[torch.Tensor], List[Tuple[torch.Tensor]]]
-        ] = None,
-    ) -> Tuple[
-        torch.Tensor, torch.Tensor, Union[List[torch.Tensor], List[Tuple[torch.Tensor]]]
-    ]:
+        prev_state: Optional[Union[List[torch.Tensor], List[Tuple[torch.Tensor]]]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Union[List[torch.Tensor], List[Tuple[torch.Tensor]]]]:
         """
         RNNP forward
 
@@ -172,9 +168,7 @@ class RNNP(torch.nn.Module):
                 if isinstance(ilens, torch.Tensor):
                     ilens = (ilens + 1) // sub
                 else:
-                    assert isinstance(
-                        ilens, list
-                    ), "ilens must be list or Tensor, but got %s" % type(ilens)
+                    assert isinstance(ilens, list), "ilens must be list or Tensor, but got %s" % type(ilens)
                     ilens = torch.tensor([int(i + 1) // sub for i in ilens])
             projection_layer = getattr(self, "bt%d" % layer)
             xs_pad = projection_layer(ys_pad)
@@ -362,14 +356,10 @@ class VGG2L(torch.nn.Module):
         else:
             ilens = np.array(ilens, dtype=np.float32)
         ilens = np.array(np.ceil(ilens / 2), dtype=np.int64)
-        ilens = np.array(
-            np.ceil(np.array(ilens, dtype=np.float32) / 2), dtype=np.int64
-        ).tolist()
+        ilens = np.array(np.ceil(np.array(ilens, dtype=np.float32) / 2), dtype=np.int64).tolist()
 
         xs_pad = xs_pad.transpose(1, 2)
-        xs_pad = xs_pad.contiguous().view(
-            xs_pad.size(0), xs_pad.size(1), xs_pad.size(2) * xs_pad.size(3)
-        )
+        xs_pad = xs_pad.contiguous().view(xs_pad.size(0), xs_pad.size(1), xs_pad.size(2) * xs_pad.size(3))
         return xs_pad, ilens, prev_state
 
 
@@ -479,9 +469,7 @@ class Encoder(torch.nn.Module):
             self.conv_subsampling_factor = 4
         else:
             if etype[-1] == "p":
-                self.enc = torch.nn.ModuleList(
-                    [RNNP(idim, elayers, eunits, eprojs, subsample, dropout, typ=typ)]
-                )
+                self.enc = torch.nn.ModuleList([RNNP(idim, elayers, eunits, eprojs, subsample, dropout, typ=typ)])
                 logging.info(typ.upper() + " with every-layer projection for encoder")
                 self.layernorm = torch.nn.LayerNorm(eprojs)
                 self.olayer = torch.nn.Sequential(
@@ -490,9 +478,7 @@ class Encoder(torch.nn.Module):
                     torch.nn.Linear(eprojs, odim),
                 )
             else:
-                self.enc = torch.nn.ModuleList(
-                    [RNN(idim, elayers, eunits, eprojs, dropout, typ=typ)]
-                )
+                self.enc = torch.nn.ModuleList([RNN(idim, elayers, eunits, eprojs, dropout, typ=typ)])
                 logging.info(typ.upper() + " without projection for encoder")
                 if typ.startswith("b"):
                     self.layernorm = torch.nn.LayerNorm(2 * eunits)

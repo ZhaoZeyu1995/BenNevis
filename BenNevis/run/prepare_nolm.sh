@@ -30,4 +30,3 @@ fi
 cp -r $src $des
 
 trivial_gfst.py $des/words.txt | fstcompile --isymbols=$des/words.txt --osymbols=$des/words.txt | fstarcsort --sort_type=ilabel > $des/G.fst
-

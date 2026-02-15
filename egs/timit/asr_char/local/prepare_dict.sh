@@ -20,7 +20,7 @@ for x in train dev test; do
 done
 
 for x in train dev test; do
-    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n' 
+    cat data/$x/text | cut -d' ' -f2- | tr ' ' '\n'
 done | grep -v -w '<UNK>' | grep -v -w '<SIL>' | sort | uniq > $tmpdir/words.all
 
 # Prepare the dictionary
