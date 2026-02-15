@@ -32,8 +32,8 @@ jobs:
     - name: Run flake8
       run: flake8 BenNevis/ --max-line-length=120 --extend-ignore=E203,W503
 
-  test:
-    name: Test on Python ${{ matrix.python-version }}
+  base-test:
+    name: Base Tests (no k2) on Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -58,9 +58,9 @@ jobs:
       run: |
         pip install -e .
 
-    - name: Run tests
+    - name: Run base tests
       run: |
-        pytest tests/ -v --cov=BenNevis --cov-report=xml --cov-report=term || true
+        pytest tests/ -v -m "not k2" --cov=BenNevis --cov-report=xml --cov-report=term
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -70,6 +70,37 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+
+  k2-test:
+    name: k2 Tests on Python 3.9
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+        pip install pytest pytest-cov
+        pip install tqdm hydra-core wandb torchinfo kaldiio
+
+    - name: Install k2 (CPU wheel matching torch 2.1.0)
+      run: |
+        pip install k2==1.24.4.dev20231220+cpu.torch2.1.0 -f https://k2-fsa.github.io/k2/cpu.html
+
+    - name: Install BenNevis
+      run: |
+        pip install -e .
+
+    - name: Run k2 tests
+      run: |
+        pytest tests/ -v -m "k2"
 
   package:
     name: Check Package Build

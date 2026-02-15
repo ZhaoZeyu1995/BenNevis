@@ -5,10 +5,8 @@ import tempfile
 
 import pytest
 
-# Skip all tests if k2 is not available (e.g., in CI without CUDA)
-pytest.importorskip("k2", reason="k2 module not available (requires CUDA)")
 
-
+@pytest.mark.k2
 class TestLangBasic:
     """Basic tests for Lang class that don't require actual lang directory."""
 

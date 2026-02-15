@@ -93,4 +93,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "k2: tests requiring the k2 dependency",
+]
 addopts = "-v --cov=BenNevis --cov-report=term-missing --cov-report=html"

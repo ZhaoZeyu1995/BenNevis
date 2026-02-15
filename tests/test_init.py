@@ -1,9 +1,8 @@
 """Tests for BenNevis package initialization."""
 
-import pytest
+import importlib.util
 
-# Skip all tests if k2 is not available (e.g., in CI without CUDA)
-pytest.importorskip("k2", reason="k2 module not available (requires CUDA)")
+import pytest
 
 import BenNevis  # noqa: E402
 
@@ -22,12 +21,17 @@ def test_author():
 
 
 def test_exports():
-    """Test that main classes are exported."""
-    assert hasattr(BenNevis, "Trainer")
-    assert hasattr(BenNevis, "Dataset")
-    assert hasattr(BenNevis, "CollateFunc")
-    assert hasattr(BenNevis, "Lang")
-    assert hasattr(BenNevis, "GraphLoss")
+    """Test that main classes are exported when k2 is available."""
+    has_k2 = importlib.util.find_spec("k2") is not None
+    exported = ("Trainer", "Dataset", "CollateFunc", "Lang", "GraphLoss")
+
+    if has_k2:
+        for name in exported:
+            assert hasattr(BenNevis, name)
+    else:
+        for name in exported:
+            with pytest.raises(ModuleNotFoundError):
+                getattr(BenNevis, name)
 
 
 def test_all_list():
