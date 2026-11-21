@@ -21,6 +21,7 @@ Authors:
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -552,3 +553,101 @@ class TestFstprint:
 
         status = capture.main([str(recipe), str(tmp_path / "out"), "--corpus", "yesno"])
         assert status == 1
+
+
+class TestKaldiToolLocation:
+    """`find_kaldi_tool` covers more than one tool now."""
+
+    @posix_only
+    @pytest.mark.parametrize("tool", sorted(capture.TOOL_LOCATIONS))
+    def test_each_tool_is_found_under_kaldi_root(self, tool, tmp_path, monkeypatch):
+        root = tmp_path / "kaldi"
+        binary = root / capture.TOOL_LOCATIONS[tool] / tool
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o755)
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("KALDI_ROOT", str(root))
+        assert capture.find_kaldi_tool(tool) == str(binary)
+
+    def test_fstprint_still_has_its_own_entry_point(self):
+        """Kept so the existing call sites and tests read the same."""
+        assert "fstprint" in capture.TOOL_LOCATIONS
+
+    def test_copy_feats_is_looked_for_in_featbin(self):
+        """
+        Where Kaldi puts it. The earlier smoke failure came from guessing a
+        directory, so this is stated rather than assumed.
+        """
+        assert capture.TOOL_LOCATIONS["copy-feats"] == "src/featbin"
+
+
+@posix_only
+class TestReadArchiveThroughCopyFeats:
+    """
+    Reading an archive via Kaldi's own copy-feats.
+
+    This is what makes a bit-exact comparison possible: `kaldiio`
+    decompresses Kaldi's CompressedMatrix slightly differently from Kaldi,
+    which capped the CMVN comparison at about 4e-6. Letting Kaldi write an
+    uncompressed copy removes that round trip.
+    """
+
+    def test_it_reads_through_the_tool_when_one_is_given(self, tmp_path):
+        import kaldiio
+        import numpy as np
+
+        rng = np.random.default_rng(5)
+        wanted = {
+            "u1": rng.standard_normal((4, 3)).astype("float32"),
+            "u2": rng.standard_normal((6, 3)).astype("float32"),
+        }
+        kaldiio.save_ark(str(tmp_path / "in.ark"), wanted, scp=str(tmp_path / "in.scp"))
+
+        # A stand-in copy-feats: reads scp:, writes ark:, unchanged. Enough
+        # to exercise the plumbing without a Kaldi build.
+        tool = tmp_path / "copy-feats"
+        tool.write_text(
+            f"#!{sys.executable}\n"
+            "import sys, kaldiio\n"
+            "args = [a for a in sys.argv[1:] if not a.startswith('--')]\n"
+            "src = args[0].split(':', 1)[1]\n"
+            "dst = args[1].split(':', 1)[1]\n"
+            "kaldiio.save_ark(dst, dict(kaldiio.load_scp_sequential(src)))\n"
+        )
+        tool.chmod(0o755)
+
+        got = capture.read_archive(tmp_path / "in.scp", copy_feats=str(tool))
+        assert set(got) == set(wanted)
+        for key in wanted:
+            assert np.array_equal(got[key], wanted[key])
+
+    def test_it_reads_directly_when_no_tool_is_given(self, tmp_path):
+        import kaldiio
+        import numpy as np
+
+        wanted = {"u1": np.arange(12, dtype="float32").reshape(4, 3)}
+        kaldiio.save_ark(str(tmp_path / "in.ark"), wanted, scp=str(tmp_path / "in.scp"))
+        got = capture.read_archive(tmp_path / "in.scp")
+        assert np.array_equal(got["u1"], wanted["u1"])
+
+    def test_a_failing_tool_is_not_swallowed(self, tmp_path):
+        """
+        A capture that silently fell back to the lossy read would look
+        complete and compare worse, which is the failure this whole change
+        exists to remove.
+        """
+        import kaldiio
+        import numpy as np
+
+        kaldiio.save_ark(
+            str(tmp_path / "in.ark"),
+            {"u1": np.zeros((2, 2), dtype="float32")},
+            scp=str(tmp_path / "in.scp"),
+        )
+        tool = tmp_path / "copy-feats"
+        tool.write_text("#!/bin/sh\nexit 3\n")
+        tool.chmod(0o755)
+
+        with pytest.raises(subprocess.CalledProcessError):
+            capture.read_archive(tmp_path / "in.scp", copy_feats=str(tool))
