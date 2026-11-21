@@ -325,3 +325,95 @@ class TestAgainstTheCapturedReference:
             f"of unnormalised features than to 1: --norm-vars may not have "
             f"been applied"
         )
+
+
+@pytest.mark.skipif(
+    not (REFERENCE / "raw" / "train_yesno.npz").is_file(),
+    reason="the capture holds no pre-CMVN features",
+)
+class TestEquivalenceWithKaldi:
+    """
+    This implementation against Kaldi's, on the real reference.
+
+    Driven with the features Kaldi was driven with and compared against what
+    Kaldi wrote, element by element. This is the test the whole reference
+    capture exists to make possible, and the template for every stage that
+    follows.
+
+    It is **not** bit-exact, and the reason is understood. Kaldi's algorithm
+    is reproduced exactly -- moments and scale in double, rounded to float32,
+    applied as two float32 passes, with its own 1e-20 variance floor -- and
+    doing so did not change the residual, which rules out the arithmetic.
+    The cause is the input: `make_fbank_pitch.sh` writes compressed
+    archives, so the captured `raw/` features came back through `kaldiio`'s
+    decompression while Kaldi's `apply-cmvn` used its own. 194 distinct
+    values in 633 frames, under the 256 of an 8-bit code, is the evidence.
+
+    Agreement is therefore asserted at the documented feature tolerance,
+    `rtol=1e-4`, which this clears by two orders of magnitude. Bit-exactness
+    is reachable by capturing the features uncompressed, and that is worth
+    doing before anything downstream of features is replaced.
+    """
+
+    @pytest.fixture(scope="class", params=["train_yesno", "test_yesno"])
+    def dataset(self, request):
+        name = request.param
+        with np.load(REFERENCE / "cmvn" / f"{name}.npz") as bundle:
+            stats = bundle["global"]
+        with np.load(REFERENCE / "raw" / f"{name}.npz") as bundle:
+            raw = {key: bundle[key] for key in bundle.files}
+        with np.load(REFERENCE / "features" / f"{name}.npz") as bundle:
+            kaldi = {key: bundle[key] for key in bundle.files}
+        return name, stats, raw, kaldi
+
+    def test_the_two_sides_describe_the_same_utterances(self, dataset):
+        """
+        Otherwise the comparison below silently covers nothing.
+        """
+        _, _, raw, kaldi = dataset
+        assert set(raw) == set(kaldi)
+        assert raw
+
+    def test_it_reproduces_kaldi_within_the_feature_tolerance(self, dataset):
+        name, stats, raw, kaldi = dataset
+        from BenNevis.utils.reference import FEATURE_TOLERANCE, compare_array
+
+        for key in sorted(raw):
+            mine = cmvn.apply(raw[key], stats, norm_means=True, norm_vars=True)
+            difference = compare_array(
+                f"{name}/{key}", mine, kaldi[key], FEATURE_TOLERANCE
+            )
+            assert difference is None, str(difference)
+
+    def test_the_residual_is_floating_point_noise(self, dataset):
+        """
+        A number rather than a verdict, so that a change in it is visible.
+        Four parts in a million against features of order one is float32
+        round-off plus a decompression round trip, not a different
+        calculation.
+        """
+        name, stats, raw, kaldi = dataset
+        worst = 0.0
+        for key in raw:
+            mine = cmvn.apply(raw[key], stats).astype(np.float64)
+            worst = max(worst, float(np.abs(mine - kaldi[key]).max()))
+        assert worst < 1e-5, f"{name}: worst absolute difference {worst:.3e}"
+
+    def test_the_shapes_are_preserved(self, dataset):
+        _, stats, raw, kaldi = dataset
+        for key in raw:
+            assert cmvn.apply(raw[key], stats).shape == kaldi[key].shape
+
+    def test_the_statistics_describe_the_raw_side_not_the_normalised_one(self, dataset):
+        """
+        A sanity check on the capture rather than on this code: CMVN
+        statistics are accumulated over the *input*, so recomputing them
+        from the normalised features would give a mean near zero instead of
+        the mean near ten that Kaldi recorded.
+        """
+        _, stats, raw, _ = dataset
+        mean, _ = cmvn.mean_and_variance(stats)
+        assert np.abs(mean).mean() > 1.0, (
+            "the captured statistics look like they describe already "
+            "normalised features"
+        )

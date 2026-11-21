@@ -393,6 +393,23 @@ workflow changes.
   with permission denied and a `|| true` swallowed it. Create a directory on
   the runner *before* any container touches it, and do not let a collection
   step hide its own failure: report what it collected, including zero.
+- **`make_fbank_pitch.sh` writes compressed archives.** Kaldi's
+  `CompressedMatrix` quantises each column to 8 bits under its default
+  `kSpeechFeature` scheme, so a 633-frame utterance comes back with under 256
+  distinct values per dimension. `kaldiio` decompresses faithfully enough for
+  any tolerance comparison, but **not** bit-identically to Kaldi's own
+  decompression — which is why the Python CMVN agrees with `apply-cmvn` to
+  4e-6 rather than exactly, even though Kaldi's algorithm is reproduced
+  operation for operation. **Bit-exactness anywhere downstream of features
+  requires capturing them uncompressed** (`copy-feats --compress=false`), and
+  that is worth doing before the feature extractor itself is replaced.
+- **Reproduce Kaldi's order of operations, not just its formula.**
+  `ApplyCmvn` computes the moments and scale in double, rounds scale and
+  offset to float32 as it stores them, then applies them as two separate
+  float32 passes rather than one fused affine. Writing the obvious
+  `(x - mean) / sqrt(var)` in float64 instead agrees only to about 4e-6.
+  Following the original costs nothing and removes a needless source of
+  divergence, so there is no reason not to.
 - **The capture records both sides of CMVN.** `raw/` is `feats.scp` as the
   feature extractor wrote it; `features/` is `feats.cmvn.scp` after
   normalisation. The first captures held only the second, which was no use
