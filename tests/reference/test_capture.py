@@ -1,0 +1,341 @@
+"""
+Tests for the capture script, run against a synthetic recipe tree.
+
+The capture only ever runs inside the Kaldi image against a finished recipe,
+which makes it exactly the kind of code that is never tested and quietly
+wrong when it finally matters. So a fake recipe directory is built here with
+real Kaldi-format archives -- `kaldiio` writes them, and it is already a
+dependency -- and the script is run against it in process.
+
+That covers everything except `fstprint`, which needs OpenFST. Those
+artefacts are expected to be absent here, and the script is required to carry
+on and capture the rest rather than fail: a partial capture is more useful
+than none, and a missing OpenFST is a property of the machine rather than a
+defect.
+
+Marked `torch` for numpy, which tier 1 does not install.
+
+Authors:
+    * Zeyu Zhao (The University of Edinburgh) 2026
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("numpy")
+pytest.importorskip("kaldiio")
+
+pytestmark = pytest.mark.torch
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
+
+import capture  # noqa: E402
+
+from BenNevis.utils.reference import MANIFEST_NAME, Manifest  # noqa: E402
+
+TOPOLOGIES = ["ctc", "2state"]
+UTTERANCES = [f"global-{index}" for index in range(8)]
+
+
+@pytest.fixture
+def recipe(tmp_path):
+    """
+    A recipe directory with everything the capture reads, and nothing else.
+
+    Shaped exactly as egs/yesno/asr is after a finished run: the same file
+    names, the same directory layout, the same archive formats.
+    """
+    import kaldiio
+    import numpy as np
+
+    root = tmp_path / "recipe"
+    lang = root / "data" / "lang"
+    (lang / "phones").mkdir(parents=True)
+
+    (lang / "phones.txt").write_text("<eps> 0\n<SIL> 1\nY 2\nN 3\n")
+    (lang / "words.txt").write_text("<eps> 0\nYES 1\nNO 2\n#0 3\n")
+    (lang / "oov.txt").write_text("<UNK>\n")
+    (lang / "oov.int").write_text("1\n")
+    (lang / "phones" / "align_lexicon.int").write_text("1 1 2\n2 2 3\n")
+    (lang / "phones" / "disambig.int").write_text("4\n")
+    # Deliberately absent: silence.int and optional_silence.int, to check
+    # that a missing optional artefact is skipped rather than fatal.
+
+    rng = np.random.default_rng(1368)
+    for dataset in ("train_yesno", "test_yesno"):
+        data = root / "data" / dataset
+        data.mkdir(parents=True)
+        features = {
+            utterance: rng.standard_normal((20 + index, 4)).astype("float32")
+            for index, utterance in enumerate(UTTERANCES)
+        }
+        kaldiio.save_ark(
+            str(data / "feats.cmvn.ark"),
+            features,
+            scp=str(data / "feats.cmvn.scp"),
+        )
+        kaldiio.save_ark(
+            str(data / "cmvn.ark"),
+            {"global": rng.standard_normal((2, 5)).astype("float32")},
+            scp=str(data / "cmvn.scp"),
+        )
+
+    for topology in TOPOLOGIES:
+        (root / "data" / f"lang_test_tg_{topology}").mkdir(parents=True)
+        experiment = root / "exp" / f"rnnp-{topology}"
+        prediction = experiment / "pred_test_yesno"
+        prediction.mkdir(parents=True)
+        (prediction / "ref.wrd.trn").write_text(
+            "".join(f"YES NO ({utterance})\n" for utterance in UTTERANCES)
+        )
+        decode = experiment / "dec_test_yesno" / "aw_1.0-ma_5000-bm_32"
+        decode.mkdir(parents=True)
+        (decode / "hyp.wrd.trn").write_text(
+            "".join(f"YES NO ({utterance})\n" for utterance in UTTERANCES)
+        )
+
+    return root
+
+
+def run(recipe_dir, destination, *extra):
+    """Run the capture and return its exit status."""
+    return capture.main(
+        [
+            str(recipe_dir),
+            str(destination),
+            "--corpus",
+            "yesno",
+            "--datasets",
+            "train_yesno",
+            "test_yesno",
+            *extra,
+        ]
+    )
+
+
+@pytest.fixture
+def captured(recipe, tmp_path):
+    """A completed capture: the destination and its manifest."""
+    destination = tmp_path / "reference"
+    assert run(recipe, destination) == 0
+    out = destination / "yesno"
+    return out, Manifest.read(out / MANIFEST_NAME)
+
+
+class TestManifestContents:
+    def test_the_manifest_is_written_and_readable(self, captured):
+        out, manifest = captured
+        assert (out / MANIFEST_NAME).is_file()
+        assert manifest.corpus == "yesno"
+        assert not manifest.is_empty()
+
+    def test_the_provenance_is_recorded(self, recipe, tmp_path, monkeypatch):
+        """
+        A reference whose provenance is unknown is not a reference: it must
+        say which image produced it.
+        """
+        monkeypatch.setenv("BENNEVIS_IMAGE", "ghcr.io/x/y@sha256:" + "a" * 64)
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        assert manifest.image.endswith("a" * 64)
+        assert manifest.captured
+
+    def test_an_unknown_image_is_said_to_be_unknown(
+        self, recipe, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("BENNEVIS_IMAGE", raising=False)
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        assert manifest.image == "unknown"
+
+    def test_the_notes_explain_the_two_kinds_of_entry(self, captured):
+        _, manifest = captured
+        joined = " ".join(manifest.notes).lower()
+        assert "bytes" in joined
+        assert "tolerance" in joined
+
+
+class TestExactArtefacts:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "lang/phones.txt",
+            "lang/words.txt",
+            "lang/oov.txt",
+            "lang/oov.int",
+            "lang/phones/align_lexicon.int",
+            "lang/phones/disambig.int",
+        ],
+    )
+    def test_the_language_text_is_captured(self, captured, name):
+        out, manifest = captured
+        assert name in manifest.exact
+        assert (out / name).is_file()
+
+    def test_an_absent_optional_artefact_is_skipped(self, captured):
+        """
+        silence.int was deliberately left out of the fixture. A recipe that
+        does not produce it must not fail the capture.
+        """
+        _, manifest = captured
+        assert "lang/phones/silence.int" not in manifest.exact
+
+    def test_the_digest_matches_the_stored_file(self, captured):
+        from BenNevis.utils.reference import sha256_file
+
+        out, manifest = captured
+        for name, digest in manifest.exact.items():
+            assert sha256_file(out / name) == digest, name
+
+    def test_the_content_is_captured_verbatim(self, captured, recipe):
+        out, _ = captured
+        assert (out / "lang/phones.txt").read_bytes() == (
+            recipe / "data" / "lang" / "phones.txt"
+        ).read_bytes()
+
+    @pytest.mark.parametrize("topology", TOPOLOGIES)
+    def test_the_transcriptions_are_captured_per_topology(self, captured, topology):
+        _, manifest = captured
+        assert f"transcriptions/{topology}/ref.wrd.trn" in manifest.exact
+        assert f"transcriptions/{topology}/hyp.wrd.trn" in manifest.exact
+
+
+class TestFeatures:
+    def test_a_few_matrices_are_stored_whole(self, captured):
+        _, manifest = captured
+        whole = [
+            name for name in manifest.arrays if name.startswith("features/test_yesno/")
+        ]
+        assert len(whole) == capture.FULL_FEATURE_UTTERANCES
+
+    def test_every_utterance_has_statistics(self, captured):
+        _, manifest = captured
+        for dataset in ("train_yesno", "test_yesno"):
+            recorded = [
+                name
+                for name in manifest.stats
+                if name.startswith(f"features/{dataset}/")
+            ]
+            assert len(recorded) == len(UTTERANCES)
+
+    def test_the_stored_arrays_are_the_real_features(self, captured, recipe):
+        import kaldiio
+        import numpy as np
+
+        out, manifest = captured
+        source = dict(
+            kaldiio.load_scp_sequential(
+                str(recipe / "data" / "test_yesno" / "feats.cmvn.scp")
+            )
+        )
+        for name, record in manifest.arrays.items():
+            if not name.startswith("features/test_yesno/"):
+                continue
+            with np.load(out / record["path"]) as bundle:
+                stored = bundle[record["key"]]
+            assert np.array_equal(stored, source[record["key"]]), name
+
+    def test_the_recorded_shape_matches_the_array(self, captured):
+        import numpy as np
+
+        out, manifest = captured
+        for name, record in manifest.arrays.items():
+            with np.load(out / record["path"]) as bundle:
+                stored = bundle[record["key"]]
+            assert list(stored.shape) == record["shape"], name
+
+    def test_the_statistics_describe_the_real_features(self, captured, recipe):
+        import kaldiio
+
+        from BenNevis.utils.reference import array_stats
+
+        _, manifest = captured
+        source = dict(
+            kaldiio.load_scp_sequential(
+                str(recipe / "data" / "test_yesno" / "feats.cmvn.scp")
+            )
+        )
+        for utterance, array in source.items():
+            recorded = manifest.stats[f"features/test_yesno/{utterance}"]
+            assert recorded == pytest.approx(array_stats(array))
+
+    def test_features_carry_the_feature_tolerance(self, captured):
+        """
+        Not exact: bit-exactness across implementations is not achievable
+        for features, and a reference that demanded it would be unusable.
+        """
+        from BenNevis.utils.reference import FEATURE_TOLERANCE
+
+        _, manifest = captured
+        for name in manifest.arrays:
+            tolerance = manifest.tolerance_for(name)
+            assert tolerance == FEATURE_TOLERANCE, name
+            assert not tolerance.is_exact
+
+    def test_cmvn_statistics_are_stored_whole(self, captured):
+        _, manifest = captured
+        for dataset in ("train_yesno", "test_yesno"):
+            assert f"cmvn/{dataset}/global" in manifest.arrays
+
+
+class TestRobustness:
+    def test_a_missing_feature_scp_is_skipped(self, recipe, tmp_path):
+        """
+        A recipe that stopped before CMVN should still yield whatever it did
+        produce.
+        """
+        (recipe / "data" / "train_yesno" / "feats.cmvn.scp").unlink()
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        assert not any(
+            name.startswith("features/train_yesno/") for name in manifest.stats
+        )
+        assert any(name.startswith("features/test_yesno/") for name in manifest.stats)
+
+    def test_a_directory_with_no_data_is_an_error(self, tmp_path):
+        assert run(tmp_path / "nowhere", tmp_path / "reference") == 1
+
+    def test_an_empty_capture_is_an_error(self, tmp_path):
+        """
+        Reporting success having captured nothing would commit an empty
+        reference and quietly make every later comparison vacuous.
+        """
+        root = tmp_path / "bare"
+        (root / "data").mkdir(parents=True)
+        assert run(root, tmp_path / "reference") == 1
+
+    def test_the_topologies_are_discovered_from_the_recipe(self, captured):
+        _, manifest = captured
+        for topology in TOPOLOGIES:
+            assert f"transcriptions/{topology}/hyp.wrd.trn" in manifest.exact
+
+    def test_the_topologies_can_be_restricted(self, recipe, tmp_path):
+        destination = tmp_path / "reference"
+        assert run(recipe, destination, "--topos", "ctc") == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        assert "transcriptions/ctc/hyp.wrd.trn" in manifest.exact
+        assert "transcriptions/2state/hyp.wrd.trn" not in manifest.exact
+
+    def test_running_twice_gives_the_same_manifest(self, recipe, tmp_path):
+        """
+        Capture must be deterministic, or a re-capture would appear in review
+        as a diff with no meaning.
+        """
+        first = tmp_path / "a"
+        second = tmp_path / "b"
+        assert run(recipe, first) == 0
+        assert run(recipe, second) == 0
+
+        def without_date(path):
+            payload = json.loads((path / "yesno" / MANIFEST_NAME).read_text())
+            payload.pop("captured")
+            return payload
+
+        assert without_date(first) == without_date(second)
