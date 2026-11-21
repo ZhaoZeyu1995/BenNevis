@@ -128,6 +128,16 @@ changed the format silently, and was reverted; do not reintroduce
 `self.model.state_dict()` at a save site. A legacy prefixed checkpoint is
 still accepted, with the prefix recognised only when *every* key carries it.
 
+**The macOS CI runner has no Metal GPU.** It is a VM, so
+`torch.backends.mps.is_built()` is True while
+`torch.backends.mps.is_available()` is False. Guard MPS tests on
+`is_available()`; `is_built()` will let a test through that then fails with
+"no supported Metal GPU was found". The consequence is that nothing which
+needs a real MPS device runs in CI, which is why the device *logic* is tested
+by faking the availability probes instead -- those tests run on every runner.
+Treat the real-device tests as something only a developer on an Apple machine
+executes.
+
 CI runs tiers 1, 1b and 2 on `ubuntu-latest`, `macos-latest` and
 `windows-latest`. k2 publishes cp312 CPU wheels for all three at the pinned
 torch version, so the FST tier is not Linux-only; **check the index before

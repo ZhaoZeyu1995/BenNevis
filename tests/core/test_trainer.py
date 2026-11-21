@@ -48,6 +48,9 @@ class TestConstruction:
         t = trainer_factory(device=None)
         assert t.device == resolve_device(local_rank=0, warn=False)
 
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="no usable MPS device here"
+    )
     def test_detection_selects_mps_when_it_is_the_only_accelerator(
         self, trainer_factory, monkeypatch
     ):
@@ -55,15 +58,19 @@ class TestConstruction:
         MPS used to be excluded from detection, because DDP wrapped the model
         unconditionally and cannot wrap an MPS module. Now that wrapping is
         conditional, MPS is selectable.
+
+        Needs a real device, because Trainer places the model on whatever it
+        selects. `torch.backends.mps.is_built()` is not a sufficient guard:
+        the macOS CI runner is a VM with no Metal GPU, where it is True while
+        `is_available()` is False. The device-independent half of this -- that
+        the resolver prefers MPS when it is the only accelerator -- is tested
+        with faked probes in tests/utils/test_platform.py, so it runs
+        everywhere.
         """
         import BenNevis.utils.platform as bp
 
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
         monkeypatch.setattr(bp, "_mps_is_available", lambda: True)
-        if not bp._mps_is_available():  # pragma: no cover - sanity
-            pytest.skip("monkeypatch did not take")
-        if not torch.backends.mps.is_built():
-            pytest.skip("this torch build cannot place a module on MPS")
 
         t = trainer_factory(device=None)
         assert t.device.type == "mps"
