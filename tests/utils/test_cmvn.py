@@ -340,19 +340,23 @@ class TestEquivalenceWithKaldi:
     capture exists to make possible, and the template for every stage that
     follows.
 
-    It is **not** bit-exact, and the reason is understood. Kaldi's algorithm
-    is reproduced exactly -- moments and scale in double, rounded to float32,
-    applied as two float32 passes, with its own 1e-20 variance floor -- and
-    doing so did not change the residual, which rules out the arithmetic.
-    The cause is the input: `make_fbank_pitch.sh` writes compressed
-    archives, so the captured `raw/` features came back through `kaldiio`'s
-    decompression while Kaldi's `apply-cmvn` used its own. 194 distinct
-    values in 633 frames, under the 256 of an 8-bit code, is the evidence.
+    Agreement is **bit-exact**, which took two attempts to reach and the
+    second attempt is the interesting one.
 
-    Agreement is therefore asserted at the documented feature tolerance,
-    `rtol=1e-4`, which this clears by two orders of magnitude. Bit-exactness
-    is reachable by capturing the features uncompressed, and that is worth
-    doing before anything downstream of features is replaced.
+    The first comparison agreed only to 4e-6. Reproducing Kaldi's algorithm
+    operation for operation -- moments and scale in double, rounded to
+    float32, applied as two float32 passes, with its own 1e-20 variance
+    floor -- did not move that residual, which ruled out the arithmetic. The
+    cause was the input: `make_fbank_pitch.sh` writes compressed archives,
+    and the captured features had come back through `kaldiio`'s
+    decompression of an 8-bit `CompressedMatrix` rather than Kaldi's own. Now
+    that the capture has Kaldi rewrite each archive uncompressed first, the
+    residual is zero -- and the re-captured features turned out to differ
+    from the old ones by at most 3.8e-6, which was precisely the residual.
+
+    So the tolerance here is exact equality, deliberately. A difference of
+    any size means something has changed, and the band of float32 noise that
+    would have hidden it is gone.
     """
 
     @pytest.fixture(scope="class", params=["train_yesno", "test_yesno"])
@@ -374,30 +378,45 @@ class TestEquivalenceWithKaldi:
         assert set(raw) == set(kaldi)
         assert raw
 
-    def test_it_reproduces_kaldi_within_the_feature_tolerance(self, dataset):
+    def test_it_reproduces_kaldi_bit_for_bit(self, dataset):
+        """
+        Exact equality, not a tolerance. Every float32 of every frame.
+        """
         name, stats, raw, kaldi = dataset
-        from BenNevis.utils.reference import FEATURE_TOLERANCE, compare_array
-
         for key in sorted(raw):
             mine = cmvn.apply(raw[key], stats, norm_means=True, norm_vars=True)
-            difference = compare_array(
-                f"{name}/{key}", mine, kaldi[key], FEATURE_TOLERANCE
+            assert mine.dtype == kaldi[key].dtype
+            assert np.array_equal(mine, kaldi[key]), (
+                f"{name}/{key}: differs from Kaldi by up to "
+                f"{np.abs(mine.astype(np.float64) - kaldi[key].astype(np.float64)).max():.3e}"
             )
-            assert difference is None, str(difference)
 
-    def test_the_residual_is_floating_point_noise(self, dataset):
+    def test_the_residual_is_exactly_zero(self, dataset):
         """
-        A number rather than a verdict, so that a change in it is visible.
-        Four parts in a million against features of order one is float32
-        round-off plus a decompression round trip, not a different
-        calculation.
+        Stated as a number as well as a verdict, so that a regression shows
+        its size rather than only its existence.
         """
         name, stats, raw, kaldi = dataset
         worst = 0.0
         for key in raw:
             mine = cmvn.apply(raw[key], stats).astype(np.float64)
             worst = max(worst, float(np.abs(mine - kaldi[key]).max()))
-        assert worst < 1e-5, f"{name}: worst absolute difference {worst:.3e}"
+        assert worst == 0.0, f"{name}: worst absolute difference {worst:.3e}"
+
+    def test_it_is_exact_through_the_reference_comparison_too(self, dataset):
+        """
+        The same check through `compare_array` at an exact tolerance, since
+        that is the helper every later stage will use.
+        """
+        name, stats, raw, kaldi = dataset
+        from BenNevis.utils.reference import EXACT_TOLERANCE, compare_array
+
+        for key in sorted(raw):
+            mine = cmvn.apply(raw[key], stats)
+            difference = compare_array(
+                f"{name}/{key}", mine, kaldi[key], EXACT_TOLERANCE
+            )
+            assert difference is None, str(difference)
 
     def test_the_shapes_are_preserved(self, dataset):
         _, stats, raw, kaldi = dataset
