@@ -29,6 +29,8 @@ K2_RE = re.compile(r"k2==([0-9][^\s\"'\\]*)")
 TORCH_RE = re.compile(r"torch==([0-9][^\s\"'\\]*)")
 #: `ARG TORCH_VERSION=2.15.0`
 ARG_RE = re.compile(r"^ARG\s+(\w+)=(\S+)\s*$", re.MULTILINE)
+#: `FROM kaldiasr/kaldi:...@sha256:...`
+FROM_RE = re.compile(r"^FROM\s+(\S+)\s*$", re.MULTILINE)
 
 
 def docker_args():
@@ -69,14 +71,45 @@ class TestTorchPin:
 
 
 class TestKaldiPin:
-    def test_kaldi_is_pinned_to_a_full_commit(self):
+    """
+    Kaldi arrives as a prebuilt image rather than a source build.
+
+    Building it here was tried and abandoned: Kaldi cannot fetch the OpenFST
+    version it needs from a CI runner, and the version it can fetch does not
+    compile its own source. Maintaining a build of the dependency goal 2
+    exists to delete is the wrong work, so the Kaldi project's own image is
+    borrowed instead -- and the pin has to be exact for the same reason the
+    commit pin did.
+    """
+
+    def test_the_base_image_is_pinned_by_digest(self):
         """
-        Not a branch and not an abbreviated hash. A floating Kaldi would make
-        an old result impossible to reproduce, which is the whole reason the
-        pre-refactor history is kept intact.
+        A tag can move. An image that changed underneath us would turn the
+        WER ledger into noise, and a pre-refactor result that cannot be
+        reproduced is a research record lost.
         """
-        commit = docker_args()["KALDI_COMMIT"]
-        assert re.fullmatch(r"[0-9a-f]{40}", commit), commit
+        bases = FROM_RE.findall(DOCKERFILE.read_text())
+        assert len(bases) == 1, bases
+        assert "@sha256:" in bases[0], bases[0]
+        digest = bases[0].split("@sha256:")[1]
+        assert re.fullmatch(r"[0-9a-f]{64}", digest), digest
+
+    def test_the_base_image_is_the_kaldi_project_s(self):
+        """
+        Not an arbitrary third party: the image is published by Kaldi itself,
+        which is the only reason borrowing a binary Kaldi is reasonable.
+        """
+        base = FROM_RE.findall(DOCKERFILE.read_text())[0]
+        assert base.startswith("kaldiasr/kaldi:"), base
+
+    def test_kaldi_is_not_built_from_source(self):
+        """
+        If a source build ever returns, the comment block explaining why it
+        was abandoned should be revisited rather than quietly bypassed.
+        """
+        text = DOCKERFILE.read_text()
+        assert "install_openblas.sh" not in text
+        assert "KALDI_COMMIT" not in text
 
 
 class TestWorkflowWiring:
