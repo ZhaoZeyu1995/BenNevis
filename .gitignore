@@ -27,3 +27,8 @@ egs/yesno/asr/waves_yesno.tar.gz
 /build
 /dist
 *.egg-info
+
+# Written by the nightly workflow when it collects scores and the
+# reference capture; the capture is committed deliberately, from the
+# uploaded artefact, not from a local run.
+/artefacts

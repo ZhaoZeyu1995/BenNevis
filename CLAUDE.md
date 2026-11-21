@@ -172,6 +172,26 @@ tolerances chosen per layer:
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
 
+**Kaldi's output is recorded, not re-derived.** `tests/golden/reference/`
+holds what Kaldi produced from a real `yesno` run inside the pinned image,
+captured by `tests/reference/capture.py` and described by a `manifest.json`
+that names the image digest. Each Kaldi stage that moves to Python is
+compared against that, in `tests/reference/test_against_reference.py`, at the
+tolerance the manifest records for it — so a migration PR is gated in tiers 1
+and 2, with no Kaldi installed anywhere.
+
+Recording rather than comparing live is not a convenience. **Kaldi is
+bit-rotting**: recent commits cannot fetch the OpenFST version their own
+source needs, and the OpenBLAS they pin no longer compiles on current
+hardware. The image that works is pinned by digest, and its output is worth
+capturing while it can still be produced.
+
+The capture is **never written by hand**. It comes from a nightly run and is
+committed from the uploaded artefact. Fabricated reference data is worse than
+none: every comparison against it would pass while meaning nothing. Likewise,
+a reference edited to make a test pass is no longer a reference — re-capture
+instead, and say in the PR what moved.
+
 The WER ledger is `tests/golden/wer/yesno.json`: one `reference_wer` per
 topology, taken from `egs/yesno/asr/README.md` and so from the author's own
 pre-refactor CUDA runs, and one `max_wer` that is the gate. **Raising

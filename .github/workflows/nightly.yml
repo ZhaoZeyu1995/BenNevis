@@ -56,7 +56,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull the Kaldi image
-        run: docker pull "$IMAGE"
+        run: |
+          docker pull "$IMAGE"
+          # The digest, not the tag, is what goes in the capture manifest: a
+          # reference whose provenance is unknown is not a reference.
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "IMAGE_DIGEST=${digest}" >> "$GITHUB_ENV"
+          echo "pulled ${digest}"
 
       # 4.7MB from openslr. Cached so that a nightly job does not fetch it
       #365 times a year; run.sh skips the download when the directory is
@@ -102,6 +108,34 @@ jobs:
             -e PYTHONPATH=/workspace \
             "$IMAGE" \
             pytest tests/ -v -m kaldi
+
+      # Capture what Kaldi produced, for the reference data the Kaldi
+      # removal will be measured against. Run even when the checks above
+      # failed: a WER that drifted does not make the symbol tables and
+      # lexicon FSTs less worth recording, and Kaldi's build is rotting
+      # fast enough that a capture missed is a capture that may not be
+      # obtainable later.
+      - name: Capture the Kaldi reference
+        if: always()
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            -e BENNEVIS_IMAGE="${IMAGE_DIGEST:-$IMAGE}" \
+            "$IMAGE" \
+            python3 tests/reference/capture.py \
+              egs/yesno/asr /workspace/artefacts/reference
+
+      - name: Upload the Kaldi reference
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaldi-reference
+          path: artefacts/reference
+          if-no-files-found: warn
+          retention-days: 90
 
       # Always, not only on failure: the measured error rates are how the
       # ledger in tests/golden/wer/yesno.json gets tightened, and they are
