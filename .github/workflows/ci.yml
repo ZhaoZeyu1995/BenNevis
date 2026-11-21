@@ -140,7 +140,10 @@ jobs:
             pip install torch==2.15.0 torchaudio \
               --index-url https://download.pytorch.org/whl/cpu
           fi
+      # `shell: bash` because the Windows runner defaults to PowerShell, which
+      # does not accept a backslash line continuation.
       - name: Install k2 (CPU wheel matching torch 2.15.0)
+        shell: bash
         run: |
           pip install k2==1.24.4.dev20261112+cpu.torch2.15.0 \
             --find-links https://k2-fsa.github.io/k2/cpu.html
