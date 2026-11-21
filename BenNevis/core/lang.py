@@ -44,7 +44,7 @@ import os
 import logging
 import k2
 import torch
-from typing import List, Union
+from typing import List
 from BenNevis.utils.data import read_keys, read_dict
 
 

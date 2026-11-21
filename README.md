@@ -23,7 +23,7 @@ This is an End-to-End (E2E) Automatic Speech Recognition (ASR) toolkit based on 
 
 ## Kaldi
 
-You need to install [Kaldi](https://github.com/kaldi-asr/kaldi) first and then run 
+You need to install [Kaldi](https://github.com/kaldi-asr/kaldi) first and then run
 ```shell
 cd BenNevis/tools
 ./put_kaldi.sh /path/to/kaldi
@@ -74,7 +74,7 @@ pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https
 #### k2
 
 The `k2` installation is a bit tricky as you need to make sure that the wheel matches your `PyTorch` version, including the `CUDA` version.
-For example, 
+For example,
 ```Shell
 pip install k2==1.24.4.dev20231220+cuda11.8.torch2.1.0 -f https://k2-fsa.github.io/k2/cuda.html
 ```
@@ -87,15 +87,15 @@ Here are some other libraries you need to install by pip. Note that some of them
 I do not specify the versions for them but usually the latest versions should work.
 ```shell
 # for the progress bar support
-pip install tqdm  
+pip install tqdm
 # for configuration management
-pip install hydra-core 
+pip install hydra-core
 # a very powerful logger
-pip install wandb 
+pip install wandb
 # for model summary display
-pip install torchinfo 
+pip install torchinfo
 # for kaldi-format data IO
-pip install kaldiio 
+pip install kaldiio
 # for whisper finetuning
 pip install openai-whisper
 

@@ -1,3 +1,17 @@
 [flake8]
+# black is the authority on layout; E501 is set above black's 88 because black
+# does not split long strings or comments. E203/W503 conflict with black.
 max-line-length = 120
 extend-ignore = E203, W503
+
+# Legacy exemptions, deliberately narrow and intended to shrink to nothing.
+# New code gets the full gate. Each entry has a reason to be removed:
+#   - bin/topos/*  : replaced wholesale by the declarative topology specs.
+#   - the rest     : over-long docstrings, to be rewrapped when each file is
+#                    next touched for a real reason rather than churned now.
+per-file-ignores =
+    BenNevis/bin/topos/*:E262,E501
+    BenNevis/bin/align.py:E501
+    BenNevis/core/dataset.py:E501
+    BenNevis/models/transformer.py:E501
+    BenNevis/run/predict.py:E501

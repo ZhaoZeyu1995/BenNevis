@@ -73,6 +73,12 @@ pytest tests/ -m "not k2 and not kaldi and not gpu"   # tier 1
 pytest tests/ -m "k2"                                 # tier 2
 ```
 
+Tier 1 must stay dependency-free beyond pytest; that is what makes it free to
+run on every push. Linter versions are pinned identically in
+`.pre-commit-config.yaml` and `.github/workflows/ci.yml` -- keep the two in
+step, and treat an upgrade as its own PR, since black's style evolves between
+releases.
+
 A test that only asserts a module imports, or that passes whether or not the
 code under test raises, is not a test. Pin behaviour: exact arc sets for
 topologies, numerical agreement for losses and features.

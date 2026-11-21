@@ -40,7 +40,11 @@ def make_pad_mask(
     # Create a range tensor that matches the shape we need
     # torch.arange creates a tensor [0, 1, ..., max_length-1]
     # We then compare this range tensor to each sequence length
-    range_tensor = torch.arange(maxlen, device=lengths.device).unsqueeze(0).expand(len(lengths), maxlen)
+    range_tensor = (
+        torch.arange(maxlen, device=lengths.device)
+        .unsqueeze(0)
+        .expand(len(lengths), maxlen)
+    )
 
     # Create the mask by comparing each sequence length to the range tensor
     # The comparison is broadcasted across the batch dimension
@@ -76,7 +80,9 @@ def lens2mask(
     """
     if maxlen is None:
         maxlen = lengths.max().item()
-    mask = torch.arange(maxlen, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(1)
+    mask = torch.arange(maxlen, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(
+        1
+    )
     mask = mask.float()
     mask[mask == 0] = torch.finfo(dtype).min
     mask[mask == 1] = 0.0
