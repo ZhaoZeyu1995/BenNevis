@@ -37,7 +37,7 @@ Notable changes to BenNevis. This project follows
   declared as a dependency, since it ships from its own index against exact
   torch and CUDA versions.
 - `.pre-commit-config.yaml`, scoped to the paths under active maintenance.
-- GitHub Actions CI: lint, tier-1 tests across Python 3.9 to 3.13, and a
+- GitHub Actions CI: lint, tier-1 tests across Python 3.10 to 3.13, and a
   package build check. Linters are pinned to exact versions matching the
   pre-commit revisions, so a new release cannot turn CI red without a code
   change.
@@ -54,8 +54,9 @@ Notable changes to BenNevis. This project follows
   that the supported floor is Python 3.9 (verified to parse on 3.9.6).
   Whitespace in `README.md` tidied by pre-commit's first run. No other
   formatting changes.
-- Minimum supported Python is now 3.9. 3.8 has been end-of-life since October
-  2024 and is no longer available on current GitHub runners.
+- Minimum supported Python is now 3.10. 3.8 and 3.9 are both end-of-life and
+  no longer available on current GitHub runners; the floor tracks what torch
+  and k2 publish wheels for.
 
 ## v0.1.0-pre-refactor
 

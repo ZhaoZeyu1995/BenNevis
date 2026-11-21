@@ -42,19 +42,13 @@ jobs:
   # no dependencies at all.
   test-tier1:
     name: Tier 1 tests (py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # ubuntu-latest is now Ubuntu 26.04, which no longer ships end-of-life
-      # interpreters, so 3.9 is tested on 22.04 where it is still available.
-      # 3.8 is dropped: it has been end-of-life since October 2024.
+      # 3.8 and 3.9 are both end-of-life and no longer available on current
+      # GitHub runners. The floor is whatever torch and k2 publish wheels for.
       matrix:
-        include:
-          - { python-version: "3.9", os: ubuntu-22.04 }
-          - { python-version: "3.10", os: ubuntu-latest }
-          - { python-version: "3.11", os: ubuntu-latest }
-          - { python-version: "3.12", os: ubuntu-latest }
-          - { python-version: "3.13", os: ubuntu-latest }
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -7,9 +7,9 @@ name = "bennevis"
 version = "0.1.0"
 description = "An End-to-End ASR toolkit based on Differentiable WFSTs with flexible topology support"
 readme = "README.md"
-# 3.8 and 3.9 are both end-of-life; 3.9 is still tested because it is
-# what macOS ships and what the existing recipes were developed against.
-requires-python = ">=3.9"
+# Floor follows what torch and k2 publish wheels for. 3.9 is end-of-life and
+# no longer tested, so support for it is not claimed.
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Zeyu Zhao", email = "zeyuhongwu1995@gmail.com" }]
 keywords = ["asr", "speech-recognition", "wfst", "k2", "pytorch"]
@@ -61,7 +61,7 @@ exclude = ["tests*", "egs*", "tools*"]
 [tool.black]
 line-length = 88
 # Explicit, so black's output does not shift when requires-python changes.
-target-version = ["py39"]
+target-version = ["py310"]
 
 [tool.isort]
 profile = "black"
