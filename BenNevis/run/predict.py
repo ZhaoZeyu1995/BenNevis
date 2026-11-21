@@ -53,7 +53,7 @@ def main(args):
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
     # Chosen before the process group is initialised, since it determines the
     # backend. NCCL is CUDA-only; gloo is the only option elsewhere.
-    device = resolve_device(args.device, local_rank=local_rank, allow_mps=False)
+    device = resolve_device(args.device, local_rank=local_rank)
     if device.type == "cuda":
         torch.cuda.set_device(local_rank)
     dist.init_process_group(backend=resolve_dist_backend(device))

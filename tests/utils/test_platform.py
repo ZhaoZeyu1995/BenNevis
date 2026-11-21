@@ -124,7 +124,7 @@ class TestResolveDeviceWarnings:
         with pytest.warns(UserWarning, match="graph loss will be computed on the"):
             bp.resolve_device()
 
-    def test_skipping_an_available_mps_explains_why(self, fake_platform):
+    def test_excluding_an_available_mps_explains_why(self, fake_platform):
         fake_platform(cuda=False, mps=True)
         with pytest.warns(UserWarning, match="DistributedDataParallel"):
             bp.resolve_device(allow_mps=False)

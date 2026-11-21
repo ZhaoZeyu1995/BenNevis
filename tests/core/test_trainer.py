@@ -39,24 +39,34 @@ class TestConstruction:
     def test_device_is_explicit_not_inferred_from_rank(self, trainer_factory):
         """
         `torch.device(0)` resolves to the default accelerator, which is MPS on
-        Apple machines, so the device must be chosen explicitly.
+        Apple machines, so the device must be chosen explicitly. Pinned by
+        delegating to the resolver rather than by naming a device, since what
+        is correct here depends on the machine.
         """
-        t = trainer_factory(device=None)
-        assert t.device.type in ("cpu", "cuda")
+        from BenNevis.utils.platform import resolve_device
 
-    def test_detection_never_selects_mps(self, trainer_factory, monkeypatch):
+        t = trainer_factory(device=None)
+        assert t.device == resolve_device(local_rank=0, warn=False)
+
+    def test_detection_selects_mps_when_it_is_the_only_accelerator(
+        self, trainer_factory, monkeypatch
+    ):
         """
-        Trainer wraps the model in DDP unconditionally, and DDP cannot wrap an
-        MPS module, so detection must fall back to the CPU on an Apple machine
-        rather than choosing an accelerator that cannot work.
+        MPS used to be excluded from detection, because DDP wrapped the model
+        unconditionally and cannot wrap an MPS module. Now that wrapping is
+        conditional, MPS is selectable.
         """
         import BenNevis.utils.platform as bp
 
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
         monkeypatch.setattr(bp, "_mps_is_available", lambda: True)
+        if not bp._mps_is_available():  # pragma: no cover - sanity
+            pytest.skip("monkeypatch did not take")
+        if not torch.backends.mps.is_built():
+            pytest.skip("this torch build cannot place a module on MPS")
 
         t = trainer_factory(device=None)
-        assert t.device == torch.device("cpu")
+        assert t.device.type == "mps"
 
     def test_detection_indexes_cuda_by_local_rank(self, trainer_factory, monkeypatch):
         """
@@ -74,6 +84,29 @@ class TestConstruction:
         t = trainer_factory(device=torch.device("cpu"))
         assert t.device == torch.device("cpu")
 
+    def test_the_model_is_moved_to_the_chosen_device(
+        self, trainer_factory, model_factory
+    ):
+        """
+        Trainer used to leave this to the caller. The entry points do it, so
+        nothing failed in practice -- but a Trainer whose `device` disagreed
+        with where its model lived raised a device mismatch from inside the
+        first linear layer, far from the cause. Checked by spying on `.to`,
+        since a CPU-only runner has no second device to move between.
+        """
+        model = model_factory()
+        seen = []
+        original_to = model.to
+
+        def spy(*args, **kwargs):
+            seen.append(args[0] if args else kwargs.get("device"))
+            return original_to(*args, **kwargs)
+
+        model.to = spy
+        trainer_factory(model=model, device=torch.device("cpu"))
+
+        assert seen == [torch.device("cpu")]
+
     def test_model_is_wrapped_in_ddp_even_at_world_size_one(self, trainer_factory):
         """
         Wrapping unconditionally keeps checkpoints interchangeable between
@@ -83,10 +116,23 @@ class TestConstruction:
         t = trainer_factory()
         assert type(t.model).__name__ == "DistributedDataParallel"
 
-    def test_checkpoint_keys_keep_the_ddp_prefix(self, trainer_factory):
-        """Pins the on-disk format, which the DDP wrapper determines."""
+    def test_the_wrapped_model_carries_the_ddp_prefix(self, trainer_factory):
+        """
+        DDP adds `module.` to every key. This is about the live model, not the
+        on-disk format: checkpoints are written from the unwrapped module, so
+        the prefix never reaches them.
+        """
         t = trainer_factory()
         assert all(k.startswith("module.") for k in t.model.state_dict())
+
+    def test_the_on_disk_format_has_no_ddp_prefix(self, trainer_factory):
+        """
+        Pins the on-disk format, which no longer records whether DDP was used.
+        This is what makes conditional wrapping safe, and is exactly what an
+        earlier attempt at it got wrong.
+        """
+        t = trainer_factory()
+        assert not any(k.startswith("module.") for k in t._unwrapped_model.state_dict())
 
 
 class TestSaveEveryNEpochsValidation:
@@ -350,3 +396,179 @@ class TestCheckpointing:
         assert t.epoch == 7
         assert t.step == 700
         assert t.ckpt_config.trainer.max_epochs == 1
+
+
+class TestConditionalDdp:
+    """
+    DDP is applied where it can be and skipped where it cannot.
+
+    The conditional itself is tested by faking `supports_ddp`, so the logic is
+    covered on every platform rather than only on an Apple machine.
+    """
+
+    @pytest.fixture
+    def no_ddp(self, monkeypatch):
+        """Make the trainer believe the device cannot take part in DDP."""
+        import BenNevis.core.trainer as bt
+
+        monkeypatch.setattr(bt, "supports_ddp", lambda device: False)
+
+    def test_the_model_is_left_unwrapped_when_the_device_cannot_ddp(
+        self, no_ddp, trainer_factory
+    ):
+        t = trainer_factory()
+        assert type(t.model).__name__ != "DistributedDataParallel"
+        assert t._unwrapped_model is t.model
+
+    def test_an_unwrappable_device_with_several_ranks_is_an_error(
+        self, no_ddp, trainer_factory, monkeypatch
+    ):
+        """
+        Falling back to a single process silently would produce a run that
+        looks distributed, trains on one shard of the data and reports a
+        world_size it is not using.
+        """
+        import torch.distributed as dist
+
+        monkeypatch.setattr(dist, "get_world_size", lambda *a, **k: 2)
+
+        with pytest.raises(RuntimeError, match="cannot take part"):
+            trainer_factory()
+
+    def test_wrapping_still_happens_at_world_size_one_where_supported(
+        self, trainer_factory
+    ):
+        """
+        A single-process CPU run goes through the same code path as a
+        distributed one, so the path is exercised by the ordinary tests.
+        """
+        t = trainer_factory()
+        assert type(t.model).__name__ == "DistributedDataParallel"
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="no MPS device here"
+    )
+    def test_a_real_mps_module_is_not_wrapped(self, trainer_factory):
+        t = trainer_factory(device=torch.device("mps"))
+        assert t.device.type == "mps"
+        assert type(t.model).__name__ != "DistributedDataParallel"
+
+
+class TestCheckpointFormatIsWrapperAgnostic:
+    """
+    The property that makes conditional DDP safe: the on-disk format does not
+    record whether the run that wrote it used DDP.
+
+    An earlier attempt at conditional wrapping was reverted because it changed
+    this format silently. These tests exist so that cannot recur.
+    """
+
+    @pytest.fixture
+    def no_ddp(self, monkeypatch):
+        import BenNevis.core.trainer as bt
+
+        monkeypatch.setattr(bt, "supports_ddp", lambda device: False)
+
+    @staticmethod
+    def _weights(trainer):
+        return {k: v.clone() for k, v in trainer._unwrapped_model.state_dict().items()}
+
+    def test_a_ddp_checkpoint_loads_into_an_unwrapped_run(
+        self, trainer_factory, monkeypatch, tmp_path
+    ):
+        wrapped = trainer_factory()
+        expected = self._weights(wrapped)
+        path = str(tmp_path / "ckpt.pt")
+        torch.save({"MODEL_STATE": wrapped._unwrapped_model.state_dict()}, path)
+
+        import BenNevis.core.trainer as bt
+
+        monkeypatch.setattr(bt, "supports_ddp", lambda device: False)
+        plain = trainer_factory()
+        plain._load_weights(path)
+
+        for key, value in expected.items():
+            assert torch.equal(plain._unwrapped_model.state_dict()[key], value)
+
+    def test_an_unwrapped_checkpoint_loads_into_a_ddp_run(
+        self, trainer_factory, no_ddp, tmp_path, monkeypatch
+    ):
+        plain = trainer_factory()
+        expected = self._weights(plain)
+        path = str(tmp_path / "ckpt.pt")
+        torch.save({"MODEL_STATE": plain._unwrapped_model.state_dict()}, path)
+
+        import BenNevis.core.trainer as bt
+
+        monkeypatch.setattr(bt, "supports_ddp", lambda device: True)
+        wrapped = trainer_factory()
+        wrapped._load_weights(path)
+
+        for key, value in expected.items():
+            assert torch.equal(wrapped._unwrapped_model.state_dict()[key], value)
+
+    def test_a_legacy_prefixed_checkpoint_still_loads(self, trainer_factory, tmp_path):
+        """
+        Checkpoints written before this change stored the wrapper's keys. No
+        such checkpoint is known to exist, but tolerating them costs one dict
+        comprehension and removes a trap.
+        """
+        t = trainer_factory()
+        legacy = {f"module.{k}": v for k, v in t._unwrapped_model.state_dict().items()}
+        path = str(tmp_path / "legacy.pt")
+        torch.save({"MODEL_STATE": legacy}, path)
+
+        t._load_weights(path)  # must not raise
+
+    def test_a_saved_checkpoint_round_trips_both_ways(
+        self, trainer_factory, tmp_path, monkeypatch
+    ):
+        """End to end through _save_checkpoint, not a hand-built dict."""
+        from omegaconf import OmegaConf
+
+        t = trainer_factory()
+        t.ckpt_dir = str(tmp_path / "ckpts")
+        os.makedirs(t.ckpt_dir, exist_ok=True)
+        t.top_k, t.epoch, t.step = [], 1, 10
+        t.config = OmegaConf.create({"trainer": {"max_epochs": 1}})
+        t._save_checkpoint(0.25)
+        saved = os.path.join(t.ckpt_dir, "epoch_1_step_10_val_loss_0.2500.pt")
+
+        stored = torch.load(saved, map_location="cpu", weights_only=True)
+        assert not any(k.startswith("module.") for k in stored["MODEL_STATE"])
+
+        import BenNevis.core.trainer as bt
+
+        monkeypatch.setattr(bt, "supports_ddp", lambda device: False)
+        plain = trainer_factory()
+        plain._load_weights(saved)
+
+
+class TestStripDdpPrefix:
+    """The prefix is recognised by DDP's signature, not by guessing."""
+
+    def test_a_fully_prefixed_dict_is_stripped(self):
+        from BenNevis.core.trainer import Trainer
+
+        out = Trainer._strip_ddp_prefix({"module.a": 1, "module.b": 2})
+        assert out == {"a": 1, "b": 2}
+
+    def test_an_unprefixed_dict_is_untouched(self):
+        from BenNevis.core.trainer import Trainer
+
+        assert Trainer._strip_ddp_prefix({"a": 1}) == {"a": 1}
+
+    def test_a_partial_match_is_left_alone(self):
+        """
+        A model with a submodule genuinely named `module` alongside others
+        must not be mangled. Only an all-keys match is DDP's signature.
+        """
+        from BenNevis.core.trainer import Trainer
+
+        state = {"module.weight": 1, "encoder.weight": 2}
+        assert Trainer._strip_ddp_prefix(state) == state
+
+    def test_an_empty_dict_is_handled(self):
+        from BenNevis.core.trainer import Trainer
+
+        assert Trainer._strip_ddp_prefix({}) == {}

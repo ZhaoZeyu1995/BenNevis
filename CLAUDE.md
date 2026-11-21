@@ -109,14 +109,24 @@ These limits were measured, not assumed:
 | --- | --- |
 | k2 has no MPS backend (`.to("mps")` asserts) | the graph loss runs on the CPU |
 | MPS has no float64, and `use_double_scores=True` must stay | likewise |
-| DDP cannot wrap an MPS module (`c10d::allgather_` unimplemented) | MPS is single-process only, and is not auto-selected while `Trainer` wraps DDP unconditionally |
+| DDP cannot wrap an MPS module (`c10d::allgather_` unimplemented) | `Trainer` skips the wrapper on MPS, so MPS is single-process only; asking for several ranks there raises |
 | NCCL is CUDA-only | every other device uses gloo, the only backend on Windows |
 | Windows symlinks need admin or developer mode | `best.pt` is a symlink where possible and a copy where not |
 
-Cross-device autograd does work: an MPS forward, a `.cpu()` hop and a CPU k2
-numerator backpropagate correctly to the MPS parameters. MPS is for
-development, not for speed -- every step copies the log probabilities across
-devices and synchronises.
+Cross-device autograd does work, and `GraphLoss` relies on it: an MPS forward
+pass has its loss computed on the CPU and backpropagates correctly to the MPS
+parameters, agreeing with an all-CPU run to float32. MPS is for development,
+not for speed -- every step copies the log probabilities across devices and
+synchronises.
+
+**The checkpoint format does not record whether DDP was used.** `MODEL_STATE`
+is written from, and read into, the *unwrapped* module, so DDP's `module.`
+key prefix never reaches disc and a four-GPU checkpoint loads into a
+single-process CPU or MPS run and back. This is what makes skipping the DDP
+wrapper safe. An earlier branch tried conditional wrapping without it,
+changed the format silently, and was reverted; do not reintroduce
+`self.model.state_dict()` at a save site. A legacy prefixed checkpoint is
+still accepted, with the prefix recognised only when *every* key carries it.
 
 CI runs tiers 1, 1b and 2 on `ubuntu-latest`, `macos-latest` and
 `windows-latest`. k2 publishes cp312 CPU wheels for all three at the pinned
@@ -164,6 +174,10 @@ test tier and for cloud runs.
   CPU: the tests run it against a real one-rank gloo group backed by a
   `FileStore`, provided by the `process_group` fixture in
   `tests/core/conftest.py`.
+- `Trainer` places the model on its own `device`; callers need not, though
+  the entry points still do. A `Trainer` whose `device` disagreed with where
+  its model lived used to raise a device mismatch from inside the first
+  linear layer, far from the cause.
 - The **global** rank decides which process writes checkpoints and logs; the
   **device index** is `LOCAL_RANK`, the rank within the node. They coincide on
   one node and diverge across several, so never select a device by global
