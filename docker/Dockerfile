@@ -118,12 +118,25 @@ RUN make -j"$(nproc)" OPENFST_VERSION="${OPENFST_VERSION}"
 # OpenMathLib-OpenBLAS-* directory the script then moves. No checksum: a
 # git host's generated archives are not guaranteed byte-stable, and a pin
 # that breaks on their side would be worse than none.
+#
+# TARGET is forced because OpenBLAS 0.3.13 is from December 2020 and does not
+# recognise a 2026 CPU: its getarch_2nd probe fails to compile against a
+# target its own param.h has never heard of, with a wall of
+# SGEMM_DEFAULT_UNROLL_M-undeclared errors. Naming a target skips the probe.
+#
+# NEHALEM rather than something current, for portability over speed. It needs
+# only SSE4.2, so the image runs anywhere, including emulated on an Apple
+# Silicon machine where a newer target's AVX2 kernels may not. Nothing here is
+# BLAS-bound: torch ships its own kernels and never touches this library, and
+# Kaldi's part in this image is feature extraction, graph compilation and
+# decoding.
 RUN test "$(sed -n 's/^OPENBLAS_VERSION=//p' extras/install_openblas.sh)" \
          = "${OPENBLAS_VERSION}" \
     && mkdir -p /tmp/blas \
     && wget -q --tries=3 -O "/tmp/blas/OpenBLAS-${OPENBLAS_VERSION}.tar.gz" \
         "https://codeload.github.com/OpenMathLib/OpenBLAS/legacy.tar.gz/refs/tags/v${OPENBLAS_VERSION}" \
-    && DOWNLOAD_DIR=/tmp/blas ./extras/install_openblas.sh \
+    && DOWNLOAD_DIR=/tmp/blas TARGET=NEHALEM ./extras/install_openblas.sh \
+    && test -f /opt/kaldi/tools/OpenBLAS/install/lib/libopenblas.so \
     && rm -rf /tmp/blas
 
 # sclite, for scoring. `make all` above builds sctk too, so this is an
@@ -137,7 +150,14 @@ WORKDIR /opt/kaldi/src
 # --shared keeps the binaries linking against .so files, which is what lets
 # the second stage drop the static archives. No CUDA: this image exists for
 # the recipe tier, which is CPU-only and free to run.
+#
+# --openblas-root is given explicitly rather than left to detection, because
+# at this commit configure looks for it under tools/extras/OpenBLAS/install
+# while extras/install_openblas.sh, run from tools/ as Kaldi's own
+# instructions say, puts it in tools/OpenBLAS/install. Saying where it is
+# costs nothing and does not depend on which of those is the intended one.
 RUN ./configure --shared --use-cuda=no --mathlib=OPENBLAS \
+        --openblas-root=/opt/kaldi/tools/OpenBLAS/install \
     && make depend -j"$(nproc)" \
     && make -j"$(nproc)"
 

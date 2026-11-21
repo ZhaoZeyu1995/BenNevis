@@ -46,6 +46,9 @@ sctk_binaries=(sclite)
 # Kaldi's shell and Perl helpers, reached through path.sh and the utils and
 # steps symlinks in a recipe directory.
 scripts=(
+    # Sourced by every recipe's path.sh, which exits if it is absent, so its
+    # absence would break every single stage.
+    "$kaldi_root/tools/config/common_path.sh"
     "$kaldi_root/egs/wsj/s5/utils/parse_options.sh"
     "$kaldi_root/egs/wsj/s5/utils/prepare_lang.sh"
     "$kaldi_root/egs/wsj/s5/utils/split_data.sh"
