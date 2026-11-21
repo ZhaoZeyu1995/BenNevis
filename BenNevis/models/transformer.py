@@ -11,8 +11,7 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from typing import Optional, Iterable
-from BenNevis.models.whisper import sinusoids
-from BenNevis.utils.nets import lens2mask
+from BenNevis.utils.nets import lens2mask, sinusoids
 
 
 class Conv1d(torch.nn.Conv1d):

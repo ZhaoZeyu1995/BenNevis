@@ -63,18 +63,21 @@ run the cheap ones everywhere and the expensive ones rarely.
 
 | Tier | Marker | Needs | When |
 | --- | --- | --- | --- |
-| 1 | *(none)* | python + torch | every push |
+| 1 | *(none)* | the standard library and pytest | every push |
+| 1b | `torch` | torch (CPU) | every push |
 | 2 | `k2` | k2 CPU wheel | every push |
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
 | 4 | `gpu` | CUDA, multi-GPU | manual |
 
 ```bash
-pytest tests/ -m "not k2 and not kaldi and not gpu"   # tier 1
-pytest tests/ -m "k2"                                 # tier 2
+pytest tests/ -m "not torch and not k2 and not kaldi and not gpu"   # tier 1
+pytest tests/ -m "torch"                                            # tier 1b
+pytest tests/ -m "k2"                                               # tier 2
 ```
 
-Tier 1 must stay dependency-free beyond pytest; that is what makes it free to
-run on every push. Linter versions are pinned identically in
+Tier 1 must stay dependency-free beyond pytest; that is what makes it instant.
+A test that needs torch belongs in tier 1b with the `torch` marker, so the
+dependency-free tests are never held up by a wheel download. Linter versions are pinned identically in
 `.pre-commit-config.yaml` and `.github/workflows/ci.yml` -- keep the two in
 step, and treat an upgrade as its own PR, since black's style evolves between
 releases.

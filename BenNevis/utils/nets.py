@@ -4,8 +4,45 @@ Authors:
     Zeyu Zhao (The University of Edinburgh) 2024
 """
 
+import math
 from typing import Optional
+
 import torch
+
+
+def sinusoids(
+    length: int,
+    channels: int,
+    max_timescale: int = 10000,
+) -> torch.Tensor:
+    """
+    Build a sinusoidal positional embedding table.
+
+    This follows the Whisper formulation, which spaces the timescales
+    logarithmically rather than using the original Transformer's fixed
+    geometric progression. It lives here rather than beside a model so that
+    any encoder can use it without pulling in that model's dependencies.
+
+    Arguments
+    ---------
+    length: int
+        The number of positions, i.e. the maximum sequence length.
+    channels: int
+        The embedding dimension. Must be even, as half the channels carry
+        sines and half cosines.
+    max_timescale: int
+        The longest wavelength represented, by default 10000.
+
+    Returns
+    -------
+    embedding: torch.Tensor
+        The positional embedding, of shape `(length, channels)`.
+    """
+    assert channels % 2 == 0, f"channels must be even, but got {channels}"
+    log_timescale_increment = math.log(max_timescale) / (channels // 2 - 1)
+    inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2))
+    scaled_time = torch.arange(length)[:, None] * inv_timescales[None, :]
+    return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
 
 def make_pad_mask(

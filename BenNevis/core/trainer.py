@@ -22,6 +22,7 @@ from typing import List, Dict, Any, Optional
 from tqdm import tqdm
 from torchinfo import summary
 from kaldiio import WriteHelper
+from omegaconf import OmegaConf
 from BenNevis.core.losses import GraphLoss
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
 
@@ -180,9 +181,47 @@ class Trainer:
         best_ckpt_path = os.path.join(self.ckpt, "best.ckpt")
         self._load_checkpoint(best_ckpt_path)
 
+    def _torch_load(self, ckpt_path: str) -> Dict[str, Any]:
+        """
+        Load a checkpoint file written by `_save_checkpoint`.
+
+        `weights_only=True` is passed explicitly, which has been the torch
+        default since 2.6 and refuses to unpickle arbitrary Python objects.
+        Everything `_save_checkpoint` writes is a tensor, a plain scalar or a
+        string, so the safe path is sufficient. A checkpoint that stored the
+        configuration as a pickled object rather than YAML will fail here, and
+        the error says so rather than surfacing a bare UnpicklingError.
+
+        Arguments
+        ---------
+        ckpt_path: str
+            The path to the checkpoint file.
+
+        Returns
+        -------
+        ckpt: Dict[str, Any]
+            The loaded checkpoint.
+        """
+        try:
+            return torch.load(ckpt_path, map_location=self.device, weights_only=True)
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not load {ckpt_path} with weights_only=True. BenNevis "
+                "stores the configuration as a YAML string so that the safe "
+                "loading path is sufficient; a checkpoint holding a pickled "
+                "object predates that and must be re-saved, or loaded "
+                "deliberately with weights_only=False."
+            ) from e
+
     def _load_checkpoint(self, ckpt_path: str):
         """
         Load the checkpoint from the given path.
+
+        The configuration found in the checkpoint is kept separately, as
+        `self.ckpt_config`, rather than replacing `self.config`. The live
+        configuration is the one this run was launched with, so overwriting it
+        would silently discard changes made when resuming, such as a different
+        max_epochs or learning rate.
 
         Arguments
         ---------
@@ -190,12 +229,12 @@ class Trainer:
             The path to the checkpoint file.
         """
         logging.info(f"RANK {self.gpu_id}: Loading checkpoint from {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location=self.device)
+        ckpt = self._torch_load(ckpt_path)
         self.model.load_state_dict(ckpt["MODEL_STATE"])
         self.epoch = ckpt["EPOCH"]
         self.step = ckpt["STEP"]
         self.valid_loss = ckpt["VALID_LOSS"]
-        self.config = ckpt["CONFIG"]
+        self.ckpt_config = OmegaConf.create(ckpt["CONFIG"])
         for i, optimizer in enumerate(self.optimizers):
             optimizer.load_state_dict(ckpt[f"OPTIMIZER_{i}"])
         for i, scheduler in enumerate(self.schedulers):
@@ -242,7 +281,10 @@ class Trainer:
             if (valid_loss, ckpt_name) not in self.top_k:
                 return
         snapshot = {
-            "CONFIG": self.config,
+            # Stored as YAML text rather than the live object: this keeps the
+            # checkpoint loadable with weights_only=True and makes the
+            # configuration readable without constructing a Trainer.
+            "CONFIG": OmegaConf.to_yaml(self.config),
             "MODEL_STATE": self.model.state_dict(),
             "EPOCH": self.epoch,
             "STEP": self.step,
@@ -277,7 +319,7 @@ class Trainer:
         ckpt_path: str
             The path to the checkpoint file.
         """
-        ckpt = torch.load(ckpt_path, map_location=self.device)
+        ckpt = self._torch_load(ckpt_path)
         self.model.load_state_dict(ckpt["MODEL_STATE"])
 
     def _compute_loss(

@@ -8,6 +8,26 @@ Notable changes to BenNevis. This project follows
 
 ### Fixed
 
+- **Checkpoint loading was broken on torch 2.6 and later.** `torch.load`
+  defaults to `weights_only=True` there, which refuses to unpickle arbitrary
+  objects, and the checkpoint stored the live Hydra configuration object. Both
+  `_load_checkpoint` and `_load_weights` therefore raised `UnpicklingError`,
+  breaking resuming from a checkpoint and prediction. The configuration is now
+  stored as a YAML string, so the safe loading path is sufficient and is used
+  explicitly; everything else in the checkpoint was already safe-loadable. A
+  checkpoint that cannot be loaded safely now reports why instead of surfacing
+  a bare `UnpicklingError`.
+- `_load_checkpoint` no longer overwrites `self.config` with the
+  configuration found in the checkpoint, which silently discarded changes made
+  when resuming, such as a different `max_epochs`. The checkpoint's
+  configuration is kept as `self.ckpt_config` for provenance.
+- `BenNevis/models/transformer.py` no longer requires `openai-whisper`. It
+  imported `sinusoids` from `BenNevis/models/whisper.py`, which imports the
+  `whisper` package at module scope, so the Transformer model could not be
+  used without Whisper installed. `sinusoids` now lives in
+  `BenNevis/utils/nets.py`, where a generic positional embedding belongs, and
+  is verified bit-identical to the previous implementation.
+
 - `Trainer._test_epoch` and `Trainer._exit` referenced `self.progress_bar`,
   which was never assigned, so both raised `AttributeError` on rank 0. Testing
   now builds its own progress bar and `_exit` shuts down cleanly.
@@ -44,6 +64,11 @@ Notable changes to BenNevis. This project follows
 
 ### Changed
 
+- Tests are now split into tier 1 (standard library and pytest only) and
+  tier 1b (`torch` marker), each with its own CI job, so the
+  dependency-free tests stay instant rather than waiting on a wheel download.
+  `CLAUDE.md`'s tier table previously claimed tier 1 had torch available while
+  CI installed only pytest; the two now agree.
 - `.flake8` now carries narrow, documented per-file exemptions for legacy
   files instead of leaving the whole package ungated. New code is fully
   gated; each exemption records what has to happen before it can be removed.

@@ -73,6 +73,7 @@ testpaths = ["tests"]
 # -free tiers can run straight from a clone.
 pythonpath = ["."]
 markers = [
+    "torch: requires torch (tier 1b)",
     "k2: requires the k2 package (tier 2)",
     "kaldi: requires a Kaldi build on PATH (tier 3)",
     "gpu: requires CUDA, possibly multiple GPUs (tier 4)",
