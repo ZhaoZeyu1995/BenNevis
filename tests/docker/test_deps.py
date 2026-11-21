@@ -11,6 +11,7 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -22,6 +23,16 @@ sys.path.insert(0, str(REPO_ROOT / "docker"))
 import deps  # noqa: E402
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+
+# `tomllib` is standard from 3.11. deps.py runs only inside the image, whose
+# Python is 3.12, so needing it there is not a constraint -- but tier 1 sweeps
+# back to 3.10, where reading pyproject.toml is impossible without a
+# third-party parser that this tier is not going to install for one file.
+# The tests that do not read it still run everywhere.
+needs_tomllib = pytest.mark.skipif(
+    importlib.util.find_spec("tomllib") is None,
+    reason="tomllib is standard from 3.11; the image's Python is 3.12",
+)
 
 
 class TestRequirementName:
@@ -44,6 +55,7 @@ class TestRequirementName:
         assert deps.requirement_name(requirement) == expected
 
 
+@needs_tomllib
 class TestDependencies:
     def test_torch_is_excluded(self):
         """
@@ -100,6 +112,7 @@ class TestDependencies:
 
 
 class TestCli:
+    @needs_tomllib
     def test_prints_one_per_line(self, capsys):
         assert deps.main([str(PYPROJECT)]) == 0
         out = capsys.readouterr().out.splitlines()

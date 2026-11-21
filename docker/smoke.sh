@@ -31,12 +31,14 @@ binaries=(
     fstminimizeencoded
     fstrmsymbols
     fstrmepslocal
+    # the diagnostics in egs/yesno/asr/local/prepare_lm.sh
+    fstisstochastic
     # decoding
     decode-faster
 )
 
 # OpenFST tools, used by prepare_topo.sh and Kaldi's prepare_lang.sh.
-openfst_binaries=(fstcompile fstprint fstarcsort fstinfo)
+openfst_binaries=(fstcompile fstprint fstarcsort fstinfo fstcompose)
 
 # Scoring.
 sctk_binaries=(sclite)
@@ -50,6 +52,7 @@ scripts=(
     "$kaldi_root/egs/wsj/s5/utils/split_scp.pl"
     "$kaldi_root/egs/wsj/s5/utils/int2sym.pl"
     "$kaldi_root/egs/wsj/s5/utils/fix_data_dir.sh"
+    "$kaldi_root/egs/wsj/s5/utils/utt2spk_to_spk2utt.pl"
     "$kaldi_root/egs/wsj/s5/utils/run.pl"
     "$kaldi_root/egs/wsj/s5/steps/make_fbank_pitch.sh"
     "$kaldi_root/egs/wsj/s5/steps/compute_cmvn_stats.sh"
