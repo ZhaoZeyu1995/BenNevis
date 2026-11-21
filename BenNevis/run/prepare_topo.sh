@@ -1,16 +1,22 @@
 #!/bin/bash
 # This script copies the source lang directory to the destination lang directory and prepares the following files.
-# 1. tokens.txt, the input symbol table for T.fst, which contains <eps> 
-# 2. disambig.txt, the disambig symbols in T.fst. The disambig symbols are in the form of #1, #2, ... and are useful when composing T.fst with L_disambig.fst.
-# 3. disambig.int, the integer representation of disambig symbols
-# 4. tokens_disambig.txt, the input symbol table for T.fst, which contains <eps> and disambig symbols
-# 5. T.fst, the topo FST for training decoding, as its input symols are tokens_disambig.txt and output symbols are phones.txt
-# 6. k2/T.fst, the topo FST for k2 training, as its input symbols are k2/tokens.txt, which does not contain <eps> or disambig symbols, and output symbols are k2/phones.txt
-# 7. k2/tokens.txt, the input symbol table for k2/T.fst, which does not contain <eps> or disambig symbols
-# 8. k2/phones.txt, the output symbol table for k2/T.fst, which does not contain disambig symbols
+# 1. tokens.txt, the input symbol table for T.fst, which contains <eps>
+# 2. disambig.int, the ids of the disambiguation symbols in tokens_disambig.txt, used when composing with L_disambig.fst
+# 3. tokens_disambig.txt, the input symbol table for T.fst, which contains <eps> and the disambiguation symbols
+# 4. T.fst, the topo FST for decoding; its input symbols are tokens_disambig.txt and its output symbols are phones.txt
+# 5. k2/T.fst, the topo FST for k2 training; its input symbols are k2/tokens.txt, which contains neither <eps> nor the
+#    disambiguation symbols, so it matches the neural network's outputs directly
+# 6. k2/tokens.txt, the input symbol table for k2/T.fst
+# 7. k2/phones.txt, the output symbol table for k2/T.fst, without the disambiguation symbols
+#
+# The topology itself, and the token inventory derived from it, come from
+# BenNevis/topos/specs/<topo>.yaml. This script used to carry one branch per
+# topology, each repeating the same awk pipelines, and each calling one of
+# fifteen generator scripts; all of that now lives in the spec.
+#
 # Usage:
 # run/prepare_topo.sh --topo [topo] <src_lang_dir> <des_lang_dir>
-# --topo: ctc|mmictc|mmictc-1|2state|2state-1|3state-skip|3state-skip-1|3state-skip-2
+# Run `python3 -m BenNevis.topos list` for the available topologies.
 # e.g.
 # run/prepare_topo.sh --topo mmictc data/lang data/lang_mmictc
 # Authors:
@@ -26,18 +32,29 @@ topo=
 
 if [ -z $topo ]; then
     echo "--topo cannot be blank!"
+    echo "$0: Supported topologies: $(python3 -m BenNevis.topos list | tr '\n' ' ')"
     exit 1
 fi
 
 if [ $# != 2 ]; then
     echo "Usage: run/prepare_topo.sh --topo [topo] <src_lang_dir> <des_lang_dir>"
-    echo "  --topo: ctc|mmictc|mmictc-1|2state|2state-1|3state-skip|3state-skip-1|3state-skip-2"
+    echo "  --topo: $(python3 -m BenNevis.topos list | tr '\n' ' ')"
     echo "e.g. run/prepare_topo.sh --topo mmictc data/lang data/lang_mmictc"
     exit 1
 fi
 
 src=$1
 des=$2
+
+# Fail before touching anything if the topology does not exist, rather than
+# part way through writing the destination directory.
+if ! python3 -m BenNevis.topos describe $topo > /dev/null; then
+    echo "$0: Unknown topology: $topo"
+    echo "$0: Supported topologies: $(python3 -m BenNevis.topos list | tr '\n' ' ')"
+    exit 1
+fi
+
+echo "$0: Using $topo topology"
 
 if [ -d $des ]; then
     echo "$0: $des already exists, removing it..."
@@ -46,187 +63,26 @@ fi
 cp -r $src $des
 mkdir -p $des/k2
 
-case $topo in
-    ctc)
-        echo "$0: Using ctc topology"
-        (echo "<eps>"; echo "<blk>"; cat $des/phones.txt | grep -v "<eps>" | cut -f 1 -d" ") | grep -v "<SIL>" | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
+# Symbol tables. These were built with grep and awk, once per topology, which
+# meant the token inventory and the FST were defined in two different places;
+# both come from the spec now. The grep for disambiguation symbols was also
+# subtly dialect-dependent: `grep "#[^\d]"` only selects #0 where \d inside a
+# bracket expression means the literal characters \ and d, which is POSIX but
+# not what ugrep or grep -P do.
+python3 -m BenNevis.topos tokens   $topo $des/phones.txt                          > $des/tokens_disambig.txt
+python3 -m BenNevis.topos tokens   $topo $des/phones.txt --no-disambig            > $des/tokens.txt
+python3 -m BenNevis.topos tokens   $topo $des/phones.txt --no-eps --no-disambig   > $des/k2/tokens.txt
+python3 -m BenNevis.topos disambig $topo $des/phones.txt                          > $des/disambig.int
+python3 -m BenNevis.topos phones         $des/phones.txt --no-disambig            > $des/k2/phones.txt
 
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
+# T.fst, for decoding.
+python3 -m BenNevis.topos fst $topo $des/phones.txt |\
+    fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
+    --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
 
-        get_token_fst_ctc.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt # no <eps>
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_ctc.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/tokens.txt --osymbols=$des/k2/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstrmepsilon |\
-            fstprint --isymbols=$des/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    mmictc)
-        echo "$0: Using mmictc topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_mmictc.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_mmictc_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    mmictc-1)
-        echo "$0: Using mmictc-1 topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_mmictc-1.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_mmictc-1_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    2state)
-        echo "$0: Using 2state topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_2state.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_2state_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    2state-1)
-        echo "$0: Using 2state-1 topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_2state-1.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_2state-1_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    3state-skip)
-        echo "$0: Using 3state-skip topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"; print $1"_2"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_3state-skip.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_3state-skip_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    3state-skip-1)
-        echo "$0: Using 3state-skip-1 topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"; print $1"_2"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_3state-skip-1.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_3state-skip-1_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    3state-skip-2)
-        echo "$0: Using 3state-skip-2 topology"
-        (echo "<eps>"; echo "<blk>"; \
-            cat $des/phones.txt | grep -v "<eps>" | grep -v "<SIL>" | grep -v "#[^\d]" | awk '{print $1"_0"; print $1"_1"; print $1"_2"}'; \
-            cat $des/phones.txt | grep "#[^\d]") | awk '{print $1 " " NR-1}' > $des/tokens_disambig.txt
-
-        cat $des/tokens_disambig.txt | grep -v "#[^\d]" > $des/tokens.txt
-        cat $des/tokens_disambig.txt | grep "#[^\d]" | awk '{print $2}' > $des/disambig.int
-
-        get_token_fst_3state-skip-2.py $des/phones.txt |\
-            fstcompile --isymbols=$des/tokens_disambig.txt --osymbols=$des/phones.txt \
-            --keep_isymbols=false --keep_osymbols=false | fstarcsort --sort_type=olabel > $des/T.fst
-
-        # For k2
-
-        cat $des/tokens.txt | grep -v "<eps>" | awk '{print $1 " " NR-1}' > $des/k2/tokens.txt
-        cat $des/phones.txt | grep -v "#[^\d]" | awk '{print $1 " " NR-1}' > $des/k2/phones.txt # no disambig symbols
-
-        get_token_fst_3state-skip-2_k2.py $des/k2/phones.txt |\
-            fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
-            fstarcsort --sort_type=olabel > $des/k2/T.fst
-        ;;
-    *)
-        echo "$0: Unknown topology: $topo"
-        echo "$0: Supported topologies: ctc, mmictc, mmictc-1, 2state, 2state-1, 3state-skip, 3state-skip-1, 3state-skip-2"
-        exit 1
-        ;;
-esac
+# k2/T.fst, for training. The k2 variant is epsilon-free on the input side by
+# construction, so unlike the previous ctc branch there is nothing for
+# fstrmepsilon to remove and it can be compiled against k2/tokens.txt directly.
+python3 -m BenNevis.topos fst $topo $des/k2/phones.txt --variant k2 |\
+    fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
+    fstarcsort --sort_type=olabel > $des/k2/T.fst

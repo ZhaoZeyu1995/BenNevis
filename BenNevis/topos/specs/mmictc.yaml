@@ -1,0 +1,39 @@
+# A CTC-like topology in the MMI style: two tokens per phone, and a phone may
+# be left after either of them, so it can be covered by a single frame.
+name: mmictc
+summary: |
+  0 -> a_0:a -> (a_1:<eps>) -> 0
+            -> - - - - - - -> 0
+
+tokens_per_phone: ["{phone}_0", "{phone}_1"]
+
+variants:
+  lang:
+    stride: 2
+    disambig: self_loop
+    # The script this replaces advanced its state counter inside the branch
+    # that expands a phone, so a disambiguation entry consumed no state ids.
+    # Kaldi writes them last, so this is invisible for a real phone table --
+    # it is recorded to keep the expansion identical rather than because it
+    # matters.
+    disambig_advances: false
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "<eps>", "<eps>"]       # leave after one frame
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "<eps>", "<eps>"]
+  # The two <eps> returns above become arcs on the phone's own tokens, and the
+  # single-frame case becomes a hub self-loop.
+  k2:
+    stride: 2
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, hub, "{phone}_0", "{phone}"]
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "{phone}_1", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_1", "<eps>"]

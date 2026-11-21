@@ -22,3 +22,8 @@ egs/yesno/asr/waves_yesno.tar.gz
 # tools
 /tools/kaldi
 /tools/venv
+
+# build artefacts
+/build
+/dist
+*.egg-info

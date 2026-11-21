@@ -1,0 +1,48 @@
+# Standard CTC: one token per phone, a self-loop to repeat it, and the blank
+# as the only way to separate two instances of the same token.
+name: ctc
+summary: |
+  (0) -> (a:a) -> <blk> -> (0)
+  () is a self-loop and (0) the hub's <blk> self-loop.
+
+  Word-level silence is left to the blank rather than given its own token.
+  Introducing <SIL> alongside <blk> would overlap in function, and every
+  widely used CTC implementation handles silence with the blank, so <SIL> is
+  skipped. The scripts this replaces exposed an `ignore_silence_between_words`
+  flag, but it read sys.argv[2] only when len(sys.argv) > 3 and passed the
+  value through bool(), under which every non-empty string is True -- so it
+  could never be turned off, and no recipe passed it.
+
+tokens_per_phone: ["{phone}"]
+
+variants:
+  lang:
+    stride: 1
+    disambig: self_loop
+    disambig_advances: true
+    # CTC may end mid-token, so a phone's state is final as well as the hub.
+    finals: hub_and_bases
+    arcs:
+      - [hub, s0, "{phone}", "{phone}"]   # enter the token
+      - [s0, s0, "{phone}", "<eps>"]      # repeat it
+      - [s0, hub, "<blk>", "<eps>"]       # leave through the blank
+    # A token may also be followed directly by a different token, without a
+    # blank in between. Emitted for every ordered pair of distinct phones.
+    inter_phone_arcs:
+      - [s0, s0, "{dst_phone}", "{dst_phone}"]
+  # CTC's input labels are already epsilon-free, which is why there never was
+  # a get_token_fst_ctc_k2.py: the pipeline reused this same generator, but fed
+  # it k2/phones.txt, from which the disambiguation symbols have already been
+  # stripped. The only difference is therefore the disambiguation handling,
+  # and stating it here means the variant no longer depends on being handed a
+  # particular phone table.
+  k2:
+    stride: 1
+    disambig: skip
+    finals: hub_and_bases
+    arcs:
+      - [hub, s0, "{phone}", "{phone}"]
+      - [s0, s0, "{phone}", "<eps>"]
+      - [s0, hub, "<blk>", "<eps>"]
+    inter_phone_arcs:
+      - [s0, s0, "{dst_phone}", "{dst_phone}"]

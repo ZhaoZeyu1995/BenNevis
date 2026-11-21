@@ -1,0 +1,35 @@
+# Two states per phone, each with a self-loop, so a phone occupies at least
+# two frames and its two halves are modelled by separate tokens.
+name: 2state
+summary: |
+  0 -> (a_0:a) -> (a_1:<eps>) -> 0
+  () is a self-loop.
+
+tokens_per_phone: ["{phone}_0", "{phone}_1"]
+
+variants:
+  lang:
+    stride: 2
+    disambig: self_loop
+    disambig_advances: true
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s0, "{phone}_0", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "<eps>", "<eps>"]
+  # The return to the hub above is an <eps> input arc, which the network
+  # cannot emit. Here it is replaced by arcs labelled with the phone's second
+  # token, which costs determinism and buys an epsilon-free input side.
+  k2:
+    stride: 2
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "{phone}_1", "<eps>"]
+      - [s0, s0, "{phone}_0", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_1", "<eps>"]

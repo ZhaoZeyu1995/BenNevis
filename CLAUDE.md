@@ -10,7 +10,7 @@ is the neural network backend and [k2](https://github.com/k2-fsa/k2) the DWFST
 backend. Kaldi currently provides data preparation, feature extraction, graph
 compilation and WFST decoding.
 
-The distinctive contribution is the **topology zoo** in `BenNevis/bin/topos/`:
+The distinctive contribution is the **topology zoo** in `BenNevis/topos/`:
 CTC, 2-state, 3-state-skip and MMI-CTC families, each defining a different
 token-level state machine. Changes must not quietly alter topology semantics.
 
@@ -21,7 +21,7 @@ token-level state machine. Changes must not quietly alter topology semantics.
 | `BenNevis/core/` | `Lang`, `GraphLoss`, `Dataset`/`CollateFunc`, `Trainer` |
 | `BenNevis/models/` | Encoders: rnnp, transformer, conformer, wav2vec2, whisper |
 | `BenNevis/samplers/` | Duration-based dynamic batch samplers (DDP-synchronised) |
-| `BenNevis/bin/topos/` | Topology FST generators |
+| `BenNevis/topos/` | Declarative topology specs (`specs/*.yaml`) and the expander |
 | `BenNevis/run/` | Training, prediction, decoding and alignment entry points |
 | `BenNevis/utils/` | Kaldi-format IO and small helpers |
 | `egs/<corpus>/<recipe>/` | Recipes: `run.sh` plus Hydra `conf/` |
@@ -63,7 +63,7 @@ run the cheap ones everywhere and the expensive ones rarely.
 
 | Tier | Marker | Needs | When |
 | --- | --- | --- | --- |
-| 1 | *(none)* | the standard library and pytest | every push |
+| 1 | *(none)* | the standard library, pytest and pyyaml | every push |
 | 1b | `torch` | torch (CPU) | every push |
 | 2 | `k2` | k2 CPU wheel | every push |
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
@@ -75,9 +75,13 @@ pytest tests/ -m "torch"                                            # tier 1b
 pytest tests/ -m "k2"                                               # tier 2
 ```
 
-Tier 1 must stay dependency-free beyond pytest; that is what makes it instant.
-A test that needs torch belongs in tier 1b with the `torch` marker, so the
-dependency-free tests are never held up by a wheel download.
+Tier 1's rule is that it must stay **instant**, not that it must have no
+dependencies: a test that needs torch belongs in tier 1b with the `torch`
+marker, so the cheap tests are never held up by a 200MB wheel download.
+`pyyaml` is allowed in tier 1 because the topology specs are YAML and it is a
+small wheel with no transitive dependencies — testing the topologies is
+exactly the cheap, high-value work this tier exists for. Judge a new tier 1
+dependency by what it costs to install, and keep the list this short.
 
 Linter versions are pinned identically in `.pre-commit-config.yaml` and
 `.github/workflows/ci.yml` -- keep the two in step, and treat an upgrade as
@@ -193,11 +197,30 @@ test tier and for cloud runs.
   one node and diverge across several, so never select a device by global
   rank.
 - Topology FSTs and `tokens.txt` must stay consistent — the topology
-  determines the neural network's output vocabulary.
+  determines the neural network's output vocabulary. Both now come from the
+  same spec, and `TopologySpec.validate` rejects a spec whose arcs use a token
+  its inventory does not list, so the two cannot drift apart silently.
+- **A topology's golden file is its specification, not a cache.** The files in
+  `tests/golden/topos/` were produced by the fifteen `get_token_fst_*.py`
+  scripts that used to define the topologies, and the YAML specs were written
+  to reproduce them byte for byte. That provenance is what makes them an
+  independent check, and regenerating them from the specs gives it up. Add
+  goldens for new topologies; think hard before regenerating existing ones.
+- The `k2` variant of every topology must be **epsilon-free on the input
+  side**, because its input alphabet is the network's output layer and a
+  network cannot emit `<eps>`. This is checked at spec load time.
 - **The remaining POSIX-only sites are deliberate.** `Lang.load_topo` and
-  `Lang.load_lexicon` shell out to `fstprint | awk`; both disappear with the
-  declarative topology rewrite, which builds the FSA in Python, so they are
-  not worth making portable first. `run/predict.py`'s `cat | awk` merge and
+  `Lang.load_lexicon` shell out to `fstprint | awk`. `load_topo`'s call goes
+  once `Lang` builds the topology FSA from its spec rather than reading a
+  compiled `T.fst`; `load_lexicon`'s needs the lexicon off Kaldi first, which
+  is a larger piece of goal 2. `run/predict.py`'s `cat | awk` merge and
   `run/align.py`'s `gzip -c` pipe are portable in a few lines of Python each,
   but the entry-point scripts have no test coverage, so they wait for tier 3
   rather than being changed blind.
+- **Shell text processing is dialect-dependent, and was relied on.**
+  `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
+  which picks out `#0` only where `\d` inside a bracket expression means the
+  literal characters `\` and `d`. That is POSIX, but under `ugrep` or
+  `grep -P` it is a digit class, the pattern stops matching, and the token
+  table silently comes out as `#0_0`, `#0_1`. Prefer Python for anything that
+  parses a symbol table.

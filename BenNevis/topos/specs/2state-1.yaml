@@ -1,0 +1,30 @@
+# 2state without the self-loop on the first state: the first half of a phone
+# occupies exactly one frame, the second half one or more.
+name: 2state-1
+summary: |
+  0 -> a_0:a -> (a_1:<eps>) -> 0
+  () is a self-loop.
+
+tokens_per_phone: ["{phone}_0", "{phone}_1"]
+
+variants:
+  lang:
+    stride: 2
+    disambig: self_loop
+    disambig_advances: true
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "<eps>", "<eps>"]
+  k2:
+    stride: 2
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "{phone}_1", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_1", "<eps>"]
