@@ -77,10 +77,12 @@ pytest tests/ -m "k2"                                               # tier 2
 
 Tier 1 must stay dependency-free beyond pytest; that is what makes it instant.
 A test that needs torch belongs in tier 1b with the `torch` marker, so the
-dependency-free tests are never held up by a wheel download. Linter versions are pinned identically in
-`.pre-commit-config.yaml` and `.github/workflows/ci.yml` -- keep the two in
-step, and treat an upgrade as its own PR, since black's style evolves between
-releases.
+dependency-free tests are never held up by a wheel download.
+
+Linter versions are pinned identically in `.pre-commit-config.yaml` and
+`.github/workflows/ci.yml` -- keep the two in step, and treat an upgrade as
+its own PR, since black's style evolves between releases. The k2 wheel in the
+tier 2 job is pinned to an exact torch version and must be bumped with it.
 
 A test that only asserts a module imports, or that passes whether or not the
 code under test raises, is not a test. Pin behaviour: exact arc sets for
@@ -108,6 +110,14 @@ test tier and for cloud runs.
 
 - **Keep `use_double_scores=True`** in `k2` `get_tot_scores`. With `False`,
   NaNs have occurred, particularly in the denominator computation.
+- **k2 and torch define the CTC gradient differently with respect to log
+  probabilities.** k2 returns the true `d(loss)/d(log_probs)`, which is
+  `-gamma` and sums to `-1` per frame. `torch.nn.functional.ctc_loss` returns
+  `(p - gamma)`, the gradient with respect to the pre-softmax logits, which
+  sums to `0`. Both are invariant under the log_softmax Jacobian, so they
+  agree exactly once the log_softmax is in the graph -- which it always is in
+  training. Compare the two at the logits, never at the log probabilities, or
+  a correct implementation will look broken.
 - Do not put the k2 graph loss inside `torch.autocast`. FST intersection and
   score accumulation are numerically delicate; autocast the encoder forward
   and compute the loss in fp32.

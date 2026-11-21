@@ -48,6 +48,23 @@ Notable changes to BenNevis. This project follows
 
 ### Added
 
+- Tier 2 tests (39), covering `GraphLoss` and `Lang` with k2. The central one
+  is equivalence with `torch.nn.functional.ctc_loss`: under a CTC topology and
+  a one-to-one lexicon the graph loss computes exactly the CTC loss, so
+  torch's implementation is an independent oracle for the forward value, the
+  per-utterance values, the gradients and both reductions. Also establishes
+  that the project's own CTC generator is behaviourally identical to
+  `k2.ctc_topo`, which is the oracle the declarative topology rewrite will
+  have to satisfy.
+- A tier 2 CI job installing the k2 CPU wheel, pinned together with the exact
+  torch version it is built against.
+- Test fixtures building a complete lang directory without Kaldi or OpenFST,
+  by writing `k2/L_inv.pt` directly and assigning `lang.topo` rather than
+  loading it. `Lang.load_topo` shells out to `fstprint`, so a topology cannot
+  otherwise be loaded without OpenFST on PATH.
+- `CLAUDE.md` records that k2 and torch define the CTC gradient differently
+  with respect to log probabilities, and that the two must be compared at the
+  logits.
 - `CLAUDE.md` recording project conventions: style, commit and pull request
   flow, test tiers, equivalence tolerances and known gotchas.
 - This changelog.
