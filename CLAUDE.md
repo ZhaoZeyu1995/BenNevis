@@ -69,6 +69,16 @@ run the cheap ones everywhere and the expensive ones rarely.
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
 | 4 | `gpu` | CUDA, multi-GPU | manual |
 
+Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
+`.github/workflows/nightly.yml`. It is the **only** coverage the entry points
+have — `run/train.py`, `run/predict.py`, `bin/align.py` and the shell
+wrappers are reachable from no other tier, which is how the regression in #5
+got in. The tests do not run the recipe; the workflow does, and they inspect
+what it left behind. Keeping those apart matters, because a test that both
+drives and judges an hour-long recipe reports "failed" for a missing binary,
+a crashed training run and a diverged WER alike. Point them at a finished run
+with `BENNEVIS_YESNO_DIR`; with nothing there they skip rather than fail.
+
 ```bash
 pytest tests/ -m "not torch and not k2 and not kaldi and not gpu"   # tier 1
 pytest tests/ -m "torch"                                            # tier 1b
@@ -162,6 +172,20 @@ tolerances chosen per layer:
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
 
+The WER ledger is `tests/golden/wer/yesno.json`: one `reference_wer` per
+topology, taken from `egs/yesno/asr/README.md` and so from the author's own
+pre-refactor CUDA runs, and one `max_wer` that is the gate. **Raising
+`max_wer` to make a run pass is how a ledger stops meaning anything** — judge
+a change against `reference_wer` and tighten `max_wer` deliberately. The
+gates start loose because no run has yet been recorded in CI; `test_set` has
+232 reference words, so one word error is 0.43%.
+
+The error rate itself is computed by `BenNevis.utils.scoring`, in Python, not
+read out of `sclite`. That keeps sctk off the measurement path and makes the
+number testable in tier 1. `sclite` is then the *independent oracle*: tier 3
+asserts the two agree on real output, which is a stronger check than either
+alone and avoids pinning a parser against a hand-made fixture.
+
 ## Environment
 
 Locally a venv in `tools/venv` created by `tools/create_env.sh`.
@@ -254,6 +278,12 @@ reason. Building Kaldi takes most of an hour, so the image is built only when
   rather than being changed blind. `Lang.load_topo` keeps a `fstprint`
   *fallback* for a language directory prepared before `k2/topo.yaml` existed;
   it warns, and no new directory takes that path.
+- **`egs/yesno/asr` assigns every utterance one speaker.** `prepare_data.sh`
+  writes `global` for all of them, and Kaldi's `split_scp.pl` refuses to split
+  data into more parts than there are speakers, so the recipe could not get
+  past feature extraction with its own default of `nj=4`. It is `nj=1` now.
+  `run/apply_cmvn.sh` already handled this by clamping `nj` to the speaker
+  count; anything new that splits by speaker should do the same.
 - **Shell text processing is dialect-dependent, and was relied on.**
   `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
   which picks out `#0` only where `\d` inside a bracket expression means the
