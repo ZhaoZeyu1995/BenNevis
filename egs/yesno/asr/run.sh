@@ -3,7 +3,12 @@
 . ./env.sh || exit 1
 . ./path.sh || exit 1
 
-nj=4
+# One, not four, and not an arbitrary choice: prepare_data.sh assigns every
+# utterance the single speaker "global", and Kaldi's split_scp.pl refuses to
+# split data into more parts than there are speakers. With nj=4 this recipe
+# cannot get past feature extraction. yesno is sixty files, so there is
+# nothing to gain from parallelism here anyway.
+nj=1
 ngpu=1
 topos="ctc mmictc mmictc-1 2state 2state-1 3state-skip 3state-skip-1 3state-skip-2"
 

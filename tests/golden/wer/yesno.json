@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "The baseline WER ledger for egs/yesno/asr.",
+    "",
+    "reference_wer is the number in egs/yesno/asr/README.md, measured by the",
+    "author on CUDA with torch 2.1 and sclite. The recipe tier runs on CPU",
+    "with a newer torch, so the two are not expected to agree exactly, and",
+    "max_wer is the gate: a run above it fails, a run below it does not.",
+    "",
+    "The gate is deliberately loose to begin with. test_yesno has 232",
+    "reference words, so one word error is 0.43%, and a 1.5% allowance is",
+    "about three word errors. Tighten these once several real runs have been",
+    "recorded; a gate nobody has seen pass is not yet a baseline.",
+    "",
+    "Judge a change against reference_wer and tighten max_wer deliberately.",
+    "Raising max_wer to make a run pass is how a ledger stops meaning",
+    "anything."
+  ],
+  "model": "rnnp",
+  "test_set": "test_yesno",
+  "reference_words": 232,
+  "reference_source": "egs/yesno/asr/README.md, pre-refactor CUDA run",
+  "topologies": {
+    "ctc": { "reference_wer": 0.0, "max_wer": 1.5 },
+    "mmictc": { "reference_wer": 0.4, "max_wer": 1.9 },
+    "mmictc-1": { "reference_wer": 0.9, "max_wer": 2.4 },
+    "2state": { "reference_wer": 0.0, "max_wer": 1.5 },
+    "2state-1": { "reference_wer": 0.9, "max_wer": 2.4 },
+    "3state-skip": { "reference_wer": 0.0, "max_wer": 1.5 },
+    "3state-skip-1": { "reference_wer": 0.4, "max_wer": 1.9 },
+    "3state-skip-2": { "reference_wer": 0.4, "max_wer": 1.9 }
+  }
+}

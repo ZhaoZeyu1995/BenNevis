@@ -1,0 +1,138 @@
+name: Recipe tier (nightly)
+
+# Tier 3: the only tier that runs a recipe, and so the only coverage the
+# entry-point scripts have -- run/train.py, run/predict.py, bin/align.py and
+# the shell wrappers around them are reachable from no other tier.
+#
+# It needs Kaldi, so it runs inside the image docker/Dockerfile builds. Not
+# on pushes: a yesno run is about an hour, and the image may not exist for a
+# pull request from a fork.
+on:
+  schedule:
+    # 03:00 UTC, which is off-peak for the shared runner pool.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      topos:
+        description: "Topologies to run, space separated. Blank means all."
+        required: false
+        default: ""
+      max_epochs:
+        description: "Override trainer.max_epochs, e.g. 5 for a quick check."
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  yesno:
+    name: yesno end to end
+    runs-on: ubuntu-latest
+    # Eight topologies at eighty epochs each, plus feature extraction, graph
+    # compilation, decoding and alignment. Well under the six-hour ceiling,
+    # but far enough above the expected hour that a slow day is not mistaken
+    # for a hang.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the image name
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE=ghcr.io/${owner}/bennevis-kaldi:latest" >> "$GITHUB_ENV"
+
+      # The package is private unless it has been made public, so this is
+      # needed even though the repository is public.
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the Kaldi image
+        run: docker pull "$IMAGE"
+
+      # 4.7MB from openslr. Cached so that a nightly job does not fetch it
+      #365 times a year; run.sh skips the download when the directory is
+      # already there.
+      - name: Restore the corpus
+        uses: actions/cache@v4
+        with:
+          path: egs/yesno/asr/waves_yesno
+          key: waves-yesno-v1
+
+      - name: Run the recipe
+        env:
+          TOPOS: ${{ github.event.inputs.topos }}
+          MAX_EPOCHS: ${{ github.event.inputs.max_epochs }}
+        run: |
+          set -euo pipefail
+          opts=()
+          if [ -n "${TOPOS}" ]; then
+            opts+=(--topos "${TOPOS}")
+          fi
+          if [ -n "${MAX_EPOCHS}" ]; then
+            opts+=(--hydra_opts "trainer.max_epochs=${MAX_EPOCHS}")
+          fi
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace/egs/yesno/asr \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            -e WANDB_MODE=disabled \
+            -e OMP_NUM_THREADS=1 \
+            "$IMAGE" \
+            ./run.sh "${opts[@]}"
+
+      # PYTHONPATH, because the image deliberately does not install
+      # BenNevis: the point is to test the mounted tree. The recipe gets this
+      # from tools/env.sh; a bare pytest run does not.
+      - name: Check what the recipe produced
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            "$IMAGE" \
+            pytest tests/ -v -m kaldi
+
+      # Always, not only on failure: the measured error rates are how the
+      # ledger in tests/golden/wer/yesno.json gets tightened, and they are
+      # worth having from a passing run too.
+      - name: Collect the scores and logs
+        if: always()
+        run: |
+          mkdir -p artefacts
+          cd egs/yesno/asr
+          find exp -name 'results.wrd.txt' -o -name 'hyp.wrd.trn' \
+               -o -name 'ref.wrd.trn' -o -name '*.log' \
+               | tar czf ../../../artefacts/yesno-scores.tar.gz -T - || true
+          cd ../../..
+          {
+            echo "## yesno error rates"
+            echo
+            echo '| topology | sclite WER |'
+            echo '| --- | --- |'
+            for d in egs/yesno/asr/exp/*/dec_*/aw_*/results.wrd.txt; do
+              [ -f "$d" ] || continue
+              topo=$(echo "$d" | sed -E 's|.*/exp/rnnp-([^/]*)/.*|\1|')
+              wer=$(grep -E '\| *Sum/Avg' "$d" | awk '{print $(NF-2)}')
+              echo "| $topo | ${wer:-unknown} |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the scores and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yesno-scores
+          path: artefacts/yesno-scores.tar.gz
+          if-no-files-found: warn
+          retention-days: 30
