@@ -149,13 +149,13 @@ def main(args):
 
     count = 0
 
-    with kaldiio.WriteHelper(
-        f"ark:| gzip -c > {args.output_align_path}"
-    ) as writer, kaldiio.WriteHelper(
-        f"ark:| gzip -c > {args.output_word_align_path}"
-    ) as word_writer, open(
-        args.output_ctm_path, "w"
-    ) as ctm_file:
+    with (
+        kaldiio.WriteHelper(f"ark:| gzip -c > {args.output_align_path}") as writer,
+        kaldiio.WriteHelper(
+            f"ark:| gzip -c > {args.output_word_align_path}"
+        ) as word_writer,
+        open(args.output_ctm_path, "w") as ctm_file,
+    ):
         ctm = ""
         for utt, log_prob in utt2log_prob.items():
             logging.info(f"Processing utterance {utt}")

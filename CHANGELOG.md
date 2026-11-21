@@ -37,8 +37,10 @@ Notable changes to BenNevis. This project follows
   declared as a dependency, since it ships from its own index against exact
   torch and CUDA versions.
 - `.pre-commit-config.yaml`, scoped to the paths under active maintenance.
-- GitHub Actions CI: lint, tier-1 tests across Python 3.8 to 3.12, and a
-  package build check.
+- GitHub Actions CI: lint, tier-1 tests across Python 3.9 to 3.13, and a
+  package build check. Linters are pinned to exact versions matching the
+  pre-commit revisions, so a new release cannot turn CI red without a code
+  change.
 
 ### Changed
 
@@ -47,8 +49,13 @@ Notable changes to BenNevis. This project follows
   gated; each exemption records what has to happen before it can be removed.
 - Removed five unused imports flagged by flake8 (`BenNevis/core/losses.py`,
   `BenNevis/core/lang.py`, `BenNevis/bin/topos/get_token_fst_mmictc.py`).
-- `BenNevis/utils/nets.py` reformatted by black; whitespace in `README.md`
-  tidied by pre-commit's first run. No other formatting changes.
+- `BenNevis/utils/nets.py` and the `with` statement in `BenNevis/bin/align.py`
+  reformatted by black, the latter into parenthesised context managers now
+  that the supported floor is Python 3.9 (verified to parse on 3.9.6).
+  Whitespace in `README.md` tidied by pre-commit's first run. No other
+  formatting changes.
+- Minimum supported Python is now 3.9. 3.8 has been end-of-life since October
+  2024 and is no longer available on current GitHub runners.
 
 ## v0.1.0-pre-refactor
 
