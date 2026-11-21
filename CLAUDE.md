@@ -398,11 +398,19 @@ workflow changes.
   `kSpeechFeature` scheme, so a 633-frame utterance comes back with under 256
   distinct values per dimension. `kaldiio` decompresses faithfully enough for
   any tolerance comparison, but **not** bit-identically to Kaldi's own
-  decompression — which is why the Python CMVN agrees with `apply-cmvn` to
-  4e-6 rather than exactly, even though Kaldi's algorithm is reproduced
-  operation for operation. **Bit-exactness anywhere downstream of features
-  requires capturing them uncompressed** (`copy-feats --compress=false`), and
-  that is worth doing before the feature extractor itself is replaced.
+  decompression — which is why the Python CMVN first agreed with
+  `apply-cmvn` to 4e-6 rather than exactly, even with Kaldi's algorithm
+  reproduced operation for operation. The capture therefore has **Kaldi
+  rewrite each archive uncompressed with its own
+  `copy-feats --compress=false`** and reads that, so the values are the ones
+  Kaldi worked with rather than another decompression of them.
+  The **recipe is deliberately unchanged**: making it store features
+  uncompressed would alter the inputs to CMVN, hence the statistics, hence
+  the WERs, and would invalidate the committed baseline. The round trip is an
+  artefact of how the reference is *read*, so the fix belongs in the capture.
+  CMVN statistics are read directly, because they are double and never
+  compressed — putting them through `copy-feats` would narrow them to float
+  and lose the precision the whole normaliser rests on.
 - **Reproduce Kaldi's order of operations, not just its formula.**
   `ApplyCmvn` computes the moments and scale in double, rounds scale and
   offset to float32 as it stores them, then applies them as two separate
