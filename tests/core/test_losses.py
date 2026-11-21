@@ -264,3 +264,72 @@ class TestTopologyEquivalence:
         want = torch_ctc(log_probs, lens, targets, target_lens, "sum")
 
         assert got.item() == pytest.approx(want.item(), rel=1e-5, abs=1e-5)
+
+
+class TestCrossDeviceGraphLoss:
+    """
+    An MPS forward pass with the graph loss on the CPU.
+
+    k2 has no MPS backend and MPS cannot represent the float64 scores
+    `use_double_scores=True` requires, so this is the only shape in which MPS
+    training can work. These tests pin that it does, and that it agrees with
+    computing everything on the CPU.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _needs_mps(self):
+        if not torch.backends.mps.is_available():
+            pytest.skip("no MPS device here")
+
+    def test_the_loss_matches_the_all_cpu_result(self, lang, batch):
+        log_probs, lens, _, target_lens = batch
+
+        on_cpu = GraphLoss(lang, use_den=False, reduction="sum")(
+            log_probs, lens, WORD_IDS, target_lens
+        )
+        from_mps = GraphLoss(lang, use_den=False, reduction="sum")(
+            log_probs.detach().to("mps").requires_grad_(True),
+            lens.to("mps"),
+            WORD_IDS,
+            target_lens.to("mps"),
+        )
+
+        # float32 throughout, and the log probabilities make one device hop,
+        # so this is float32 agreement rather than bit-exactness.
+        assert from_mps.item() == pytest.approx(on_cpu.item(), rel=1e-5, abs=1e-5)
+
+    def test_the_gradient_reaches_the_mps_tensor(self, lang, batch):
+        """
+        Cross-device autograd is what makes the arrangement usable: the loss
+        is computed on the CPU but must still differentiate back to the MPS
+        parameters.
+        """
+        log_probs, lens, _, target_lens = batch
+        mps_log_probs = log_probs.detach().to("mps").requires_grad_(True)
+
+        loss = GraphLoss(lang, use_den=False, reduction="sum")(
+            mps_log_probs, lens.to("mps"), WORD_IDS, target_lens.to("mps")
+        )
+        loss.backward()
+
+        assert mps_log_probs.grad is not None
+        assert mps_log_probs.grad.device.type == "mps"
+        assert torch.isfinite(mps_log_probs.grad).all()
+        assert mps_log_probs.grad.abs().sum() > 0
+
+    def test_the_gradient_matches_the_all_cpu_gradient(self, lang, batch):
+        log_probs, lens, _, target_lens = batch
+
+        cpu_input = log_probs.detach().clone().requires_grad_(True)
+        GraphLoss(lang, use_den=False, reduction="sum")(
+            cpu_input, lens, WORD_IDS, target_lens
+        ).backward()
+
+        mps_input = log_probs.detach().to("mps").requires_grad_(True)
+        GraphLoss(lang, use_den=False, reduction="sum")(
+            mps_input, lens.to("mps"), WORD_IDS, target_lens.to("mps")
+        ).backward()
+
+        assert torch.allclose(
+            mps_input.grad.cpu(), cpu_input.grad, rtol=1e-5, atol=1e-5
+        )

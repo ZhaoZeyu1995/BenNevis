@@ -10,6 +10,7 @@ import k2
 import torch
 from typing import List, Optional
 from BenNevis.core.lang import Lang
+from BenNevis.utils.platform import graph_loss_device
 
 
 class GraphLoss(torch.nn.Module):
@@ -88,7 +89,18 @@ class GraphLoss(torch.nn.Module):
             If `reduction` is `none`, the shape is `(batch_size,)`.
             If `reduction` is `mean` or `sum`, the shape is `()`.
         """
-        device = log_probs.device
+        # k2 supports the CPU and CUDA only, and the double-precision scores
+        # the loss relies on cannot be represented on MPS, so an MPS forward
+        # pass has its loss computed on the CPU. Cross-device autograd makes
+        # this correct: the gradient flows back to the MPS parameters. It is
+        # not free -- every step copies the log probabilities across devices
+        # and synchronises -- which is why `resolve_device` warns about it.
+        device = graph_loss_device(log_probs.device)
+        if log_probs.device != device:
+            log_probs = log_probs.to(device)
+            log_probs_lens = log_probs_lens.to(device)
+            if target_lengths is not None:
+                target_lengths = target_lengths.to(device)
         batch_size = log_probs.size(0)
         num_graph = self.get_num_graph(word_ids, device)
         dense_fsa = self.get_dense_fsa(log_probs, log_probs_lens)
@@ -195,8 +207,12 @@ class GraphLoss(torch.nn.Module):
         """
 
         batch_size = log_probs.shape[0]
+        # The lengths are read on the CPU: k2 requires the supervision
+        # segments there, and building a CPU tensor from elements of an
+        # accelerator tensor would otherwise force a device transfer per item.
+        lens = log_probs_lens.tolist()
         supervision_segments = torch.tensor(
-            [[i, 0, log_probs_lens[i]] for i in range(batch_size)],
+            [[i, 0, lens[i]] for i in range(batch_size)],
             device="cpu",
             dtype=torch.int32,
         )

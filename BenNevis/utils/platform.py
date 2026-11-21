@@ -131,9 +131,9 @@ def resolve_device(
         The device index to use for CUDA, which is the rank within the node
         rather than the global rank. Ignored for the other device types.
     allow_mps: bool
-        Whether MPS may be selected by detection. False excludes it, which is
-        what the distributed entry points need for now because DDP cannot wrap
-        an MPS module. An explicit `requested="mps"` is honoured regardless.
+        Whether MPS may be selected by detection. False excludes it, for a
+        caller that must have a device able to take part in DDP -- MPS cannot.
+        An explicit `requested="mps"` is honoured regardless.
     warn: bool
         Whether to emit the warnings. False is for callers that have already
         reported the platform, such as tests.
@@ -175,10 +175,11 @@ def resolve_device(
             return device
         if warn:
             warnings.warn(
-                "An MPS device is available but is not being used, because "
-                "DistributedDataParallel cannot wrap an MPS module "
-                "(c10d::allgather_ is not implemented for it). Falling back "
-                "to the CPU, which will be very slow.",
+                "An MPS device is available but was excluded, because the "
+                "caller requires a device that can take part in "
+                "DistributedDataParallel and MPS cannot (c10d::allgather_ is "
+                "not implemented for it). Falling back to the CPU, which "
+                "will be very slow.",
                 stacklevel=3,
             )
 

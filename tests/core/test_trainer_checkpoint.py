@@ -43,6 +43,11 @@ class _TrainerStub:
     _torch_load = Trainer._torch_load
     _load_checkpoint = Trainer._load_checkpoint
     _load_weights = Trainer._load_weights
+    _load_model_state = Trainer._load_model_state
+    _unwrapped_model = Trainer._unwrapped_model
+    # Re-wrapped: accessing a staticmethod on the class unwraps it to a
+    # plain function, which would then rebind as an instance method here.
+    _strip_ddp_prefix = staticmethod(Trainer._strip_ddp_prefix)
 
     def __init__(self):
         self.gpu_id = 0

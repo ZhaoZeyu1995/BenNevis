@@ -24,7 +24,11 @@ from torchinfo import summary
 from kaldiio import WriteHelper
 from omegaconf import OmegaConf
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
-from BenNevis.utils.platform import link_or_copy, resolve_device
+from BenNevis.utils.platform import (
+    link_or_copy,
+    resolve_device,
+    supports_ddp,
+)
 
 if TYPE_CHECKING:
     # Imported for typing only. BenNevis.core.losses imports k2, and the
@@ -107,18 +111,22 @@ class Trainer:
         self.local_rank = int(os.environ.get("LOCAL_RANK", self.gpu_id))
         # `torch.device(rank)` resolves to whichever accelerator torch treats
         # as default, which is cuda on a training node but mps on an Apple
-        # machine and so is not portable. Choose explicitly instead. MPS is
-        # never selected automatically, because DDP cannot wrap an MPS module.
+        # machine and so is not portable. Choose explicitly instead.
         if device is not None:
             self.device = device
         else:
             self.device = resolve_device(
                 local_rank=self.local_rank,
-                allow_mps=False,
                 warn=self.gpu_id == 0,
             )
 
-        self.model = model
+        # Placed on the chosen device here rather than left to the caller.
+        # The entry points already do this, but a Trainer whose `device` does
+        # not match where its model lives fails much later, with a device
+        # mismatch raised from inside the first linear layer, so it is not
+        # something to leave implicit. `.to` is a no-op when the model is
+        # already there.
+        self.model = model.to(self.device)
         self.optimizers = optimizers
         self.schedulers = schedulers
         self.loss_func = loss_func
@@ -200,15 +208,93 @@ class Trainer:
         self.accum_grad_steps = accum_grad_steps
         self.grad_max_norm = grad_max_norm
 
-        # The model is always wrapped in DDP, including at world_size 1, so
-        # that `state_dict` keys carry the same `module.` prefix in every
-        # configuration and a checkpoint stays loadable regardless of how many
-        # processes produced it. `device_ids` is accepted only for
-        # single-device CUDA modules; a CPU module requires it to be unset.
-        if self.device.type == "cuda":
+        # DDP is applied wherever the device supports it, including at
+        # world_size 1, so that a single-process run exercises the same code
+        # path as a distributed one. It is skipped only where it *cannot*
+        # work: MPS does not implement the collective operators DDP needs.
+        #
+        # Skipping it used to change the checkpoint format, because DDP adds a
+        # `module.` prefix to every `state_dict` key. That is no longer true:
+        # checkpoints are saved from, and loaded into, the unwrapped module
+        # (see `_unwrapped_model`), so the format does not record whether DDP
+        # was used. An earlier attempt at this change was reverted for exactly
+        # that reason.
+        #
+        # `device_ids` is accepted only for single-device CUDA modules; a CPU
+        # module requires it to be unset.
+        if not supports_ddp(self.device):
+            if self.world_size > 1:
+                raise RuntimeError(
+                    f"Distributed training was requested with world_size "
+                    f"{self.world_size}, but device {self.device} cannot take "
+                    f"part in it: DistributedDataParallel does not implement "
+                    f"the required collective operators for it. Use a single "
+                    f"process, or train on CUDA or the CPU."
+                )
+            logging.info(
+                f"RANK {self.gpu_id}: Not wrapping the model in "
+                f"DistributedDataParallel, because device {self.device} does "
+                f"not support it. This run is single-process."
+            )
+        elif self.device.type == "cuda":
             self.model = DDP(self.model, device_ids=[self.local_rank])
         else:
             self.model = DDP(self.model)
+
+    @property
+    def _unwrapped_model(self) -> torch.nn.Module:
+        """
+        The underlying model, with any DDP wrapper removed.
+
+        Checkpoints are saved from and loaded into this, so that the stored
+        keys never record whether the run that produced them used DDP. A
+        checkpoint from a four-GPU run therefore loads into a single-process
+        CPU or MPS run, and the other way round.
+
+        Returns
+        -------
+        torch.nn.Module
+            `self.model.module` when wrapped in DDP, and `self.model`
+            otherwise.
+        """
+        return self.model.module if isinstance(self.model, DDP) else self.model
+
+    @staticmethod
+    def _strip_ddp_prefix(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Remove DDP's `module.` key prefix, if it is present.
+
+        Needed only for checkpoints written by a version that saved the
+        wrapper's `state_dict` rather than the module's. The prefix is
+        recognised only when *every* key carries it, which is DDP's signature;
+        a model with a submodule genuinely named `module` alongside others is
+        therefore left alone.
+
+        Arguments
+        ---------
+        state_dict: Dict[str, Any]
+            The state dict as found in the checkpoint.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The state dict with the prefix removed, or unchanged.
+        """
+        prefix = "module."
+        if state_dict and all(key.startswith(prefix) for key in state_dict):
+            return {key[len(prefix) :]: value for key, value in state_dict.items()}
+        return state_dict
+
+    def _load_model_state(self, state_dict: Dict[str, Any]):
+        """
+        Load model weights from a checkpoint, whichever way they were saved.
+
+        Arguments
+        ---------
+        state_dict: Dict[str, Any]
+            The MODEL_STATE entry of a checkpoint.
+        """
+        self._unwrapped_model.load_state_dict(self._strip_ddp_prefix(state_dict))
 
     def _load_best_checkpoint(self):
         """
@@ -266,7 +352,7 @@ class Trainer:
         """
         logging.info(f"RANK {self.gpu_id}: Loading checkpoint from {ckpt_path}")
         ckpt = self._torch_load(ckpt_path)
-        self.model.load_state_dict(ckpt["MODEL_STATE"])
+        self._load_model_state(ckpt["MODEL_STATE"])
         self.epoch = ckpt["EPOCH"]
         self.step = ckpt["STEP"]
         self.valid_loss = ckpt["VALID_LOSS"]
@@ -321,7 +407,10 @@ class Trainer:
             # checkpoint loadable with weights_only=True and makes the
             # configuration readable without constructing a Trainer.
             "CONFIG": OmegaConf.to_yaml(self.config),
-            "MODEL_STATE": self.model.state_dict(),
+            # Saved from the unwrapped module, so that the keys do not carry
+            # DDP's `module.` prefix and the checkpoint is interchangeable
+            # between single-process and distributed runs.
+            "MODEL_STATE": self._unwrapped_model.state_dict(),
             "EPOCH": self.epoch,
             "STEP": self.step,
             "VALID_LOSS": valid_loss,
@@ -356,7 +445,7 @@ class Trainer:
             The path to the checkpoint file.
         """
         ckpt = self._torch_load(ckpt_path)
-        self.model.load_state_dict(ckpt["MODEL_STATE"])
+        self._load_model_state(ckpt["MODEL_STATE"])
 
     def _compute_loss(
         self, batch: Dict[str, Any], pin_memory: bool = False

@@ -240,7 +240,6 @@ def main(cfg):
     device = resolve_device(
         getattr(cfg, "device", None),
         local_rank=local_rank,
-        allow_mps=False,
     )
     if device.type == "cuda":
         torch.cuda.set_device(local_rank)
