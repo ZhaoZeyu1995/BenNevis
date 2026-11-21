@@ -54,12 +54,11 @@ __all__ = [
 
 #: Floor on a variance before it is inverted. A dimension that never varies
 #: -- a constant feature, or a speaker with one frame -- would otherwise
-#: divide by zero. Kaldi floors it too; the exact constant it uses has not
-#: been confirmed against this implementation, because no dimension in the
-#: yesno reference comes near it (the smallest variance there is of order
-#: one). Anything that relies on the floor is therefore not yet verified
-#: against Kaldi, and this is the place to look if a corpus with a constant
-#: dimension ever disagrees.
+#: divide by zero. This is Kaldi's own constant, read from
+#: `src/transform/cmvn.cc`, where `ApplyCmvn` declares `floor = 1.0e-20` and
+#: warns when it bites. No dimension in the yesno reference comes near it,
+#: so no test exercises it; the value is taken from the source rather than
+#: confirmed by comparison.
 VAR_FLOOR = 1.0e-20
 
 
@@ -248,12 +247,28 @@ def apply(
             f"describe {mean.shape[0]}"
         )
 
-    out = matrix
-    if norm_means:
-        out = out - mean
-    if norm_vars:
-        out = out / np.sqrt(variance)
-    # float32 on the way out: Kaldi's archives hold float32, so returning
-    # float64 would make a byte comparison against them fail for a reason
-    # that has nothing to do with the arithmetic.
-    return out.astype(np.float32)
+    if not norm_vars:
+        # Kaldi's own no-variance path: an offset of -mean/count added to
+        # every row, with no scaling.
+        out = matrix - mean if norm_means else matrix
+        return out.astype(np.float32)
+
+    # Kaldi's order of operations, from `ApplyCmvn` in
+    # src/transform/cmvn.cc, reproduced deliberately rather than written the
+    # obvious way. It computes the moments, the scale and the offset in
+    # double, rounds the scale and offset to float32 as it stores them in a
+    # BaseFloat matrix, and then applies them as two separate float32 passes
+    # -- `MulColsVec` then `AddVecToRows` -- rather than one fused affine.
+    #
+    # Writing `(x - mean) / sqrt(var)` in float64 instead agrees to about
+    # 4e-6, which is inside the documented feature tolerance; following the
+    # original exactly costs nothing and removes a needless source of
+    # divergence.
+    scale = 1.0 / np.sqrt(variance)
+    offset = -(mean * scale) if norm_means else np.zeros_like(scale)
+
+    scale32 = scale.astype(np.float32)
+    offset32 = offset.astype(np.float32)
+
+    out = matrix.astype(np.float32) * scale32
+    return (out + offset32).astype(np.float32)
