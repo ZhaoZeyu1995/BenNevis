@@ -327,6 +327,18 @@ workflow changes.
   past feature extraction with its own default of `nj=4`. It is `nj=1` now.
   `run/apply_cmvn.sh` already handled this by clamping `nj` to the speaker
   count; anything new that splits by speaker should do the same.
+- **The yesno split is 31/29 on purpose, not 30/30.** The corpus tarball
+  holds `README` and `README~` beside the sixty waves, and `prepare_data.sh`
+  used to list the directory unfiltered. Under `LC_ALL=C` digits sort before
+  `R`, so both landed in the test half of a 62-entry list; feature extraction
+  failed on them, Kaldi warned *"Probably a serious error"*, `fix_data_dir.sh`
+  dropped them, and the test set was 29 while claiming 31. **A real audio
+  failure would have looked identical.** The list is filtered now, and the
+  split count is stated as 31 rather than left to halving, because halving 60
+  gives 30/30 and moves one utterance across — which would make the published
+  WERs in the recipe's README no longer comparable. `tests/golden/wer/yesno.json`
+  records the counts and tier 3 asserts them, so the split cannot drift
+  unnoticed.
 - **Shell text processing is dialect-dependent, and was relied on.**
   `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
   which picks out `#0` only where `\d` inside a bracket expression means the

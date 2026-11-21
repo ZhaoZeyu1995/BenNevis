@@ -31,8 +31,30 @@ def ledger():
 
 class TestShape:
     def test_has_the_required_keys(self, ledger):
-        for key in ("model", "test_set", "reference_words", "topologies"):
+        for key in (
+            "model",
+            "test_set",
+            "reference_words",
+            "utterances",
+            "topologies",
+        ):
             assert key in ledger
+
+    def test_the_word_count_follows_from_the_split(self, ledger):
+        """
+        Every yesno utterance is eight words -- the file name is eight binary
+        digits, one per spoken word -- so the two numbers cannot move
+        independently.
+        """
+        test_utterances = ledger["utterances"][ledger["test_set"]]
+        assert ledger["reference_words"] == 8 * test_utterances
+
+    def test_the_split_covers_the_whole_corpus(self, ledger):
+        """
+        Sixty waves, all used, none twice. A split that lost some would make
+        the baseline quietly easier.
+        """
+        assert sum(ledger["utterances"].values()) == 60
 
     def test_every_entry_has_both_numbers(self, ledger):
         for name, entry in ledger["topologies"].items():
