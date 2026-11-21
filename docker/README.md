@@ -67,9 +67,21 @@ Four versions are pinned, and three of them move together:
 | Pin | Where |
 | --- | --- |
 | Kaldi commit | `ARG KALDI_COMMIT` |
+| OpenFST | `ARG OPENFST_VERSION` + its SHA-256 |
+| OpenBLAS | `ARG OPENBLAS_VERSION` |
 | torch | `ARG TORCH_VERSION`, and `ci.yml`'s tier 2 |
 | k2 | `ARG K2_VERSION`, and `ci.yml`'s tier 2 |
 | Python | Ubuntu 24.04's `python3`, which is 3.12 |
+
+OpenFST and OpenBLAS are fetched by the Dockerfile rather than by Kaldi's own
+scripts, because neither of Kaldi's routes works from a CI runner: it asks
+openfst.org for 1.8.4, which refuses the request, and falls back to openslr,
+whose mirror stops at 1.8.1 — so the fallback 404s for everyone on this Kaldi
+commit. openslr is reachable, so the image takes 1.8.1 from there, which is
+above Kaldi's 1.6.7 floor and leaves the `tools/openfst` symlink the recipes
+use unchanged. OpenBLAS is pre-placed too: Kaldi's installer resolves it
+through an unauthenticated GitHub API call, rate limited per IP across every
+runner sharing one.
 
 The k2 wheel is built against one exact torch build, and the Python version
 decides which wheels exist at all. `tests/docker/test_pins.py` checks that

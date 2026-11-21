@@ -27,8 +27,12 @@ ARG KALDI_COMMIT=e02e35f0254bb033fab73d1df99fc34123e31d56
 # Two of Kaldi's build inputs are fetched here rather than by its own
 # scripts; see the two RUN steps below for why. Both versions are the ones
 # the pinned Kaldi asks for, and the build checks that rather than assuming.
-ARG OPENFST_VERSION=1.8.4
-ARG OPENFST_SHA256=a8ebbb6f3d92d07e671500587472518cfc87cb79b9a654a5a8abb2d0eb298016
+# 1.8.1, not the 1.8.4 this Kaldi defaults to, and the reason is reachability
+# rather than preference: see the OpenFST step below. Kaldi accepts any
+# version from 1.6.7 up and builds a tools/openfst symlink for whichever it
+# gets, so nothing downstream notices.
+ARG OPENFST_VERSION=1.8.1
+ARG OPENFST_SHA256=24fb53b72bb687e3fa8ee96c72a31ff2920d99b980a0a8f61dda426fca6713f0
 ARG OPENBLAS_VERSION=0.3.13
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -76,26 +80,33 @@ WORKDIR /opt/kaldi/tools
 RUN mkdir -p /opt/kaldi/tools/python \
     && ./extras/check_dependencies.sh || true
 
-# OpenFST, fetched here instead of by Kaldi's Makefile.
+# OpenFST, fetched from openslr instead of by Kaldi's Makefile.
 #
-# That Makefile requests it over plain HTTP from openfst.org and falls back to
-# openslr, whose mirror stops at 1.8.1 and so does not carry this version at
-# all. On a runner whose egress the first request refuses, the build dies with
-# a 403 followed by a 404. Pre-placing the tarball satisfies the Makefile's
-# download target, which has no prerequisites, so make skips the fetch.
+# Kaldi asks openfst.org for 1.8.4 and falls back to openslr, and on a CI
+# runner both fail: openfst.org refuses the request whichever scheme is used
+# -- measured, 403 over HTTP and the same refusal over HTTPS -- and openslr's
+# mirror stops at 1.8.1, so the fallback 404s. That fallback is dead for
+# everyone building this Kaldi commit, not only here.
 #
-# Over HTTPS, and checksummed: this is a build input, and it is the one file
-# here that comes from neither a distribution repository nor a git host.
+# openslr itself is reachable, which that clean 404 proves, so the route that
+# works is openslr at the version it actually carries. Kaldi's floor is 1.6.7
+# and OPENFST_VERSION is overridable, so 1.8.1 is a supported choice rather
+# than a workaround with consequences; the tools/openfst symlink Kaldi makes
+# points at whichever version was built, so path.sh and the recipes are
+# unaffected.
 #
-# If openfst.org ever becomes unreachable, 1.8.1 is on openslr and Kaldi
-# accepts any version from 1.6.7 up via OPENFST_VERSION.
-RUN test "$(sed -n 's/^OPENFST_VERSION ?= //p' Makefile)" = "${OPENFST_VERSION}" \
+# Pre-placing the tarball satisfies the Makefile's download target, which has
+# no prerequisites, so make skips fetching. Checksummed, because this is a
+# build input from neither a distribution repository nor a git host.
+RUN grep -q '^OPENFST_VERSION ?=' Makefile \
     && wget -q --tries=3 -O "openfst-${OPENFST_VERSION}.tar.gz" \
-        "https://www.openfst.org/twiki/pub/FST/FstDownload/openfst-${OPENFST_VERSION}.tar.gz" \
+        "https://www.openslr.org/resources/2/openfst-${OPENFST_VERSION}.tar.gz" \
     && echo "${OPENFST_SHA256}  openfst-${OPENFST_VERSION}.tar.gz" | sha256sum -c -
 
 # OpenFST and friends. The single longest step after src itself.
-RUN make -j"$(nproc)"
+# OPENFST_VERSION is passed explicitly: without it make would want 1.8.4 and
+# try to download it again.
+RUN make -j"$(nproc)" OPENFST_VERSION="${OPENFST_VERSION}"
 
 # OpenBLAS, into tools/OpenBLAS/install, which is where src/configure looks
 # for it by default when given --mathlib=OPENBLAS.
@@ -115,9 +126,11 @@ RUN test "$(sed -n 's/^OPENBLAS_VERSION=//p' extras/install_openblas.sh)" \
     && DOWNLOAD_DIR=/tmp/blas ./extras/install_openblas.sh \
     && rm -rf /tmp/blas
 
-# sclite, for scoring. Built here rather than with src so that a failure in
-# it surfaces in two minutes instead of after the forty-minute src build.
-RUN make sclite
+# sclite, for scoring. `make all` above builds sctk too, so this is an
+# explicit check that it is there rather than extra work -- and it runs
+# before the forty-minute src build rather than after it.
+RUN make sclite OPENFST_VERSION="${OPENFST_VERSION}" \
+    && test -x /opt/kaldi/tools/sctk/bin/sclite
 
 WORKDIR /opt/kaldi/src
 
