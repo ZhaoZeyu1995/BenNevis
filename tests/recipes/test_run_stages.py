@@ -17,6 +17,7 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -28,8 +29,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RECIPE = REPO_ROOT / "egs" / "yesno" / "asr"
 RUN = RECIPE / "run.sh"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="the recipe is bash"
+# Executing the guards needs a working bash, which Windows does not have for
+# this purpose: `shutil.which("bash")` finds C:\Windows\System32\bash.exe,
+# the WSL launcher, which exists whether or not a distribution is installed
+# and exits 1 when one is not. So the presence of bash is not the question on
+# Windows -- and the recipes are Linux and macOS only anyway (see CLAUDE.md).
+#
+# The structural tests below are pure text and run everywhere; only the ones
+# that run the guards are skipped.
+needs_bash = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="running the stage guards needs a working bash; on Windows the "
+    "bash on PATH is the WSL launcher, and the recipes are not Windows",
 )
 
 GUARD_RE = re.compile(
@@ -114,6 +125,7 @@ class TestStageNumbering:
         assert int(stop.group(1)) >= len(guards()) - 1
 
 
+@needs_bash
 class TestSelection:
     def test_the_default_selects_every_stage(self):
         numbers = [number for number, _ in guards()]

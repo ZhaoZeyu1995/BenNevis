@@ -153,6 +153,15 @@ by faking the availability probes instead -- those tests run on every runner.
 Treat the real-device tests as something only a developer on an Apple machine
 executes.
 
+**`bash` exists on a Windows runner and does not work.**
+`shutil.which("bash")` finds `C:\Windows\System32\bash.exe`, the WSL
+launcher, which is present whether or not a distribution is installed and
+exits 1 when one is not. Probing for the executable is therefore not enough:
+a test that runs shell must be skipped on `os.name == "nt"`, not on `which`.
+The same applies to locating any POSIX tool by name — `which` on Windows
+wants a `PATHEXT` extension, and `os.access(..., os.X_OK)` is meaningless
+there because there is no execute bit.
+
 CI runs tiers 1, 1b and 2 on `ubuntu-latest`, `macos-latest` and
 `windows-latest`. k2 publishes cp312 CPU wheels for all three at the pinned
 torch version, so the FST tier is not Linux-only; **check the index before
