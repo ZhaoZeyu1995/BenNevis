@@ -164,9 +164,28 @@ tolerances chosen per layer:
 
 ## Environment
 
-Currently a venv in `tools/venv` created by `tools/create_env.sh`. `uv` and a
-Docker image are planned; Docker is the prerequisite for the Kaldi-dependent
-test tier and for cloud runs.
+Locally a venv in `tools/venv` created by `tools/create_env.sh`.
+
+For anything that needs Kaldi there is an image, `docker/Dockerfile`,
+published as `ghcr.io/zhaozeyu1995/bennevis-kaldi`. It carries a pinned Kaldi
+build, OpenFST, sctk, and CPU torch and k2 at the same versions as CI's tier
+2 — but **not BenNevis**, which is reached through a mounted working tree so
+that the image tests the commit in front of it. The entrypoint creates the
+`tools/kaldi` and `tools/venv` links the recipes expect. `docker/README.md`
+has the detail; `docker/smoke.sh` checks an image has everything a recipe
+invokes.
+
+The image is linux/amd64 only. Kaldi builds on arm64 and k2 publishes aarch64
+wheels, but that combination has not been run, so it is not claimed.
+
+Three pins move together: the Kaldi commit, torch and k2. torch and k2 appear
+in both `docker/Dockerfile` and `ci.yml`'s tier 2 job, and
+`tests/docker/test_pins.py` fails if the two disagree — a mismatch would
+surface as a k2 import error inside a nightly job, a long way from its cause.
+The image's dependency list is derived from `pyproject.toml` by
+`docker/deps.py` rather than written into the Dockerfile, for the same
+reason. Building Kaldi takes most of an hour, so the image is built only when
+`docker/`, `pyproject.toml` or its workflow changes.
 
 ## Gotchas
 

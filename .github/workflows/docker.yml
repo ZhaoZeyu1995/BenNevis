@@ -1,0 +1,97 @@
+name: Docker image
+
+# The Kaldi-dependent test tier needs a Kaldi build, which takes most of an
+# hour to compile. Building it on every push would be absurd, so the image is
+# built only when its own definition changes, and the nightly recipe job
+# pulls the published result.
+on:
+  push:
+    branches: [master]
+    paths:
+      - docker/**
+      - pyproject.toml
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - docker/**
+      - pyproject.toml
+      - .github/workflows/docker.yml
+  # So that the image can be rebuilt without a code change: a base image
+  # security update, or a pinned wheel being yanked.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/bennevis-kaldi
+
+jobs:
+  build:
+    name: Build the Kaldi image
+    runs-on: ubuntu-latest
+    # Compiling Kaldi takes about 45 minutes on a runner; the ceiling is set
+    # above that so a slow day does not look like a hang, and well under the
+    # six-hour limit so a genuine hang still fails.
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Only on master: a pull request from a fork has no write access to the
+      # registry, and a PR does not need a published image -- building it is
+      # the check.
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          # Linux amd64 only; see the comment at the top of the Dockerfile.
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          # The Kaldi layers are the whole cost, and they change only when the
+          # pinned commit does, so a layer cache turns a rebuild for a changed
+          # dependency list into a couple of minutes.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the image has what the recipes need
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            "${IMAGE}:${{ github.sha }}" \
+            bash docker/smoke.sh
+
+      - name: Check the entrypoint links a mounted tree
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            "${IMAGE}:${{ github.sha }}" \
+            bash -c '
+              set -e
+              test -L tools/kaldi
+              test -L tools/venv
+              test -x tools/kaldi/src/featbin/compute-fbank-feats
+              test -x tools/venv/bin/python3
+              echo "entrypoint: links in place"
+            '
+
+      - name: Report the image size
+        run: docker image ls "${IMAGE}" || true
