@@ -91,6 +91,13 @@ def recipe(tmp_path):
             features,
             scp=str(data / "feats.cmvn.scp"),
         )
+        # The pre-CMVN side, deliberately different numbers so a test can
+        # tell the two apart rather than passing on either.
+        kaldiio.save_ark(
+            str(data / "feats.ark"),
+            {key: value * 3.0 + 7.0 for key, value in features.items()},
+            scp=str(data / "feats.scp"),
+        )
         kaldiio.save_ark(
             str(data / "cmvn.ark"),
             {"global": rng.standard_normal((2, 5)).astype("float32")},
@@ -227,6 +234,56 @@ class TestExactArtefacts:
 
 
 class TestFeatures:
+    def test_both_sides_of_cmvn_are_captured(self, captured):
+        """
+        The whole reason the capture was extended: a replacement for CMVN or
+        for feature extraction needs the input as well as the output.
+        """
+        _, manifest = captured
+        for dataset in ("train_yesno", "test_yesno"):
+            assert any(
+                name.startswith(f"raw/{dataset}/") for name in manifest.arrays
+            ), f"no pre-CMVN features for {dataset}"
+            assert any(
+                name.startswith(f"features/{dataset}/") for name in manifest.arrays
+            ), f"no post-CMVN features for {dataset}"
+
+    def test_the_two_sides_cover_the_same_utterances(self, captured):
+        """
+        Otherwise they cannot be compared element by element, which is the
+        only comparison worth having at a tolerance.
+        """
+        _, manifest = captured
+        for dataset in ("train_yesno", "test_yesno"):
+            raw = {
+                name.split("/")[-1]
+                for name in manifest.arrays
+                if name.startswith(f"raw/{dataset}/")
+            }
+            cooked = {
+                name.split("/")[-1]
+                for name in manifest.arrays
+                if name.startswith(f"features/{dataset}/")
+            }
+            assert raw == cooked, dataset
+
+    def test_the_two_sides_are_not_the_same_data(self, captured):
+        """
+        Guards the capture itself: reading feats.scp where feats.cmvn.scp
+        was meant, or the reverse, would make every later comparison
+        trivially pass.
+        """
+        import numpy as np
+
+        out, manifest = captured
+        name = next(n for n in manifest.arrays if n.startswith("raw/test_yesno/"))
+        key = manifest.arrays[name]["key"]
+        with np.load(out / "raw/test_yesno.npz") as bundle:
+            raw = bundle[key]
+        with np.load(out / "features/test_yesno.npz") as bundle:
+            cooked = bundle[key]
+        assert not np.allclose(raw, cooked)
+
     def test_a_few_matrices_are_stored_whole(self, captured):
         _, manifest = captured
         whole = [
