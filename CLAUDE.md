@@ -261,10 +261,11 @@ workflow changes.
   forever**: the batch was reset but the pointer never advanced. Note
   `max_dur` can exceed `max_sum_dur` in the shipped configs, so that one was
   reachable with real data.
-- **`Trainer` requires `opt.nickname`**, which only `run/train.py`'s
-  `get_opt` attaches via `setattr`. A `Trainer` built anywhere else crashes
-  inside `wandb` logging rather than anywhere informative. Tests that call
-  `fit` must set it.
+- **`opt.nickname` is optional now.** `run/train.py`'s `get_opt` attaches it
+  via `setattr`, and `Trainer` used to require it, so a `Trainer` built
+  anywhere else — a test, a script, a notebook — crashed inside `wandb`
+  logging rather than anywhere informative. It falls back to the optimiser's
+  class name.
 - **Give training and validation separate samplers in a test.** `fit` runs a
   validation sanity check before the first epoch, so a shared sampler is
   already iterated by the time training starts — which hides whether the
@@ -349,6 +350,31 @@ workflow changes.
   past feature extraction with its own default of `nj=4`. It is `nj=1` now.
   `run/apply_cmvn.sh` already handled this by clamping `nj` to the speaker
   count; anything new that splits by speaker should do the same.
+- **An empty hypothesis used to be scored as its own utterance id.**
+  `run/decode_faster.sh` stripped the id with
+  `substr($0, index($0, $2))`, which is correct until the decoder emits
+  nothing: `$2` is then unset, `index($0, "")` is 0, and `substr($0, 0)`
+  returns the whole line. The error *count* is the same either way — one
+  substitution plus N−1 deletions against N deletions — so the WER looked
+  plausible while the transcription was a file name, and anything reading
+  `hyp.wrd.txt` saw a word never spoken. Found by the first complete recipe
+  run, whose undertrained model decoded nothing at all.
+  `tests/recipes/test_decode_faster.py` extracts the awk from the script and
+  runs it, so the test is about the code that ships.
+- **Recipes stop on a failing stage.** `egs/yesno/asr/run.sh` has
+  `set -eo pipefail` and an explicit check per stage. Most stages had neither
+  while a few had `|| exit 1`, which is why Kaldi printing *"Probably a
+  serious error"* went unnoticed — the recipe simply continued. `pipefail`
+  matters as much as `errexit`, because nearly everything in a Kaldi recipe
+  is a pipeline.
+- **The reference capture needs `fstprint`, and will not pretend otherwise.**
+  It is in the image but only on the PATH a recipe's `path.sh` builds, and
+  `tests/reference/capture.py` is invoked directly — so the first two real
+  captures contained no FSTs at all and said nothing about it. It now looks
+  under `$KALDI_ROOT/tools/openfst/bin` as well, and **fails** rather than
+  producing a capture without the lexicon and graph FSTs, since those are
+  what a Python `prepare_lang.sh` would be compared against.
+  `--allow-no-fstprint` is the deliberate escape.
 - **The yesno split is 31/29 on purpose, not 30/30.** The corpus tarball
   holds `README` and `README~` beside the sixty waves, and `prepare_data.sh`
   used to list the directory unfiltered. Under `LC_ALL=C` digits sort before

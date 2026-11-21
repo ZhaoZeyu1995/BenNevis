@@ -72,6 +72,14 @@ for i in $(seq $nj); do
     utils/int2sym.pl -f 2- $lang_dir/words.txt $output_dir/split$nj/hyp.$i.wrd | cat || exit 1
 done > $output_dir/hyp.wrd.txt || exit 1
 
-awk 'NR==FNR {spk[$1]=$2; next} {printf "%s (%s-%s)\n", substr($0, index($0,$2)), spk[$1], $1}' $data_dir/utt2spk $output_dir/hyp.wrd.txt > $output_dir/hyp.wrd.trn
+# Strip the utterance id and re-attach it in NIST .trn form. Done by
+# clearing the first field rather than by substr($0, index($0,$2)): with an
+# empty hypothesis $2 is unset, index($0,"") is 0, and substr($0,0) returns
+# the whole line -- so a decoder that emitted nothing had its utterance id
+# recorded as the hypothesis text. That scored as a substitution plus N-1
+# deletions instead of N deletions, which happens to give the same error
+# count, so the WER looked right while the transcription was nonsense and
+# anything reading hyp.wrd.txt downstream saw a word that was never spoken.
+awk 'NR==FNR {spk[$1]=$2; next} {utt=$1; $1=""; sub(/^[ \t]+/, ""); printf "%s (%s-%s)\n", $0, spk[utt], utt}' $data_dir/utt2spk $output_dir/hyp.wrd.txt > $output_dir/hyp.wrd.trn
 
 sclite -r $predict_dir/ref.wrd.trn trn -h $output_dir/hyp.wrd.trn trn -i rm -o all stdout > $output_dir/results.wrd.txt

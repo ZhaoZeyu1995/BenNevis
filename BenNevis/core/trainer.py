@@ -671,7 +671,16 @@ class Trainer:
                     for opt in self.optimizers:
                         wandb.log(
                             {
-                                "lr_" + opt.nickname: opt.param_groups[0]["lr"],
+                                # `nickname` is attached by run/train.py's
+                                # get_opt, so a Trainer built anywhere else
+                                # -- a test, a script, a notebook -- used to
+                                # crash here rather than anywhere
+                                # informative. The class name is a fine
+                                # label when nobody has given one.
+                                "lr_"
+                                + getattr(
+                                    opt, "nickname", type(opt).__name__
+                                ): opt.param_groups[0]["lr"],
                                 "step": self.step,
                             },
                             step=self.step,

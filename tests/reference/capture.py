@@ -78,27 +78,54 @@ LANG_FSTS = ("L.fst", "L_disambig.fst")
 GRAPH_FSTS = ("G.fst", "TLG.fst", "LG.fst")
 
 
-def fstprint(path: Path) -> Optional[bytes]:
+def find_fstprint() -> Optional[str]:
+    """
+    Locate `fstprint`, on PATH or inside the Kaldi tree.
+
+    The Kaldi image has it, but only on the PATH that a recipe's `path.sh`
+    builds. A capture invoked directly -- as the nightly workflow does -- has
+    no such PATH, which is how the first captures came out without a single
+    FST in them: `shutil.which` found nothing and the code quietly carried
+    on. Looking under `KALDI_ROOT` as well makes the capture independent of
+    how it was invoked.
+
+    Returns
+    -------
+    Optional[str]
+        The path to fstprint, or None if it is nowhere to be found.
+    """
+    found = shutil.which("fstprint")
+    if found:
+        return found
+
+    kaldi_root = os.environ.get("KALDI_ROOT", "/opt/kaldi")
+    candidate = Path(kaldi_root) / "tools" / "openfst" / "bin" / "fstprint"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
+
+
+def fstprint(binary: str, path: Path) -> Optional[bytes]:
     """
     Print a binary FST as text.
 
     Arguments
     ---------
+    binary: str
+        The fstprint executable, as `find_fstprint` located it.
     path: Path
         The compiled FST.
 
     Returns
     -------
     Optional[bytes]
-        Its text form, or None if fstprint is unavailable or fails. A
-        missing OpenFST is reported by the caller rather than raised here,
-        because a partial capture is more useful than none.
+        Its text form, or None if the call failed. A failure is reported on
+        stderr rather than raised, so that one unreadable FST does not lose
+        the rest of the capture -- but it is never silent.
     """
-    if shutil.which("fstprint") is None:
-        return None
     try:
         completed = subprocess.run(
-            ["fstprint", str(path)],
+            [binary, str(path)],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -150,7 +177,11 @@ def store(manifest: Manifest, destination: Path, relative: str, payload: bytes) 
 
 
 def capture_language(
-    manifest: Manifest, recipe: Path, destination: Path, topologies: List[str]
+    manifest: Manifest,
+    recipe: Path,
+    destination: Path,
+    topologies: List[str],
+    printer: Optional[str],
 ) -> None:
     """
     Capture the language directories: symbol tables and lexicon FSTs.
@@ -165,6 +196,8 @@ def capture_language(
         The capture directory.
     topologies: List[str]
         The topologies the recipe built.
+    printer: Optional[str]
+        The fstprint executable, or None to skip the compiled FSTs.
     """
     base = recipe / "data" / "lang"
     for name in LANG_TEXT:
@@ -172,11 +205,14 @@ def capture_language(
         if source.is_file():
             store(manifest, destination, f"lang/{name}", source.read_bytes())
 
+    if printer is None:
+        return
+
     for name in LANG_FSTS:
         source = base / name
         if not source.is_file():
             continue
-        text = fstprint(source)
+        text = fstprint(printer, source)
         if text is not None:
             store(manifest, destination, f"lang/{name}.txt", text)
 
@@ -186,7 +222,7 @@ def capture_language(
             source = graph / name
             if not source.is_file():
                 continue
-            text = fstprint(source)
+            text = fstprint(printer, source)
             if text is not None:
                 store(
                     manifest,
@@ -358,6 +394,15 @@ def main(argv=None) -> int:
         default=None,
         help="topologies to capture; by default whatever the recipe built",
     )
+    parser.add_argument(
+        "--allow-no-fstprint",
+        action="store_true",
+        help=(
+            "capture everything else if fstprint cannot be found, instead of "
+            "failing. The compiled FSTs are the point of the capture for the "
+            "lexicon and graph work, so their absence is an error by default."
+        ),
+    )
     args = parser.parse_args(argv)
 
     recipe = args.recipe.resolve()
@@ -374,6 +419,22 @@ def main(argv=None) -> int:
         )
     if not topologies:
         sys.stderr.write("capture: no prepared graphs found\n")
+
+    # Resolved before anything is written, so a capture that cannot include
+    # the FSTs fails before producing a directory that looks complete.
+    printer = find_fstprint()
+    if printer is None:
+        message = (
+            "capture: fstprint was not found on PATH or under "
+            f"{os.environ.get('KALDI_ROOT', '/opt/kaldi')}/tools/openfst/bin. "
+            "The lexicon and graph FSTs are what a Python replacement for "
+            "prepare_lang.sh and the graph compilation will be compared "
+            "against, so a capture without them is not much use."
+        )
+        if not args.allow_no_fstprint:
+            sys.stderr.write(message + " Pass --allow-no-fstprint to proceed.\n")
+            return 1
+        sys.stderr.write(message + " Continuing without them.\n")
 
     out = (args.destination / args.corpus).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -399,7 +460,7 @@ def main(argv=None) -> int:
         ],
     )
 
-    capture_language(manifest, recipe, out, topologies)
+    capture_language(manifest, recipe, out, topologies, printer)
     capture_features(manifest, recipe, out, args.datasets)
     capture_transcriptions(
         manifest,
@@ -423,6 +484,22 @@ def main(argv=None) -> int:
     if manifest.is_empty():
         sys.stderr.write("capture: nothing was captured\n")
         return 1
+
+    # Silence is not success: say which of the FSTs the capture exists for
+    # are actually in it, so an incomplete one is visible in the log rather
+    # than discovered when a migration PR has nothing to compare against.
+    if printer is not None:
+        expected = ["lang/L.fst.txt", "lang/L_disambig.fst.txt"] + [
+            f"graph/{topology}/TLG.fst.txt" for topology in topologies
+        ]
+        absent = [name for name in expected if name not in manifest.exact]
+        if absent:
+            sys.stderr.write(
+                f"capture: {len(absent)} expected FST(s) are missing, the "
+                f"first being {absent[0]}; the recipe may not have built "
+                f"them\n"
+            )
+            return 1
     return 0
 
 

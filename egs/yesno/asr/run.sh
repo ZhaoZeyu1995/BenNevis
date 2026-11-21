@@ -1,4 +1,16 @@
 #!/bin/bash
+# Stop on the first failing stage.
+#
+# Most stages below had no `|| exit 1` while a few did, which looks accidental
+# rather than intended: a stage could fail and the recipe would carry on to
+# the next one with missing or partial inputs. That is how Kaldi printing
+# "Probably a serious error" about two unreadable files went unnoticed for as
+# long as it did -- the recipe just kept going.
+#
+# pipefail matters as much as errexit here, because almost everything in a
+# Kaldi recipe is a pipeline, and without it only the last command's status
+# is seen.
+set -eo pipefail
 
 . ./env.sh || exit 1
 . ./path.sh || exit 1
@@ -29,20 +41,23 @@ if [ ! -d waves_yesno ]; then
 fi
 
 # Data preparation
-local/prepare_data.sh waves_yesno
-local/prepare_dict.sh
-utils/prepare_lang.sh --position-dependent-phones false --sil_prob 0.0 data/local/dict "<UNK>" data/local/lang data/lang
-local/prepare_lm.sh
+local/prepare_data.sh waves_yesno || { echo "$0: prepare_data.sh failed" >&2; exit 1; }
+local/prepare_dict.sh || { echo "$0: prepare_dict.sh failed" >&2; exit 1; }
+utils/prepare_lang.sh --position-dependent-phones false --sil_prob 0.0 \
+    data/local/dict "<UNK>" data/local/lang data/lang \
+    || { echo "$0: prepare_lang.sh failed" >&2; exit 1; }
+local/prepare_lm.sh || { echo "$0: prepare_lm.sh failed" >&2; exit 1; }
 
 # Feature extraction
 fbankdir=fbank
 cmvndir=cmvn
 for x in train_yesno test_yesno; do 
     steps/make_fbank_pitch.sh --nj ${nj} --write_utt2num_frames true \
-        data/${x} exp/make_fbank/${x} data/${x}/${fbankdir}
+        data/${x} exp/make_fbank/${x} data/${x}/${fbankdir} \
+        || { echo "$0: make_fbank_pitch.sh failed for ${x}" >&2; exit 1; }
     steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} data/${x}/$cmvndir || exit 1;
-    utils/fix_data_dir.sh data/${x}
-    run/apply_cmvn.sh data/${x}
+    utils/fix_data_dir.sh data/${x} || exit 1;
+    run/apply_cmvn.sh data/${x} || exit 1;
 done
 
 # Topology preparation
