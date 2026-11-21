@@ -126,6 +126,7 @@ These limits were measured, not assumed:
 | DDP cannot wrap an MPS module (`c10d::allgather_` unimplemented) | `Trainer` skips the wrapper on MPS, so MPS is single-process only; asking for several ranks there raises |
 | NCCL is CUDA-only | every other device uses gloo, the only backend on Windows |
 | Windows symlinks need admin or developer mode | `best.pt` is a symlink where possible and a copy where not |
+| NCCL collectives need CUDA tensors; gloo does not | `collective_device` decides where a broadcast tensor lives, which is **not** where the model lives |
 
 Cross-device autograd does work, and `GraphLoss` relies on it: an MPS forward
 pass has its loss computed on the CPU and backpropagates correctly to the MPS
@@ -248,6 +249,27 @@ workflow changes.
 
 ## Gotchas
 
+- **The dynamic batch samplers had three bugs and no tests.** The first real
+  tier 3 training run found them in sequence, and `tests/samplers/test_dynamic.py`
+  now pins all three. They are worth knowing because two are the kind that
+  recur: `num_batches` is only created inside `__iter__`, where the batches
+  are formed, so a caller must read it *after* iteration has begun — and
+  declaring it alone is not enough, because the count then stays `None` and
+  the mid-epoch save schedule silently stops firing. The sampler also called
+  `torch.cuda.current_device()` unconditionally, making dynamic batching
+  unusable without CUDA. And an utterance longer than `max_sum_dur` **looped
+  forever**: the batch was reset but the pointer never advanced. Note
+  `max_dur` can exceed `max_sum_dur` in the shipped configs, so that one was
+  reachable with real data.
+- **`Trainer` requires `opt.nickname`**, which only `run/train.py`'s
+  `get_opt` attaches via `setattr`. A `Trainer` built anywhere else crashes
+  inside `wandb` logging rather than anywhere informative. Tests that call
+  `fit` must set it.
+- **Give training and validation separate samplers in a test.** `fit` runs a
+  validation sanity check before the first epoch, so a shared sampler is
+  already iterated by the time training starts — which hides whether the
+  trainer learns the batch count for itself. That masked a real bug until the
+  two were separated.
 - **Keep `use_double_scores=True`** in `k2` `get_tot_scores`. With `False`,
   NaNs have occurred, particularly in the denominator computation.
 - **k2 and torch define the CTC gradient differently with respect to log

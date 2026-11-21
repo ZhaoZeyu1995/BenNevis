@@ -33,6 +33,8 @@ supports_ddp
     Whether a device can be wrapped in `DistributedDataParallel`.
 graph_loss_device
     Where the k2 graph loss must be computed for a given network device.
+collective_device
+    Where a small control tensor must live to be broadcast between ranks.
 supports_symlink
     Whether this platform can create symbolic links.
 link_or_copy
@@ -59,6 +61,7 @@ __all__ = [
     "resolve_dist_backend",
     "supports_ddp",
     "graph_loss_device",
+    "collective_device",
     "supports_symlink",
     "link_or_copy",
     "describe_platform",
@@ -277,6 +280,40 @@ def graph_loss_device(device: torch.device) -> torch.device:
         the CPU and CUDA, and the CPU for MPS.
     """
     return torch.device("cpu") if device.type == "mps" else device
+
+
+def collective_device() -> torch.device:
+    """
+    Where a small control tensor must live to be broadcast between ranks.
+
+    NCCL collectives require CUDA tensors; gloo works on CPU ones. This is
+    not the device the model is on and should not be confused with it: it is
+    only about where a tensor being communicated has to be allocated.
+
+    `DistributedSyncDynamicBatchSampler` agrees its batch boundaries across
+    ranks with a broadcast, and used to call `torch.cuda.current_device()`
+    unconditionally, which raised on any machine without CUDA and so made
+    dynamic batching unusable on the CPU -- including in CI, where it stopped
+    the first real training run.
+
+    Returns
+    -------
+    torch.device
+        A CUDA device when the initialised backend is NCCL, and the CPU
+        otherwise. With no process group, CUDA if one is present, else the
+        CPU, so that a caller outside distributed training still gets a
+        usable answer.
+    """
+    import torch.distributed as dist
+
+    if dist.is_available() and dist.is_initialized():
+        if dist.get_backend() == "nccl":
+            return torch.device("cuda", torch.cuda.current_device())
+        return torch.device("cpu")
+
+    if torch.cuda.is_available():
+        return torch.device("cuda", torch.cuda.current_device())
+    return torch.device("cpu")
 
 
 def supports_symlink() -> bool:

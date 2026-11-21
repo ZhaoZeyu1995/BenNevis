@@ -61,3 +61,31 @@ def import_without():
         assert "OK" in result.stdout
 
     return check
+
+
+@pytest.fixture(scope="session")
+def process_group(tmp_path_factory):
+    """
+    A real single-process gloo process group, for the duration of the session.
+
+    `Trainer` requires an initialised process group: it reads the rank and
+    world size in `__init__` and all-reduces losses. Rather than stub those
+    out, the tests run against a genuine one-rank group, so the distributed
+    code paths are the ones actually exercised.
+
+    A FileStore is used rather than TCP so that nothing depends on a free
+    port, which is a common source of flakiness in CI.
+    """
+    import torch.distributed as dist
+
+    if dist.is_initialized():  # pragma: no cover - defensive
+        yield
+        return
+
+    store_path = tmp_path_factory.mktemp("pg") / "store"
+    store = dist.FileStore(str(store_path), 1)
+    dist.init_process_group(backend="gloo", store=store, rank=0, world_size=1)
+    try:
+        yield
+    finally:
+        dist.destroy_process_group()
