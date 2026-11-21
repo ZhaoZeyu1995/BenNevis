@@ -110,6 +110,26 @@ class TestDataPreparation:
         assert path.stat().st_size > 0, path
 
     @pytest.mark.parametrize("dataset", ["train_yesno", "test_yesno"])
+    def test_the_split_is_the_one_the_ledger_records(self, recipe, dataset):
+        """
+        The split decides what the recorded WERs mean. It was once an
+        accident -- two README files counted as waves made the list 62 long,
+        so halving it gave 31/29 and the READMEs were silently dropped from
+        test -- and it is now stated explicitly. If it moves, the ledger's
+        numbers are measuring a different test set.
+        """
+        text = require(RECIPE / "data" / dataset / "text")
+        utterances = [
+            line.split()[0] for line in text.read_text().splitlines() if line.strip()
+        ]
+        assert len(utterances) == LEDGER["utterances"][dataset]
+        assert not [
+            utterance
+            for utterance in utterances
+            if not utterance.replace("_", "").isdigit()
+        ], "an utterance id that is not eight binary digits; non-audio got in"
+
+    @pytest.mark.parametrize("dataset", ["train_yesno", "test_yesno"])
     def test_every_utterance_has_features(self, recipe, dataset):
         data = require(RECIPE / "data" / dataset)
         utterances = {

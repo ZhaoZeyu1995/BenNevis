@@ -313,12 +313,32 @@ workflow changes.
   rather than being changed blind. `Lang.load_topo` keeps a `fstprint`
   *fallback* for a language directory prepared before `k2/topo.yaml` existed;
   it warns, and no new directory takes that path.
+- **Recipe configs rot against torch.** `ReduceLROnPlateau` lost `verbose`,
+  and all four recipes passed it, so every one was broken against current
+  torch while every test passed — the first real tier 3 run died there.
+  `tests/recipes/test_recipe_configs.py` now compares each configured
+  optimiser and scheduler against the installed signature, in under a second,
+  so this class of rot is caught without a recipe run. It checks that an
+  argument *exists*, not that its value is sensible: a nonexistent argument is
+  a defect, a wrong learning rate is a research decision.
 - **`egs/yesno/asr` assigns every utterance one speaker.** `prepare_data.sh`
   writes `global` for all of them, and Kaldi's `split_scp.pl` refuses to split
   data into more parts than there are speakers, so the recipe could not get
   past feature extraction with its own default of `nj=4`. It is `nj=1` now.
   `run/apply_cmvn.sh` already handled this by clamping `nj` to the speaker
   count; anything new that splits by speaker should do the same.
+- **The yesno split is 31/29 on purpose, not 30/30.** The corpus tarball
+  holds `README` and `README~` beside the sixty waves, and `prepare_data.sh`
+  used to list the directory unfiltered. Under `LC_ALL=C` digits sort before
+  `R`, so both landed in the test half of a 62-entry list; feature extraction
+  failed on them, Kaldi warned *"Probably a serious error"*, `fix_data_dir.sh`
+  dropped them, and the test set was 29 while claiming 31. **A real audio
+  failure would have looked identical.** The list is filtered now, and the
+  split count is stated as 31 rather than left to halving, because halving 60
+  gives 30/30 and moves one utterance across — which would make the published
+  WERs in the recipe's README no longer comparable. `tests/golden/wer/yesno.json`
+  records the counts and tier 3 asserts them, so the split cannot drift
+  unnoticed.
 - **Shell text processing is dialect-dependent, and was relied on.**
   `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
   which picks out `#0` only where `\d` inside a bracket expression means the

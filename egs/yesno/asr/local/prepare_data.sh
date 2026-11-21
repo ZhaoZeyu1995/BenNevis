@@ -12,11 +12,22 @@ train_base_name=train_yesno
 test_base_name=test_yesno
 waves_dir=$1
 
-ls -1 $waves_dir > data/local/waves_all.list
+# Only the audio. The corpus tarball also contains README and README~, and
+# listing them here made them utterances: feature extraction then failed on
+# them, Kaldi warned "Probably a serious error", fix_data_dir.sh silently
+# dropped them, and the test set was quietly 29 rather than the 31 it
+# claimed. A real audio failure would have looked exactly the same.
+ls -1 $waves_dir | grep '\.wav$' > data/local/waves_all.list
 
 cd data/local
 
-../../local/create_yesno_waves_test_train.pl waves_all.list waves.test waves.train
+# 31, rather than half of however many lines there are. With the two README
+# files counted the list was 62 long and half of it was 31, so train took the
+# first 31 waves and test the rest; stating 31 explicitly keeps exactly that
+# membership now that the list is 60 long, which is what the published
+# results in ../README.md were measured on. An even 30/30 split would move
+# one utterance across and make them no longer comparable.
+../../local/create_yesno_waves_test_train.pl waves_all.list waves.test waves.train 31
 
 ../../local/create_yesno_wav_scp.pl ${waves_dir} waves.test > ${test_base_name}_wav.scp
 

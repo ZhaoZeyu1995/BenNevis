@@ -11,4 +11,3 @@
         mode: min
         factor: 0.5
         patience: 4
-        verbose: True

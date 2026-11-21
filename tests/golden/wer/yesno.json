@@ -14,11 +14,22 @@
     "",
     "Judge a change against reference_wer and tighten max_wer deliberately.",
     "Raising max_wer to make a run pass is how a ledger stops meaning",
-    "anything."
+    "anything.",
+    "",
+    "utterances pins the data split. It is 31/29 rather than an even 30/30",
+    "because that is the split the published results were measured on: it",
+    "arose from two README files in the corpus being counted as waves, and",
+    "prepare_data.sh now states the count explicitly so that filtering them",
+    "out did not move an utterance across. 29 test utterances of eight words",
+    "each is the 232 above."
   ],
   "model": "rnnp",
   "test_set": "test_yesno",
   "reference_words": 232,
+  "utterances": {
+    "train_yesno": 31,
+    "test_yesno": 29
+  },
   "reference_source": "egs/yesno/asr/README.md, pre-refactor CUDA run",
   "topologies": {
     "ctc": { "reference_wer": 0.0, "max_wer": 1.5 },
