@@ -22,6 +22,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from BenNevis.utils.platform import supports_symlink  # noqa: E402
+
 pytestmark = pytest.mark.torch
 
 
@@ -39,8 +41,34 @@ class TestConstruction:
         `torch.device(0)` resolves to the default accelerator, which is MPS on
         Apple machines, so the device must be chosen explicitly.
         """
-        t = trainer_factory()
+        t = trainer_factory(device=None)
         assert t.device.type in ("cpu", "cuda")
+
+    def test_detection_never_selects_mps(self, trainer_factory, monkeypatch):
+        """
+        Trainer wraps the model in DDP unconditionally, and DDP cannot wrap an
+        MPS module, so detection must fall back to the CPU on an Apple machine
+        rather than choosing an accelerator that cannot work.
+        """
+        import BenNevis.utils.platform as bp
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(bp, "_mps_is_available", lambda: True)
+
+        t = trainer_factory(device=None)
+        assert t.device == torch.device("cpu")
+
+    def test_detection_indexes_cuda_by_local_rank(self, trainer_factory, monkeypatch):
+        """
+        The device index is LOCAL_RANK, not the global rank. Checked through
+        the resolver rather than by building a Trainer, since this runner has
+        no CUDA device to place a model on.
+        """
+        from BenNevis.utils.platform import resolve_device
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        device = resolve_device(local_rank=5, allow_mps=False, warn=False)
+        assert (device.type, device.index) == ("cuda", 5)
 
     def test_device_can_be_overridden(self, trainer_factory):
         t = trainer_factory(device=torch.device("cpu"))
@@ -244,7 +272,7 @@ class TestBatchSteps:
 
 
 class TestCheckpointing:
-    """_save_checkpoint's retention and best-symlink behaviour."""
+    """_save_checkpoint's retention and best-pointer behaviour."""
 
     @pytest.fixture
     def ready(self, trainer_factory, tmp_path):
@@ -281,7 +309,27 @@ class TestCheckpointing:
         saved = [f for f in os.listdir(t.ckpt_dir) if f.endswith(".pt")]
         assert len([f for f in saved if f != "best.pt"]) == 2
 
-    def test_best_symlink_points_at_the_lowest_loss(self, ready):
+    def test_best_pointer_resolves_to_the_lowest_loss(self, ready):
+        t = ready(save_top_k=3)
+        for i, loss in enumerate([3.0, 1.0, 2.0]):
+            t.epoch, t.step = i, i * 10
+            t._save_checkpoint(loss)
+
+        # Asserted through the contents rather than os.readlink, because
+        # best.pt is a copy rather than a symlink on platforms without them.
+        # This is also the stronger assertion: it checks what a reader of
+        # best.pt actually gets.
+        best = torch.load(
+            os.path.join(t.ckpt_dir, "best.pt"),
+            map_location="cpu",
+            weights_only=True,
+        )
+        assert best["VALID_LOSS"] == pytest.approx(1.0)
+
+    @pytest.mark.skipif(
+        not supports_symlink(), reason="platform does not support symlinks"
+    )
+    def test_best_is_a_symlink_where_the_platform_allows_one(self, ready):
         t = ready(save_top_k=3)
         for i, loss in enumerate([3.0, 1.0, 2.0]):
             t.epoch, t.step = i, i * 10

@@ -24,6 +24,7 @@ from torchinfo import summary
 from kaldiio import WriteHelper
 from omegaconf import OmegaConf
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
+from BenNevis.utils.platform import link_or_copy, resolve_device
 
 if TYPE_CHECKING:
     # Imported for typing only. BenNevis.core.losses imports k2, and the
@@ -107,13 +108,15 @@ class Trainer:
         # `torch.device(rank)` resolves to whichever accelerator torch treats
         # as default, which is cuda on a training node but mps on an Apple
         # machine and so is not portable. Choose explicitly instead. MPS is
-        # never selected automatically, because DDP does not support it.
+        # never selected automatically, because DDP cannot wrap an MPS module.
         if device is not None:
             self.device = device
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda", self.local_rank)
         else:
-            self.device = torch.device("cpu")
+            self.device = resolve_device(
+                local_rank=self.local_rank,
+                allow_mps=False,
+                warn=self.gpu_id == 0,
+            )
 
         self.model = model
         self.optimizers = optimizers
@@ -336,9 +339,9 @@ class Trainer:
             os.remove(os.path.join(self.ckpt_dir, last_ckpt[1]))
         # update the best checkpoint
         if valid_loss < best_loss:
-            if os.path.exists(best_ckpt):
-                os.remove(best_ckpt)
-            os.symlink(ckpt_name, best_ckpt)
+            # A symlink where the platform has them, a copy where it does not,
+            # so that the checkpoint directory looks the same on Windows.
+            link_or_copy(ckpt_name, best_ckpt)
             logging.debug(
                 f"RANK {self.gpu_id}: Updated the best checkpoint at {best_ckpt}"
             )
