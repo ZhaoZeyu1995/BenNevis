@@ -393,6 +393,13 @@ workflow changes.
   with permission denied and a `|| true` swallowed it. Create a directory on
   the runner *before* any container touches it, and do not let a collection
   step hide its own failure: report what it collected, including zero.
+- **The capture records both sides of CMVN.** `raw/` is `feats.scp` as the
+  feature extractor wrote it; `features/` is `feats.cmvn.scp` after
+  normalisation. The first captures held only the second, which was no use
+  for verifying a replacement for either stage — there was no input to drive
+  it with. **Any stage being replaced needs its input captured as well as its
+  output**, and that is worth checking before writing the replacement rather
+  than after.
 - **The reference capture needs `fstprint`, and will not pretend otherwise.**
   It is in the image but only on the PATH a recipe's `path.sh` builds, and
   `tests/reference/capture.py` is invoked directly — so the first two real

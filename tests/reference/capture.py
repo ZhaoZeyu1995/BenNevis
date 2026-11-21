@@ -20,8 +20,12 @@ What is captured, and why each one:
   lexicon has to reproduce. As text, compared as bytes.
 - `G.fst` and `TLG.fst` as text, for the same reason.
 - CMVN statistics in full: two rows per speaker, so there is no reason not to.
-- A few feature matrices in full, and per-utterance statistics for the rest.
-  Every matrix would be 12MB of float32 for yesno and buy nothing over a
+- Feature matrices from **both sides of CMVN**: `feats.scp` as the feature
+  extractor wrote it, and `feats.cmvn.scp` after normalisation. The pair is
+  what lets a Python replacement for either stage be driven with the real
+  input and compared against the real output.
+- A few matrices in full and per-utterance statistics for the rest. Every
+  matrix would be 12MB of float32 per side for yesno and buy nothing over a
   handful.
 - The decoded hypotheses and the reference transcriptions, per topology.
 
@@ -256,35 +260,42 @@ def capture_features(
 
     for dataset in datasets:
         data = recipe / "data" / dataset
-        scp = data / "feats.cmvn.scp"
-        if not scp.is_file():
-            sys.stderr.write(f"capture: no {scp}, skipping {dataset}\n")
-            continue
+        # Both sides of CMVN. `feats.scp` is what compute-cmvn-stats reads
+        # and apply-cmvn transforms; `feats.cmvn.scp` is what it wrote and
+        # what training consumes. The first captures held only the second,
+        # which leaves a replacement for either stage with no input to be
+        # driven with and nothing to compare against -- so the pair is the
+        # point, and the same utterances are kept on both sides.
+        for kind, name in (("features", "feats.cmvn.scp"), ("raw", "feats.scp")):
+            scp = data / name
+            if not scp.is_file():
+                sys.stderr.write(f"capture: no {scp}, skipping {kind}\n")
+                continue
 
-        features = read_archive(scp)
-        keys = sorted(features)
+            features = read_archive(scp)
+            keys = sorted(features)
 
-        whole = keys[:FULL_FEATURE_UTTERANCES]
-        if whole:
-            arrays = {key: np.asarray(features[key]) for key in whole}
-            relative = f"features/{dataset}.npz"
-            target = destination / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(target, **arrays)
-            for key in whole:
-                manifest.arrays[f"features/{dataset}/{key}"] = {
-                    "path": relative,
-                    "key": key,
-                    "shape": list(arrays[key].shape),
-                    "dtype": str(arrays[key].dtype),
-                    "tolerance": {
-                        "rtol": FEATURE_TOLERANCE.rtol,
-                        "atol": FEATURE_TOLERANCE.atol,
-                    },
-                }
+            whole = keys[:FULL_FEATURE_UTTERANCES]
+            if whole:
+                arrays = {key: np.asarray(features[key]) for key in whole}
+                relative = f"{kind}/{dataset}.npz"
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(target, **arrays)
+                for key in whole:
+                    manifest.arrays[f"{kind}/{dataset}/{key}"] = {
+                        "path": relative,
+                        "key": key,
+                        "shape": list(arrays[key].shape),
+                        "dtype": str(arrays[key].dtype),
+                        "tolerance": {
+                            "rtol": FEATURE_TOLERANCE.rtol,
+                            "atol": FEATURE_TOLERANCE.atol,
+                        },
+                    }
 
-        for key in keys:
-            manifest.stats[f"features/{dataset}/{key}"] = array_stats(features[key])
+            for key in keys:
+                manifest.stats[f"{kind}/{dataset}/{key}"] = array_stats(features[key])
 
         cmvn = data / "cmvn.scp"
         if cmvn.is_file():
