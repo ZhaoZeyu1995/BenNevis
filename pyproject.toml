@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bennevis"
+version = "0.1.0"
+description = "An End-to-End ASR toolkit based on Differentiable WFSTs with flexible topology support"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Zeyu Zhao", email = "zeyuhongwu1995@gmail.com" }]
+keywords = ["asr", "speech-recognition", "wfst", "k2", "pytorch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Note: k2 is a hard runtime requirement but is deliberately absent here.
+# It ships as wheels built against an exact torch and CUDA combination, from
+# its own index rather than PyPI, so it must be installed separately:
+#   pip install k2==<ver>+cuda<ver>.torch<ver> -f https://k2-fsa.github.io/k2/cuda.html
+# See README.md. Declaring it here would make `pip install bennevis` fail.
+dependencies = [
+    "torch",
+    "torchaudio",
+    "numpy",
+    "kaldiio",
+    "hydra-core",
+    "omegaconf",
+    "tqdm",
+    "torchinfo",
+    "wandb",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "black>=24.0",
+    "flake8",
+    "isort",
+    "pre-commit",
+]
+whisper = ["openai-whisper"]
+extra = ["transformers", "datasets", "numba", "librosa", "soundfile"]
+
+[project.urls]
+Homepage = "https://github.com/ZhaoZeyu1995/BenNevis"
+Issues = "https://github.com/ZhaoZeyu1995/BenNevis/issues"
+
+[tool.setuptools.packages.find]
+include = ["BenNevis*"]
+exclude = ["tests*", "egs*", "tools*"]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Makes the package importable without an editable install, so the dependency
+# -free tiers can run straight from a clone.
+pythonpath = ["."]
+markers = [
+    "k2: requires the k2 package (tier 2)",
+    "kaldi: requires a Kaldi build on PATH (tier 3)",
+    "gpu: requires CUDA, possibly multiple GPUs (tier 4)",
+]

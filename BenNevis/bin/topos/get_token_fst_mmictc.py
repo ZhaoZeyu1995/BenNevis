@@ -9,7 +9,6 @@
 """
 
 import sys
-import logging
 
 fread = open(sys.argv[1], "r")
 if len(sys.argv) > 2 and sys.argv[2] == "no_blk":

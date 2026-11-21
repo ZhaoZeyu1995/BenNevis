@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A new push to a PR cancels the previous run rather than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install linters
+        run: pip install "black>=24.0" flake8 isort
+      - name: black
+        run: black --check --diff --line-length=88 BenNevis/ tests/
+      # Scoped to tests/ for now: BenNevis/ has never been isorted, and doing it
+      # here would bury this change under an import reshuffle of the whole
+      # package. It gets its own deliberate PR.
+      - name: isort
+        run: isort --check --diff --profile=black --line-length=88 tests/
+      - name: flake8
+        run: flake8 BenNevis/ tests/
+
+  # Tier 1: no k2, no Kaldi, no GPU. Runs on every push and must stay fast.
+  # These tests import nothing heavier than the standard library, so they need
+  # no dependencies at all.
+  test-tier1:
+    name: Tier 1 tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install test dependencies
+        run: pip install pytest
+      - name: Run tier 1
+        run: pytest tests/ -v -m "not k2 and not kaldi and not gpu"
+
+  package:
+    name: Package builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install build tooling
+        run: pip install build twine
+      - name: Build
+        run: python -m build
+      - name: Check metadata
+        run: twine check dist/*

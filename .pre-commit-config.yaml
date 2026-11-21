@@ -1,0 +1,52 @@
+# Hooks run on commit. Install with: pre-commit install
+#
+# Every hook is scoped to the paths we actively maintain (BenNevis/, tests/ and
+# top-level config). egs/ holds recipes, shell, Perl and large .ctm reference
+# data that predate these conventions; sweeping them now would bury real
+# changes under whitespace churn. This also keeps
+#   pre-commit run --all-files
+# safe to run at any time.
+#
+# Only fast, local checks belong here. Tests run in CI, not on commit.
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: ^(BenNevis/|tests/|[^/]+\.(py|toml|cfg|yaml|yml|md))$
+        exclude: ^tests/golden/
+      - id: end-of-file-fixer
+        files: ^(BenNevis/|tests/|[^/]+\.(py|toml|cfg|yaml|yml|md))$
+        exclude: ^tests/golden/
+      - id: check-yaml
+        files: ^(\.github/|[^/]+\.(yaml|yml)|\.pre-commit-config\.yaml)
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+        exclude: ^egs/
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        args: [--line-length=88]
+        files: ^(BenNevis/|tests/)
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      # Scoped to tests/ to match CI: BenNevis/ has never been isorted and gets
+      # its own deliberate PR.
+      - id: isort
+        args: [--profile=black, --line-length=88]
+        files: ^tests/
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        files: ^(BenNevis/|tests/)
