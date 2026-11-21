@@ -1,0 +1,13 @@
+# Reference and golden data are byte-exact artefacts. Their digests are
+# recorded in a manifest and compared as bytes, and the topology goldens are
+# compared character for character against generated output. Line-ending
+# translation on checkout changes those bytes, so a Windows checkout made
+# every recorded digest wrong -- measured, on a CI runner, which is how this
+# file came to exist. `-text` disables the translation entirely.
+tests/golden/** -text
+
+# Shell and Perl keep LF whatever the platform. A CRLF script does not run on
+# Linux, and the recipes are driven by them, so a commit from a Windows
+# checkout would otherwise break every recipe silently.
+*.sh text eol=lf
+*.pl text eol=lf

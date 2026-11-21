@@ -98,8 +98,11 @@ class TestIntegrity:
             record["path"] for record in manifest.arrays.values() if "path" in record
         }
         recorded.add(MANIFEST_NAME)
+        # as_posix, because the manifest records forward slashes and
+        # `relative_to` yields the platform's separator -- on Windows that
+        # matched nothing at all.
         found = {
-            str(path.relative_to(REFERENCE_DIR))
+            path.relative_to(REFERENCE_DIR).as_posix()
             for path in REFERENCE_DIR.rglob("*")
             if path.is_file()
         }
