@@ -21,6 +21,14 @@ on:
         description: "Override trainer.max_epochs, e.g. 5 for a quick check."
         required: false
         default: ""
+      stage:
+        description: "First recipe stage to run. Blank means from the start."
+        required: false
+        default: ""
+      stop_stage:
+        description: "Last recipe stage to run. Blank means to the end."
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}
@@ -77,6 +85,8 @@ jobs:
         env:
           TOPOS: ${{ github.event.inputs.topos }}
           MAX_EPOCHS: ${{ github.event.inputs.max_epochs }}
+          STAGE: ${{ github.event.inputs.stage }}
+          STOP_STAGE: ${{ github.event.inputs.stop_stage }}
         run: |
           set -euo pipefail
           opts=()
@@ -85,6 +95,16 @@ jobs:
           fi
           if [ -n "${MAX_EPOCHS}" ]; then
             opts+=(--hydra_opts "trainer.max_epochs=${MAX_EPOCHS}")
+          fi
+          # Resuming only makes sense when the earlier stages' output is
+          # still in the workspace, which on a fresh runner it is not --
+          # so these are for a dispatch against a cached or restored tree,
+          # not for the scheduled run.
+          if [ -n "${STAGE}" ]; then
+            opts+=(--stage "${STAGE}")
+          fi
+          if [ -n "${STOP_STAGE}" ]; then
+            opts+=(--stop_stage "${STOP_STAGE}")
           fi
           docker run --rm \
             -v "$PWD:/workspace" \

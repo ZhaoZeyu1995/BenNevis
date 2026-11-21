@@ -361,6 +361,16 @@ workflow changes.
   run, whose undertrained model decoded nothing at all.
   `tests/recipes/test_decode_faster.py` extracts the awk from the script and
   runs it, so the test is about the code that ships.
+- **Recipes have `--stage` and `--stop_stage`**, numbered 0 to 9 in
+  `egs/yesno/asr/run.sh` and announced as they run. Each stage reads what the
+  ones before it wrote, so resuming is only safe where the earlier output
+  survives — true for a local tree after a completed run, false on a fresh CI
+  runner, which is why the scheduled nightly runs everything. A `stage` past
+  `stop_stage` is refused rather than exiting 0 having done nothing, which in
+  CI is indistinguishable from success.
+  `tests/recipes/test_run_stages.py` extracts the guard expressions and
+  executes them with the bodies replaced by an echo, so the selection is
+  tested without Kaldi.
 - **Recipes stop on a failing stage.** `egs/yesno/asr/run.sh` has
   `set -eo pipefail` and an explicit check per stage. Most stages had neither
   while a few had `|| exit 1`, which is why Kaldi printing *"Probably a
