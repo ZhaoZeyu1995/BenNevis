@@ -20,6 +20,7 @@ Authors:
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,18 @@ pytestmark = pytest.mark.torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
+
+# Locating an executable is POSIX-shaped: `shutil.which` on Windows wants a
+# PATHEXT extension, `os.access(..., X_OK)` is meaningless there because
+# Windows has no execute bit, and a `#!` line does not run a file. None of
+# that is a defect in the capture, which runs only inside the Linux Kaldi
+# image -- the recipes are Linux and macOS only (see CLAUDE.md). The tests
+# that do not depend on those semantics still run everywhere.
+posix_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="locating and running an executable this way is POSIX-only; the "
+    "capture runs in the Linux image",
+)
 
 import capture  # noqa: E402
 
@@ -359,6 +372,7 @@ class TestFstprint:
     committed.
     """
 
+    @posix_only
     def test_it_is_found_on_the_path(self, tmp_path, monkeypatch):
         fake = tmp_path / "bin"
         fake.mkdir()
@@ -367,6 +381,7 @@ class TestFstprint:
         monkeypatch.setenv("PATH", str(fake), prepend=False)
         assert capture.find_fstprint() == str(fake / "fstprint")
 
+    @posix_only
     def test_it_is_found_under_kaldi_root(self, tmp_path, monkeypatch):
         """The case that matters: no PATH, but a Kaldi tree to look in."""
         root = tmp_path / "kaldi"
@@ -378,6 +393,7 @@ class TestFstprint:
         monkeypatch.setenv("KALDI_ROOT", str(root))
         assert capture.find_fstprint() == str(binary)
 
+    @posix_only
     def test_a_non_executable_candidate_is_not_used(self, tmp_path, monkeypatch):
         root = tmp_path / "kaldi"
         binary = root / "tools" / "openfst" / "bin" / "fstprint"
@@ -407,6 +423,7 @@ class TestFstprint:
         monkeypatch.setenv("KALDI_ROOT", str(tmp_path / "no-kaldi"))
         assert run(recipe, tmp_path / "out") == 0
 
+    @posix_only
     def test_the_fsts_are_captured_when_fstprint_works(
         self, recipe, tmp_path, monkeypatch
     ):
@@ -458,6 +475,7 @@ class TestFstprint:
             assert f"graph/{topology}/TLG.fst.txt" in manifest.exact
         assert (out / "lang" / "L.fst.txt").read_text() == "0 1 2 3 0.0\n1\n"
 
+    @posix_only
     def test_an_expected_fst_that_never_got_built_is_an_error(
         self, recipe, tmp_path, monkeypatch
     ):
