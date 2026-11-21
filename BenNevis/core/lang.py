@@ -26,6 +26,7 @@ Usually the `k2` directory contains the following files:
     - k2/phones.txt
     - k2/tokens.txt
     - k2/T.fst
+    - k2/topo.yaml
     - k2/L_inv.pt
 The `L_inv.pt` file is created after loading `L.fst` and is used to
 calculate loss values with k2.
@@ -33,8 +34,13 @@ calculate loss values with k2.
 Note that there are some redundant files in the language directory, but
 they make it easier to read the language directory, load and process the FSTs.
 
-To be able to run the code here, you will need to install openfst, and
-make sure that path/to/openfst/bin is in your PATH.
+The topology FSA is built from `k2/topo.yaml`, the declarative specification
+that `prepare_topo.sh` copies in, so the training path needs no OpenFST.
+`k2/T.fst` is kept because the decoding graph is still compiled with Kaldi,
+and a language directory prepared before the specification was copied in is
+still read through `fstprint` as a fallback. Loading the lexicon does still
+need openfst on PATH when `k2/L_inv.pt` has not been generated yet, because
+`L.fst` comes from Kaldi.
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
@@ -42,9 +48,13 @@ Authors:
 
 import os
 import logging
+import warnings
 import k2
 import torch
+from pathlib import Path
 from typing import List
+from BenNevis.topos import build as topo_build
+from BenNevis.topos import spec as topo_spec
 from BenNevis.utils.data import read_keys, read_dict
 
 
@@ -77,10 +87,13 @@ class Lang(object):
             - k2/phones.txt
             - k2/tokens.txt
             - k2/T.fst
+            - k2/topo.yaml (created by BenNevis) the topology specification
             - k2/L_inv.pt (created after loading L.fst)
         A language directory is usually created by Kaldi scripts and BenNevis's scripts.
     load_topo: bool
-        Whether or not load lang_dir/k2/T.fst. Default is False.
+        Whether or not to build the topology FSA, from lang_dir/k2/topo.yaml
+        where it exists and from lang_dir/k2/T.fst otherwise. Default is
+        False.
     load_lexicon: bool
         Whether or not load lang_dir/k2/L_inv.pt. Generate one from lang_dir/L.fst if there is not. Default is False.
     """
@@ -138,24 +151,93 @@ class Lang(object):
 
     def load_topo(self):
         """
-        Load {lang_dir}/k2/T.fst and process it to get the self.topo.
+        Build self.topo, the topology FSA used for training.
+
+        Preferred route: expand {lang_dir}/k2/topo.yaml, the topology
+        specification that `prepare_topo.sh` copies into the language
+        directory, against {lang_dir}/k2/phones.txt and
+        {lang_dir}/k2/tokens.txt. This is pure Python and needs no OpenFST.
+
+        Fallback route: a language directory prepared before the
+        specification was copied in has only the compiled
+        {lang_dir}/k2/T.fst, which can be read back only through `fstprint`.
+        Such a directory keeps working, with a warning, so that existing
+        experiments do not have to be re-prepared.
+
+        The two routes produce the same machine. The compiled FST was built
+        from the same specification, and the `fstcompile`/`fstarcsort`/
+        `fstprint` round trip only renumbered the labels through the same
+        symbol tables and reordered arcs within each state -- and `k2.compose`
+        arc-sorts its first argument itself, so that ordering never reached
+        the loss.
 
         self.topo: k2.Fsa
             The topology FSA.
         """
-        assert os.path.exists(
-            os.path.join(self._lang_dir, "k2", "T.fst")
-        ), f"{self._lang_dir}/k2/T.fst does not exist"
+        spec_path = os.path.join(self._lang_dir, "k2", "topo.yaml")
+        if os.path.exists(spec_path):
+            self.topo = self._topo_from_spec(spec_path)
+            return
 
-        logging.info(f"Loading and processing topo from {self._lang_dir}/k2/T.fst")
-
+        fst_path = os.path.join(self._lang_dir, "k2", "T.fst")
+        assert os.path.exists(fst_path), (
+            f"neither {spec_path} nor {fst_path} exists, so there is nothing "
+            f"to build the topology from; re-run prepare_topo.sh"
+        )
+        warnings.warn(
+            f"{spec_path} does not exist, so the topology is being read back "
+            f"from the compiled {fst_path} with `fstprint`. That needs OpenFST "
+            f"on PATH and a POSIX shell. Re-run prepare_topo.sh to have the "
+            f"specification copied into the language directory, after which "
+            f"the topology is built in Python.",
+            stacklevel=2,
+        )
+        logging.info(f"Loading and processing topo from {fst_path}")
         cmd = (
-            f"""fstprint {self._lang_dir}/k2/T.fst | """
+            f"""fstprint {fst_path} | """
             f"""awk -F '\t' '{{if (NF==4) {{print $0 FS "0.0"; }} else {{print $0;}}}}'"""
         )
         openfst_txt = os.popen(cmd).read()
         self.topo = k2.Fsa.from_openfst(openfst_txt, acceptor=False)
-        logging.info(f"Finished loading topo from {self._lang_dir}/k2/T.fst")
+        logging.info(f"Finished loading topo from {fst_path}")
+
+    def _topo_from_spec(self, spec_path: str) -> k2.Fsa:
+        """
+        Expand a topology specification into the training FSA.
+
+        The symbol tables are read from the language directory rather than
+        derived from the specification again. `k2/tokens.txt` fixes the neural
+        network's output indices, and a checkpoint trained against it stays
+        valid only while those indices do not move, so the table on disc is
+        the authority.
+
+        Arguments
+        ---------
+        spec_path: str
+            The copy of the specification in the language directory.
+
+        Returns
+        -------
+        k2.Fsa
+            The topology FSA, with input labels in `k2/tokens.txt` and output
+            labels in `k2/phones.txt`.
+        """
+        logging.info(f"Building topo from {spec_path}")
+        topology = topo_spec.load_spec(Path(spec_path))
+        k2_dir = Path(self._lang_dir) / "k2"
+        openfst_txt = topo_build.build_openfst_int_text(
+            topology,
+            "k2",
+            topo_build.read_phone_table(k2_dir / "phones.txt"),
+            isymbols=topo_build.read_symbol_table(k2_dir / "tokens.txt"),
+            osymbols=topo_build.read_symbol_table(k2_dir / "phones.txt"),
+        )
+        topo = k2.Fsa.from_openfst(openfst_txt, acceptor=False)
+        logging.info(
+            f"Built topo {topology.name!r} with {topo.shape[0]} states and "
+            f"{topo.num_arcs} arcs"
+        )
+        return topo
 
     def load_lexicon(self):
         """
