@@ -68,8 +68,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      # pyyaml alongside pytest: the topology specs are YAML, and it is a
+      # small wheel with no transitive dependencies, so this tier stays
+      # instant. See the tier table in CLAUDE.md.
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install pytest pyyaml
       - name: Run tier 1
         run: pytest tests/ -v -m "not torch and not k2 and not kaldi and not gpu"
 

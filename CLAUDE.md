@@ -63,7 +63,7 @@ run the cheap ones everywhere and the expensive ones rarely.
 
 | Tier | Marker | Needs | When |
 | --- | --- | --- | --- |
-| 1 | *(none)* | the standard library and pytest | every push |
+| 1 | *(none)* | the standard library, pytest and pyyaml | every push |
 | 1b | `torch` | torch (CPU) | every push |
 | 2 | `k2` | k2 CPU wheel | every push |
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
@@ -75,9 +75,13 @@ pytest tests/ -m "torch"                                            # tier 1b
 pytest tests/ -m "k2"                                               # tier 2
 ```
 
-Tier 1 must stay dependency-free beyond pytest; that is what makes it instant.
-A test that needs torch belongs in tier 1b with the `torch` marker, so the
-dependency-free tests are never held up by a wheel download.
+Tier 1's rule is that it must stay **instant**, not that it must have no
+dependencies: a test that needs torch belongs in tier 1b with the `torch`
+marker, so the cheap tests are never held up by a 200MB wheel download.
+`pyyaml` is allowed in tier 1 because the topology specs are YAML and it is a
+small wheel with no transitive dependencies — testing the topologies is
+exactly the cheap, high-value work this tier exists for. Judge a new tier 1
+dependency by what it costs to install, and keep the list this short.
 
 Linter versions are pinned identically in `.pre-commit-config.yaml` and
 `.github/workflows/ci.yml` -- keep the two in step, and treat an upgrade as
