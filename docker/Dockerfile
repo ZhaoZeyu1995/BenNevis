@@ -24,6 +24,13 @@ FROM ubuntu:24.04 AS kaldi-builder
 # impossible to reproduce. Bump deliberately, in its own PR.
 ARG KALDI_COMMIT=e02e35f0254bb033fab73d1df99fc34123e31d56
 
+# Two of Kaldi's build inputs are fetched here rather than by its own
+# scripts; see the two RUN steps below for why. Both versions are the ones
+# the pinned Kaldi asks for, and the build checks that rather than assuming.
+ARG OPENFST_VERSION=1.8.4
+ARG OPENFST_SHA256=a8ebbb6f3d92d07e671500587472518cfc87cb79b9a654a5a8abb2d0eb298016
+ARG OPENBLAS_VERSION=0.3.13
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 # `gfortran` and `libtool` are for OpenBLAS, `subversion` for the sctk
@@ -64,15 +71,49 @@ WORKDIR /opt/kaldi/tools
 
 # Informational. It reports a missing Intel MKL, which this build does not
 # want -- OpenBLAS is used instead -- so its exit status is not a verdict on
-# whether the build can proceed.
-RUN ./extras/check_dependencies.sh || true
+# whether the build can proceed. The directory is created first because the
+# script symlinks a python into it and complains if it is absent.
+RUN mkdir -p /opt/kaldi/tools/python \
+    && ./extras/check_dependencies.sh || true
+
+# OpenFST, fetched here instead of by Kaldi's Makefile.
+#
+# That Makefile requests it over plain HTTP from openfst.org and falls back to
+# openslr, whose mirror stops at 1.8.1 and so does not carry this version at
+# all. On a runner whose egress the first request refuses, the build dies with
+# a 403 followed by a 404. Pre-placing the tarball satisfies the Makefile's
+# download target, which has no prerequisites, so make skips the fetch.
+#
+# Over HTTPS, and checksummed: this is a build input, and it is the one file
+# here that comes from neither a distribution repository nor a git host.
+#
+# If openfst.org ever becomes unreachable, 1.8.1 is on openslr and Kaldi
+# accepts any version from 1.6.7 up via OPENFST_VERSION.
+RUN test "$(sed -n 's/^OPENFST_VERSION ?= //p' Makefile)" = "${OPENFST_VERSION}" \
+    && wget -q --tries=3 -O "openfst-${OPENFST_VERSION}.tar.gz" \
+        "https://www.openfst.org/twiki/pub/FST/FstDownload/openfst-${OPENFST_VERSION}.tar.gz" \
+    && echo "${OPENFST_SHA256}  openfst-${OPENFST_VERSION}.tar.gz" | sha256sum -c -
 
 # OpenFST and friends. The single longest step after src itself.
 RUN make -j"$(nproc)"
 
 # OpenBLAS, into tools/OpenBLAS/install, which is where src/configure looks
 # for it by default when given --mathlib=OPENBLAS.
-RUN ./extras/install_openblas.sh
+#
+# Its tarball is pre-placed too, because extras/install_openblas.sh resolves
+# the download through an unauthenticated GitHub API call, and that is rate
+# limited per IP across every runner sharing it. The URL used here is the one
+# the API would have returned, so the archive unpacks to the
+# OpenMathLib-OpenBLAS-* directory the script then moves. No checksum: a
+# git host's generated archives are not guaranteed byte-stable, and a pin
+# that breaks on their side would be worse than none.
+RUN test "$(sed -n 's/^OPENBLAS_VERSION=//p' extras/install_openblas.sh)" \
+         = "${OPENBLAS_VERSION}" \
+    && mkdir -p /tmp/blas \
+    && wget -q --tries=3 -O "/tmp/blas/OpenBLAS-${OPENBLAS_VERSION}.tar.gz" \
+        "https://codeload.github.com/OpenMathLib/OpenBLAS/legacy.tar.gz/refs/tags/v${OPENBLAS_VERSION}" \
+    && DOWNLOAD_DIR=/tmp/blas ./extras/install_openblas.sh \
+    && rm -rf /tmp/blas
 
 # sclite, for scoring. Built here rather than with src so that a failure in
 # it surfaces in two minutes instead of after the forty-minute src build.
