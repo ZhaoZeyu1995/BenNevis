@@ -225,9 +225,15 @@ def get_dl(
 def main(cfg):
     setup_seed(1368)
     dist.init_process_group(backend="nccl")
-    torch.cuda.set_device(int(os.environ["RANK"]))
-    gpu_id = dist.get_rank()
-    device = torch.device(gpu_id)
+    # LOCAL_RANK is the device index within the node; RANK is the global
+    # index and only coincides with it on a single node. Selecting a device by
+    # global rank picks a nonexistent one on multi-node runs.
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
 
     lang = Lang(cfg.data["lang"], load_topo=True, load_lexicon=True)
 

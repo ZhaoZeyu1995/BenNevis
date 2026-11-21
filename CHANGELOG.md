@@ -8,6 +8,23 @@ Notable changes to BenNevis. This project follows
 
 ### Fixed
 
+- **`BenNevis/run/predict.py` was broken by the checkpoint change.** Storing
+  the configuration as YAML meant `ckpt["CONFIG"]` became a string, but
+  predict.py used it directly as a config object. It now parses it with
+  `OmegaConf.create` and loads the checkpoint with `weights_only=True`. The
+  entry-point scripts have no test coverage, so nothing caught this.
+- **Device selection no longer uses the global rank.** `torch.cuda.set_device`
+  and `torch.device` were given `RANK`, the rank across all nodes, where the
+  device index is the rank within a node (`LOCAL_RANK`). The two coincide on a
+  single node, so single-node training was unaffected, but a multi-node run
+  would select a device that does not exist. `Trainer` now keeps both: the
+  global rank for deciding which process writes checkpoints and logs, and the
+  local rank for placing tensors.
+- `Trainer` no longer selects its device with `torch.device(rank)`, which
+  resolves to whichever accelerator torch treats as default -- CUDA on a
+  training node but MPS on an Apple machine. It is now chosen explicitly, and
+  can be overridden with a new `device` argument.
+
 - **Checkpoint loading was broken on torch 2.6 and later.** `torch.load`
   defaults to `weights_only=True` there, which refuses to unpickle arbitrary
   objects, and the checkpoint stored the live Hydra configuration object. Both
@@ -88,6 +105,11 @@ Notable changes to BenNevis. This project follows
 
 ### Changed
 
+- `Trainer` can now be constructed and run on CPU, which was previously
+  impossible: it passed `device_ids` to DDP unconditionally and a CPU module
+  rejects that. The model is still wrapped in DDP in every configuration,
+  including at world size 1, so checkpoint keys keep their `module.` prefix
+  and stay interchangeable between single- and multi-process runs.
 - Tests are now split into tier 1 (standard library and pytest only) and
   tier 1b (`torch` marker), each with its own CI job, so the
   dependency-free tests stay instant rather than waiting on a wheel download.

@@ -32,6 +32,7 @@ import logging
 import argparse
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
+from omegaconf import OmegaConf
 from BenNevis.core.dataset import Dataset, CollateFunc
 from BenNevis.core.trainer import Trainer
 from BenNevis.utils.misc import dynamic_import
@@ -39,13 +40,22 @@ from BenNevis.utils.misc import dynamic_import
 
 def main(args):
     dist.init_process_group(backend="nccl")
-    torch.cuda.set_device(int(os.environ["RANK"]))
+    # LOCAL_RANK is the device index within the node; RANK is the global
+    # index and only coincides with it on a single node. Selecting a device by
+    # global rank picks a nonexistent one on multi-node runs.
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
     gpu_id = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.device(gpu_id)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
 
-    ckpt = torch.load(args.ckpt_path, map_location="cpu")
-    conf = ckpt["CONFIG"]
+    ckpt = torch.load(args.ckpt_path, map_location="cpu", weights_only=True)
+    # The checkpoint stores the configuration as YAML text so that it loads
+    # without unpickling arbitrary objects; parse it back here.
+    conf = OmegaConf.create(ckpt["CONFIG"])
 
     predict_ds = Dataset(
         args.data_dir,

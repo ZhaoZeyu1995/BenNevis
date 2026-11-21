@@ -151,3 +151,118 @@ def generated_ctc_topo(lang_dir):
             openfst_text_to_int(text, TOKEN_IDS, PHONE_IDS), acceptor=False
         )
     )
+
+
+@pytest.fixture(scope="session")
+def process_group(tmp_path_factory):
+    """
+    A real single-process gloo process group, for the duration of the session.
+
+    `Trainer` requires an initialised process group: it reads the rank and
+    world size in `__init__` and all-reduces losses. Rather than stub those
+    out, the tests run against a genuine one-rank group, so the distributed
+    code paths are the ones actually exercised.
+
+    A FileStore is used rather than TCP so that nothing depends on a free
+    port, which is a common source of flakiness in CI.
+    """
+    import torch.distributed as dist
+
+    if dist.is_initialized():  # pragma: no cover - defensive
+        yield
+        return
+
+    store_path = tmp_path_factory.mktemp("pg") / "store"
+    store = dist.FileStore(str(store_path), 1)
+    dist.init_process_group(backend="gloo", store=store, rank=0, world_size=1)
+    try:
+        yield
+    finally:
+        dist.destroy_process_group()
+
+
+class StubLoss:
+    """
+    Stands in for GraphLoss without needing k2.
+
+    Returns a differentiable scalar derived from the log probabilities, so
+    gradients flow and accumulation behaviour can be observed, while keeping
+    these tests in the torch tier rather than the k2 tier.
+    """
+
+    def __init__(self, reduction: str = "sum"):
+        self.reduction = reduction
+        self.calls = 0
+
+    def __call__(self, log_probs, log_prob_lens, word_ids, target_lengths):
+        self.calls += 1
+        loss = -log_probs.sum()
+        if self.reduction == "mean":
+            loss = loss / target_lengths.sum()
+        return loss
+
+
+@pytest.fixture
+def model_factory():
+    """
+    Build a model with the interface Trainer expects: it is called as
+    `model(inputs, input_lens)` and returns `(log_probs, log_prob_lens)`.
+    """
+    import torch
+
+    class TinyModel(torch.nn.Module):
+        def __init__(self, idim=4, odim=3):
+            super().__init__()
+            self.proj = torch.nn.Linear(idim, odim)
+
+        def forward(self, inputs, input_lens):
+            return self.proj(inputs).log_softmax(-1), input_lens
+
+    return TinyModel
+
+
+@pytest.fixture
+def make_batch():
+    """Build a batch shaped as CollateFunc produces one."""
+    import torch
+
+    def build(batch_size=2, frames=5, idim=4, seed=0):
+        torch.manual_seed(seed)
+        return {
+            "feats": torch.randn(batch_size, frames, idim),
+            "feats_lens": torch.full((batch_size,), frames, dtype=torch.int32),
+            "target_lengths": torch.full((batch_size,), 3, dtype=torch.int32),
+            "word_ids": [[1, 2, 3]] * batch_size,
+            "batch_size": batch_size,
+        }
+
+    return build
+
+
+@pytest.fixture
+def trainer_factory(process_group, model_factory, tmp_path):
+    """
+    Build a real `Trainer` on CPU with sensible defaults for a test.
+
+    Deliberately a real Trainer, not a stub: the point of making the device
+    and DDP wrapping explicit was to allow exactly this.
+    """
+    import torch
+
+    from BenNevis.core.trainer import Trainer
+
+    def build(**kwargs):
+        model = kwargs.pop("model", None) or model_factory()
+        opts = kwargs.pop("optimizers", None)
+        if opts is None:
+            opts = [torch.optim.SGD(model.parameters(), lr=0.1)]
+        kwargs.setdefault("loss_func", StubLoss("mean"))
+        kwargs.setdefault("exp_dir", str(tmp_path / "exp"))
+        return Trainer(
+            model=model,
+            optimizers=opts,
+            schedulers=kwargs.pop("schedulers", []),
+            **kwargs,
+        )
+
+    return build

@@ -72,6 +72,10 @@ class Trainer:
     config: Optional[Dict[str, Any]]
         A dictionary containing the arguments for the whole training setting.
         This is useful for several aspects, such as logging, saving, and resuming the training.
+    device: Optional[torch.device]
+        The device to place the model and batches on. By default this is
+        `cuda:{rank}` when CUDA is available and CPU otherwise, which is what
+        distributed training wants; pass it explicitly only to override that.
     """
 
     def __init__(
@@ -90,10 +94,26 @@ class Trainer:
         accum_grad_steps: Optional[int] = 1,
         grad_max_norm: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None,
+        device: Optional[torch.device] = None,
     ):
         self.gpu_id = dist.get_rank()
         self.world_size = dist.get_world_size()
-        self.device = torch.device(self.gpu_id)
+        # The global rank decides who writes checkpoints and logs; the device
+        # index is the rank *within the node*, which torchrun publishes as
+        # LOCAL_RANK. They coincide on a single node but not across several,
+        # where using the global rank would select a device that does not
+        # exist.
+        self.local_rank = int(os.environ.get("LOCAL_RANK", self.gpu_id))
+        # `torch.device(rank)` resolves to whichever accelerator torch treats
+        # as default, which is cuda on a training node but mps on an Apple
+        # machine and so is not portable. Choose explicitly instead. MPS is
+        # never selected automatically, because DDP does not support it.
+        if device is not None:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda", self.local_rank)
+        else:
+            self.device = torch.device("cpu")
 
         self.model = model
         self.optimizers = optimizers
@@ -177,7 +197,15 @@ class Trainer:
         self.accum_grad_steps = accum_grad_steps
         self.grad_max_norm = grad_max_norm
 
-        self.model = DDP(self.model, device_ids=[self.gpu_id])
+        # The model is always wrapped in DDP, including at world_size 1, so
+        # that `state_dict` keys carry the same `module.` prefix in every
+        # configuration and a checkpoint stays loadable regardless of how many
+        # processes produced it. `device_ids` is accepted only for
+        # single-device CUDA modules; a CPU module requires it to be unset.
+        if self.device.type == "cuda":
+            self.model = DDP(self.model, device_ids=[self.local_rank])
+        else:
+            self.model = DDP(self.model)
 
     def _load_best_checkpoint(self):
         """

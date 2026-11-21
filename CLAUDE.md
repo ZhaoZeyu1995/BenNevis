@@ -121,8 +121,14 @@ test tier and for cloud runs.
 - Do not put the k2 graph loss inside `torch.autocast`. FST intersection and
   score accumulation are numerically delicate; autocast the encoder forward
   and compute the loss in fp32.
-- `Trainer` requires an initialised process group: it calls `dist.get_rank()`
-  in `__init__` and wraps the model in DDP. It cannot currently be constructed
-  on a CPU-only machine.
+- `Trainer` requires an initialised process group, since it reads the rank and
+  world size in `__init__` and all-reduces losses. It can be constructed on
+  CPU: the tests run it against a real one-rank gloo group backed by a
+  `FileStore`, provided by the `process_group` fixture in
+  `tests/core/conftest.py`.
+- The **global** rank decides which process writes checkpoints and logs; the
+  **device index** is `LOCAL_RANK`, the rank within the node. They coincide on
+  one node and diverge across several, so never select a device by global
+  rank.
 - Topology FSTs and `tokens.txt` must stay consistent — the topology
   determines the neural network's output vocabulary.
