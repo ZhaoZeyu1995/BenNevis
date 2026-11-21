@@ -84,6 +84,32 @@ jobs:
       - name: Run tier 1b
         run: pytest tests/ -v -m "torch and not k2 and not kaldi and not gpu"
 
+  # Tier 2: adds k2. Its wheels are built against an exact torch version and
+  # come from k2's own index, not PyPI, so both are pinned together here and
+  # must be bumped together. Still CPU-only and still free.
+  test-k2:
+    name: Tier 2 tests (k2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install torch (CPU) pinned to the k2 wheel
+        run: |
+          pip install torch==2.15.0 torchaudio --index-url https://download.pytorch.org/whl/cpu
+      - name: Install k2 (CPU wheel matching torch 2.15.0)
+        run: |
+          pip install k2==1.24.4.dev20261112+cpu.torch2.15.0 \
+            --find-links https://k2-fsa.github.io/k2/cpu.html
+      - name: Install the package
+        run: |
+          pip install -e .
+          pip install pytest
+      - name: Run tier 2
+        run: pytest tests/ -v -m "k2 and not kaldi and not gpu"
+
   package:
     name: Package builds
     runs-on: ubuntu-latest
