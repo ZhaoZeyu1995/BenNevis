@@ -28,6 +28,9 @@ What is captured, and why each one:
   matrix would be 12MB of float32 per side for yesno and buy nothing over a
   handful.
 - The decoded hypotheses and the reference transcriptions, per topology.
+- The feature configuration, `conf/fbank.conf` and `conf/pitch.conf`. These
+  decide what the features are, so a capture that does not record them cannot
+  be distinguished from one taken under different settings.
 
 Usage
 -----
@@ -63,6 +66,13 @@ from BenNevis.utils.reference import (  # noqa: E402
 #: How many feature matrices to keep whole. Enough for a genuine elementwise
 #: comparison across more than one utterance; the rest are kept as statistics.
 FULL_FEATURE_UTTERANCES = 5
+
+#: The feature configuration, copied verbatim. These files decide what the
+#: captured features are, so a reference that does not record them cannot be
+#: told apart from one taken under different settings -- which matters most
+#: for `--dither`, where a change silently makes every captured feature
+#: unreproducible.
+RECIPE_CONF = ("conf/fbank.conf", "conf/pitch.conf")
 
 #: Text artefacts copied verbatim from the language directory. These are what
 #: a Python replacement for `prepare_lang.sh` has to reproduce.
@@ -535,6 +545,13 @@ def main(argv=None) -> int:
             "that, a comparison cannot be better than about 4e-6.",
         ],
     )
+
+    for name in RECIPE_CONF:
+        source = recipe / name
+        if source.is_file():
+            store(manifest, out, f"recipe/{name}", source.read_bytes())
+        else:
+            sys.stderr.write(f"capture: no {source}\n")
 
     capture_language(manifest, recipe, out, topologies, printer)
     capture_features(

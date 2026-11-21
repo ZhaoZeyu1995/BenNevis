@@ -176,8 +176,22 @@ The Python migration is gated on reproducing current behaviour, with
 tolerances chosen per layer:
 
 - **Features**: `rtol=1e-4` against Kaldi. Bit-exactness is not achievable
-  (FFT and accumulation order differ). Set `dither=0` on both sides or nothing
-  will ever match; check `snip-edges` and `energy-floor` defaults too.
+  (FFT and accumulation order differ). Check `snip-edges` and `energy-floor`
+  defaults too.
+  **`--dither=0` is now set in every recipe's `conf/fbank.conf`, and it is a
+  precondition rather than a tuning choice.** Kaldi's default of 1.0 adds
+  random noise to the waveform; its own generator makes that reproducible
+  *for Kaldi*, which is why two captures agreed byte for byte, but no other
+  implementation can match it. Measured on yesno: two different dither draws
+  differ from each other by 0.045 mean and 2.59 max in the log-mel domain,
+  and undithered torchaudio differs from dithered Kaldi by 0.038 mean — the
+  same size, concentrated in the quietest bins, which is the signature of
+  additive waveform noise. With dither on, features cannot be replaced at
+  any tolerance worth the name.
+  A capture records `conf/fbank.conf` and `conf/pitch.conf`, and
+  `tests/reference/test_against_reference.py` fails if they no longer match
+  the recipe — because a reference taken under different settings is a record
+  of something the pipeline no longer does, and nothing else would notice.
 - **Losses**: agreement to ~1e-4 on a fixed batch. This is the fastest and
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
