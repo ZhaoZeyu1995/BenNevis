@@ -346,7 +346,11 @@ class Trainer:
         """
         self.model.train()
         loss = self._compute_loss(batch, pin_memory=pin_memory)
-        loss.backward()
+        # Scale the loss so that accumulating over `accum_grad_steps` micro-batches
+        # yields the same gradient magnitude as a single batch of the same total
+        # size. Without this the effective learning rate scales with
+        # accum_grad_steps.
+        (loss / self.accum_grad_steps).backward()
         if (self.step + 1) % self.accum_grad_steps == 0:
             if self.grad_max_norm:
                 torch.nn.utils.clip_grad_norm_(
@@ -473,13 +477,12 @@ class Trainer:
             progress_bar.set_postfix(self.metrics_dict)
             progress_bar.refresh()
 
-        epoch_num_batches = None
+        if isinstance(self.train_sampler, DistributedSampler):
+            epoch_num_batches = len(self.train_dl.batch_sampler)
+        else:
+            epoch_num_batches = self.train_sampler.num_batches
+
         for batch in self.train_dl:
-            if epoch_num_batches is None:
-                if isinstance(self.train_sampler, DistributedSampler):
-                    epoch_num_batches = len(self.train_dl.batch_sampler)
-                elif isinstance(self.train_sampler, DistributedSyncDynamicBatchSampler):
-                    epoch_num_batches = self.train_sampler.num_batches
             batch_size = batch["batch_size"]
             loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
@@ -501,9 +504,13 @@ class Trainer:
                             step=self.step,
                         )
 
-            # Save the model every n epochs, where n can be a float number
+            # Save the model every n epochs, where n can be a float number.
+            # self.save_every_n_epochs is None when saving is driven by
+            # save_every_n_steps instead, in which case this is skipped.
             if (
-                num_steps % math.ceil(epoch_num_batches * self.save_every_n_epochs) == 0
+                self.save_every_n_epochs
+                and num_steps % math.ceil(epoch_num_batches * self.save_every_n_epochs)
+                == 0
                 and num_steps != epoch_num_batches
             ):
                 valid_loss = self._valid_epoch()
@@ -572,7 +579,12 @@ class Trainer:
         num_steps = 0
         loss_value_sum = 0
         if self.gpu_id == 0:
-            self.progress_bar.total = self.num_test_samples
+            test_progress_bar = tqdm(
+                total=self.num_test_samples,
+                desc="Testing",
+                position=1,
+                unit="samples",
+            )
 
         for batch in self.test_dl:
             batch_size = batch["batch_size"]
@@ -580,13 +592,13 @@ class Trainer:
             num_steps += 1
             loss_value_sum += loss_value
             if self.gpu_id == 0:
-                self.progress_bar.update(batch_size * self.world_size)
+                test_progress_bar.update(batch_size * self.world_size)
 
         test_loss = loss_value_sum / num_steps
         if self.gpu_id == 0:
             self.metrics_dict["test_loss"] = test_loss
-            self.progress_bar.set_postfix(self.metrics_dict)
-            self.progress_bar.reset()
+            test_progress_bar.set_postfix(self.metrics_dict)
+            test_progress_bar.close()
         return test_loss
 
     def _predict_epoch(self, output_dir) -> None:
@@ -785,13 +797,7 @@ class Trainer:
                     step=self.step,
                 )
 
-                if (
-                    self.save_every_n_epochs > 1
-                    and self.epoch % self.save_every_n_epochs == 0
-                ):
-                    self._save_checkpoint(valid_loss)
-                else:
-                    self._save_checkpoint(valid_loss)
+                self._save_checkpoint(valid_loss)
         logging.info(f"RANK {self.gpu_id}: Training finished")
         if self.gpu_id == 0:
             wandb.finish()
@@ -805,7 +811,8 @@ class Trainer:
         """
         Perform prediction on the given DataLoader on each device (GPU).
         There are three files which will be saved in the output_dir:
-            - ref.wrd.%d.trn: The reference transcriptions with the pattern "text (speaker-name)" for each sample, produced by device %d-1.
+            - ref.wrd.%d.trn: The reference transcriptions with the pattern
+              "text (speaker-name)" for each sample, produced by device %d-1.
             - output.%d.scp: The scp file of the log probabilities for each sample predicted by device %d-1.
             - output.%d.ark: The log probabilities for each sample predicted by device %d-1 in Kaldi's ark format.
         Note that the deivce ids are 0-based but the scp and ark files are 1-based.
@@ -863,8 +870,9 @@ class Trainer:
 
     def _exit(self):
         """
-        Clean up the distributed environment.
+        Clean up the distributed environment and stop training.
         """
         if self.gpu_id == 0:
-            self.progress_bar.close()
-        exit()
+            wandb.finish()
+        dist.destroy_process_group()
+        raise SystemExit(0)
