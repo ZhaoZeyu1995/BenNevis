@@ -16,22 +16,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-import numpy as np
 import whisper
-from BenNevis.utils.nets import lens2mask
+from BenNevis.utils.nets import lens2mask, sinusoids
 from typing import Optional
-
-
-def sinusoids(length, channels, max_timescale=10000):
-    """
-    Returns sinusoids for positional embedding
-    Note: this is copied from the original implementation of the whisper model.
-    """
-    assert channels % 2 == 0
-    log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-    inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2))
-    scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
-    return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
 
 def qkv_attention(
