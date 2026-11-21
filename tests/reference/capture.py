@@ -45,6 +45,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -82,31 +83,48 @@ LANG_FSTS = ("L.fst", "L_disambig.fst")
 GRAPH_FSTS = ("G.fst", "TLG.fst", "LG.fst")
 
 
-def find_fstprint() -> Optional[str]:
-    """
-    Locate `fstprint`, on PATH or inside the Kaldi tree.
+#: Where each Kaldi tool lives inside the tree, relative to KALDI_ROOT.
+TOOL_LOCATIONS = {
+    "fstprint": "tools/openfst/bin",
+    "copy-feats": "src/featbin",
+}
 
-    The Kaldi image has it, but only on the PATH that a recipe's `path.sh`
-    builds. A capture invoked directly -- as the nightly workflow does -- has
-    no such PATH, which is how the first captures came out without a single
-    FST in them: `shutil.which` found nothing and the code quietly carried
-    on. Looking under `KALDI_ROOT` as well makes the capture independent of
-    how it was invoked.
+
+def find_kaldi_tool(name: str) -> Optional[str]:
+    """
+    Locate a Kaldi tool, on PATH or inside the Kaldi tree.
+
+    The image has them, but only on the PATH that a recipe's `path.sh`
+    builds. A capture invoked directly -- as the nightly workflow does --
+    has no such PATH, which is how the first captures came out without a
+    single FST in them: `shutil.which` found nothing and the code quietly
+    carried on. Looking under `KALDI_ROOT` as well makes the capture
+    independent of how it was invoked.
+
+    Arguments
+    ---------
+    name: str
+        The tool, which must be one of TOOL_LOCATIONS.
 
     Returns
     -------
     Optional[str]
-        The path to fstprint, or None if it is nowhere to be found.
+        Its path, or None if it is nowhere to be found.
     """
-    found = shutil.which("fstprint")
+    found = shutil.which(name)
     if found:
         return found
 
     kaldi_root = os.environ.get("KALDI_ROOT", "/opt/kaldi")
-    candidate = Path(kaldi_root) / "tools" / "openfst" / "bin" / "fstprint"
+    candidate = Path(kaldi_root) / TOOL_LOCATIONS[name] / name
     if candidate.is_file() and os.access(candidate, os.X_OK):
         return str(candidate)
     return None
+
+
+def find_fstprint() -> Optional[str]:
+    """Locate `fstprint`; see `find_kaldi_tool`."""
+    return find_kaldi_tool("fstprint")
 
 
 def fstprint(binary: str, path: Path) -> Optional[bytes]:
@@ -140,14 +158,30 @@ def fstprint(binary: str, path: Path) -> Optional[bytes]:
     return completed.stdout
 
 
-def read_archive(scp: Path) -> Dict[str, "object"]:
+def read_archive(scp: Path, copy_feats: Optional[str] = None) -> Dict[str, "object"]:
     """
     Read a Kaldi feature archive referenced by an scp file.
+
+    With `copy_feats`, the archive is first rewritten uncompressed by Kaldi
+    itself and that copy is read instead. This is not a convenience: it is
+    what makes a bit-exact comparison possible at all.
+
+    `make_fbank_pitch.sh` writes compressed archives, and Kaldi's
+    `CompressedMatrix` quantises each column to 8 bits. Reading such an
+    archive with `kaldiio` gives *its* decompression, not Kaldi's, and the
+    two differ in the last few bits -- which is why the Python CMVN agreed
+    with `apply-cmvn` to 4e-6 rather than exactly, even with Kaldi's
+    algorithm reproduced operation for operation. Letting Kaldi decompress,
+    and reading the uncompressed result losslessly, removes the round trip
+    from the comparison.
 
     Arguments
     ---------
     scp: Path
         An scp mapping utterance ids to archive offsets.
+    copy_feats: Optional[str]
+        The `copy-feats` executable. None reads the archive directly, which
+        is lossless for an uncompressed one.
 
     Returns
     -------
@@ -156,7 +190,23 @@ def read_archive(scp: Path) -> Dict[str, "object"]:
     """
     import kaldiio
 
-    return {key: value for key, value in kaldiio.load_scp_sequential(str(scp))}
+    if copy_feats is None:
+        return {key: value for key, value in kaldiio.load_scp_sequential(str(scp))}
+
+    with tempfile.TemporaryDirectory() as workspace:
+        plain = Path(workspace) / "plain.ark"
+        subprocess.run(
+            [
+                copy_feats,
+                "--compress=false",
+                f"scp:{scp}",
+                f"ark:{plain}",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return {key: value for key, value in kaldiio.load_ark(str(plain))}
 
 
 def store(manifest: Manifest, destination: Path, relative: str, payload: bytes) -> None:
@@ -237,7 +287,11 @@ def capture_language(
 
 
 def capture_features(
-    manifest: Manifest, recipe: Path, destination: Path, datasets: List[str]
+    manifest: Manifest,
+    recipe: Path,
+    destination: Path,
+    datasets: List[str],
+    copy_feats: Optional[str] = None,
 ) -> None:
     """
     Capture feature matrices and CMVN statistics.
@@ -255,6 +309,10 @@ def capture_features(
         The capture directory.
     datasets: List[str]
         The data directories to capture.
+    copy_feats: Optional[str]
+        The `copy-feats` executable, used to have Kaldi decompress its own
+        archives; see `read_archive`. None reads them with kaldiio, which is
+        lossless only for an uncompressed archive.
     """
     import numpy as np
 
@@ -272,7 +330,7 @@ def capture_features(
                 sys.stderr.write(f"capture: no {scp}, skipping {kind}\n")
                 continue
 
-            features = read_archive(scp)
+            features = read_archive(scp, copy_feats=copy_feats)
             keys = sorted(features)
 
             whole = keys[:FULL_FEATURE_UTTERANCES]
@@ -299,6 +357,9 @@ def capture_features(
 
         cmvn = data / "cmvn.scp"
         if cmvn.is_file():
+            # Statistics are double and never compressed, so they are read
+            # directly: passing them through copy-feats would narrow them to
+            # float and lose the precision the whole normaliser rests on.
             stats = read_archive(cmvn)
             arrays = {key: np.asarray(value) for key, value in stats.items()}
             relative = f"cmvn/{dataset}.npz"
@@ -468,11 +529,17 @@ def main(argv=None) -> int:
             f"{FULL_FEATURE_UTTERANCES} feature matrices per data set are "
             "stored whole; the rest are statistics, because every matrix "
             "would be megabytes and buy nothing over a handful.",
+            "Feature archives are rewritten uncompressed by Kaldi's own "
+            "copy-feats before being read, so the values are the ones Kaldi "
+            "worked with rather than another decompression of them. Without "
+            "that, a comparison cannot be better than about 4e-6.",
         ],
     )
 
     capture_language(manifest, recipe, out, topologies, printer)
-    capture_features(manifest, recipe, out, args.datasets)
+    capture_features(
+        manifest, recipe, out, args.datasets, copy_feats=find_kaldi_tool("copy-feats")
+    )
     capture_transcriptions(
         manifest,
         recipe,
