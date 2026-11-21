@@ -258,6 +258,10 @@ def trainer_factory(process_group, model_factory, tmp_path):
             opts = [torch.optim.SGD(model.parameters(), lr=0.1)]
         kwargs.setdefault("loss_func", StubLoss("mean"))
         kwargs.setdefault("exp_dir", str(tmp_path / "exp"))
+        # Stated rather than detected, so these tests behave identically on a
+        # CUDA box, an Apple machine and a CPU-only CI runner. Tests that care
+        # about the detection itself pass their own device or override this.
+        kwargs.setdefault("device", torch.device("cpu"))
         return Trainer(
             model=model,
             optimizers=opts,

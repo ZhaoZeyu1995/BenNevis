@@ -19,6 +19,9 @@ Arguments:
         The batch size for the prediction dataloader, by default 4.
     --num_workers: int
         The number of workers for the prediction dataloader, by default 4.
+    --device: str
+        The device to predict on, such as "cuda", "cuda:1", "mps" or "cpu".
+        By default the best available device is detected.
 Example:
     torchrun --standalone --nproc_per_node=4 predict.py /path/to/data /path/to/lang /path/to/ckpt /path/to/output --not_pin_memory --batch_size 4 --num_workers 4
 
@@ -36,21 +39,29 @@ from omegaconf import OmegaConf
 from BenNevis.core.dataset import Dataset, CollateFunc
 from BenNevis.core.trainer import Trainer
 from BenNevis.utils.misc import dynamic_import
+from BenNevis.utils.platform import (
+    describe_platform,
+    resolve_device,
+    resolve_dist_backend,
+)
 
 
 def main(args):
-    dist.init_process_group(backend="nccl")
     # LOCAL_RANK is the device index within the node; RANK is the global
     # index and only coincides with it on a single node. Selecting a device by
     # global rank picks a nonexistent one on multi-node runs.
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
+    # Chosen before the process group is initialised, since it determines the
+    # backend. NCCL is CUDA-only; gloo is the only option elsewhere.
+    device = resolve_device(args.device, local_rank=local_rank, allow_mps=False)
+    if device.type == "cuda":
+        torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend=resolve_dist_backend(device))
     gpu_id = dist.get_rank()
     world_size = dist.get_world_size()
-    if torch.cuda.is_available():
-        torch.cuda.set_device(local_rank)
-        device = torch.device("cuda", local_rank)
-    else:
-        device = torch.device("cpu")
+    if local_rank == 0:
+        logging.info(f"Platform: {describe_platform()}")
+        logging.info(f"Predicting on device {device}")
 
     ckpt = torch.load(args.ckpt_path, map_location="cpu", weights_only=True)
     # The checkpoint stores the configuration as YAML text so that it loads
@@ -86,6 +97,7 @@ def main(args):
 
     trainer = Trainer(
         model,
+        device=device,
     )
 
     trainer.predict(
@@ -158,6 +170,15 @@ if __name__ == "__main__":
         type=int,
         default=4,
         help="The number of workers for the prediction dataloader",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help=(
+            "The device to predict on, such as 'cuda', 'cuda:1', 'mps' or "
+            "'cpu'. By default the best available device is detected."
+        ),
     )
     args = parser.parse_args()
 

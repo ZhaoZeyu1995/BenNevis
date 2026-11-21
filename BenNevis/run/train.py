@@ -38,6 +38,11 @@ from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
 from BenNevis.core.trainer import Trainer
 from BenNevis.utils.random import setup_seed
 from BenNevis.utils.misc import dynamic_import
+from BenNevis.utils.platform import (
+    describe_platform,
+    resolve_device,
+    resolve_dist_backend,
+)
 
 
 def get_opt(
@@ -224,16 +229,25 @@ def get_dl(
 )
 def main(cfg):
     setup_seed(1368)
-    dist.init_process_group(backend="nccl")
     # LOCAL_RANK is the device index within the node; RANK is the global
     # index and only coincides with it on a single node. Selecting a device by
     # global rank picks a nonexistent one on multi-node runs.
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", 0)))
-    if torch.cuda.is_available():
+    # The device is chosen before the process group is initialised, because it
+    # determines the backend: NCCL is CUDA-only, and gloo is the only option
+    # on macOS and Windows. `cfg.device` overrides the detection, and an
+    # unavailable request raises rather than silently downgrading.
+    device = resolve_device(
+        getattr(cfg, "device", None),
+        local_rank=local_rank,
+        allow_mps=False,
+    )
+    if device.type == "cuda":
         torch.cuda.set_device(local_rank)
-        device = torch.device("cuda", local_rank)
-    else:
-        device = torch.device("cpu")
+    dist.init_process_group(backend=resolve_dist_backend(device))
+    if local_rank == 0:
+        logging.info(f"Platform: {describe_platform()}")
+        logging.info(f"Training on device {device}")
 
     lang = Lang(cfg.data["lang"], load_topo=True, load_lexicon=True)
 
@@ -286,6 +300,7 @@ def main(cfg):
         loss_func=loss,
         **cfg.trainer,
         config=cfg,
+        device=device,
     )
 
     trainer.fit(

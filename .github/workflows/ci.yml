@@ -41,14 +41,25 @@ jobs:
   # These tests import nothing heavier than the standard library, so they need
   # no dependencies at all.
   test-tier1:
-    name: Tier 1 tests (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Tier 1 tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # The Python version is swept on Linux, where it is cheapest, and the
+      # other two platforms are covered at a single version. Sweeping both
+      # axes would be twelve jobs to catch almost nothing: a version-specific
+      # break is rarely also platform-specific.
+      #
       # 3.8 and 3.9 are both end-of-life and no longer available on current
       # GitHub runners. The floor is whatever torch and k2 publish wheels for.
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,8 +75,12 @@ jobs:
   # tier 1 so that the dependency-free tests stay instant and cannot be held
   # up by a ~200MB wheel download.
   test-torch:
-    name: Tier 1b tests (torch)
-    runs-on: ubuntu-latest
+    name: Tier 1b tests (torch, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,9 +91,19 @@ jobs:
       # larger CUDA build from PyPI. The rest comes from pyproject's declared
       # dependencies rather than a list maintained separately here; k2 is not
       # among them and is not needed, because nothing in this tier imports it.
+      #
+      # The CPU index carries no macOS wheels, because the macOS build has no
+      # CUDA variant to distinguish it from; PyPI's default wheel is already
+      # the right one there.
       - name: Install torch (CPU) and the package
+        shell: bash
         run: |
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            pip install torch torchaudio
+          else
+            pip install torch torchaudio \
+              --index-url https://download.pytorch.org/whl/cpu
+          fi
           pip install -e .
           pip install pytest
       - name: Run tier 1b
@@ -88,8 +113,16 @@ jobs:
   # come from k2's own index, not PyPI, so both are pinned together here and
   # must be bumped together. Still CPU-only and still free.
   test-k2:
-    name: Tier 2 tests (k2)
-    runs-on: ubuntu-latest
+    name: Tier 2 tests (k2, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # k2 publishes cp312 CPU wheels for all three platforms at this exact
+      # torch version -- manylinux x86_64, macosx_11_0_arm64 and win_amd64 --
+      # so the FST tier is not Linux-only. Check the index before bumping the
+      # pin: a newer build may not cover every platform on the day.
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -97,8 +130,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install torch (CPU) pinned to the k2 wheel
+        shell: bash
         run: |
-          pip install torch==2.15.0 torchaudio --index-url https://download.pytorch.org/whl/cpu
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            pip install torch==2.15.0 torchaudio
+          else
+            pip install torch==2.15.0 torchaudio \
+              --index-url https://download.pytorch.org/whl/cpu
+          fi
       - name: Install k2 (CPU wheel matching torch 2.15.0)
         run: |
           pip install k2==1.24.4.dev20261112+cpu.torch2.15.0 \

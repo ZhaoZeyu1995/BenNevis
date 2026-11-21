@@ -88,6 +88,44 @@ A test that only asserts a module imports, or that passes whether or not the
 code under test raises, is not a test. Pin behaviour: exact arc sets for
 topologies, numerical agreement for losses and features.
 
+## Platforms and devices
+
+The library runs on Linux, macOS and Windows; the **recipes do not**. `egs/`
+is 53 bash scripts and 5 Perl scripts driving Kaldi and OpenFST, so recipes
+are Linux and macOS only. Windows support for them is an *outcome* of the
+Pythonisation (goal 2), not a separate piece of work, and is not claimed until
+Kaldi has left the dependency graph.
+
+Device selection goes through `BenNevis.utils.platform`, never through
+`torch.device(rank)` or a bare `torch.cuda.is_available()` check. The
+preference order is CUDA, then MPS, then the CPU, and every choice other than
+CUDA warns once about what it costs. An *explicitly requested* device that is
+unavailable raises instead of downgrading silently: a run that asked for CUDA
+and quietly got the CPU would waste hours before anyone noticed.
+
+These limits were measured, not assumed:
+
+| Constraint | Consequence |
+| --- | --- |
+| k2 has no MPS backend (`.to("mps")` asserts) | the graph loss runs on the CPU |
+| MPS has no float64, and `use_double_scores=True` must stay | likewise |
+| DDP cannot wrap an MPS module (`c10d::allgather_` unimplemented) | MPS is single-process only, and is not auto-selected while `Trainer` wraps DDP unconditionally |
+| NCCL is CUDA-only | every other device uses gloo, the only backend on Windows |
+| Windows symlinks need admin or developer mode | `best.pt` is a symlink where possible and a copy where not |
+
+Cross-device autograd does work: an MPS forward, a `.cpu()` hop and a CPU k2
+numerator backpropagate correctly to the MPS parameters. MPS is for
+development, not for speed -- every step copies the log probabilities across
+devices and synchronises.
+
+CI runs tiers 1, 1b and 2 on `ubuntu-latest`, `macos-latest` and
+`windows-latest`. k2 publishes cp312 CPU wheels for all three at the pinned
+torch version, so the FST tier is not Linux-only; **check the index before
+bumping the pin**, since a newer build may not cover every platform on the
+day. Tests must therefore not assume POSIX: no shell pipelines, no `os.popen`,
+no hardcoded `/tmp`, and `subprocess` only via `sys.executable` with an
+argument list.
+
 ## Equivalence and tolerances
 
 The Python migration is gated on reproducing current behaviour, with
@@ -132,3 +170,10 @@ test tier and for cloud runs.
   rank.
 - Topology FSTs and `tokens.txt` must stay consistent — the topology
   determines the neural network's output vocabulary.
+- **The remaining POSIX-only sites are deliberate.** `Lang.load_topo` and
+  `Lang.load_lexicon` shell out to `fstprint | awk`; both disappear with the
+  declarative topology rewrite, which builds the FSA in Python, so they are
+  not worth making portable first. `run/predict.py`'s `cat | awk` merge and
+  `run/align.py`'s `gzip -c` pipe are portable in a few lines of Python each,
+  but the entry-point scripts have no test coverage, so they wait for tier 3
+  rather than being changed blind.
