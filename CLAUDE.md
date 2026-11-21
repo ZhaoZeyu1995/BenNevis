@@ -313,6 +313,14 @@ workflow changes.
   rather than being changed blind. `Lang.load_topo` keeps a `fstprint`
   *fallback* for a language directory prepared before `k2/topo.yaml` existed;
   it warns, and no new directory takes that path.
+- **Recipe configs rot against torch.** `ReduceLROnPlateau` lost `verbose`,
+  and all four recipes passed it, so every one was broken against current
+  torch while every test passed — the first real tier 3 run died there.
+  `tests/recipes/test_recipe_configs.py` now compares each configured
+  optimiser and scheduler against the installed signature, in under a second,
+  so this class of rot is caught without a recipe run. It checks that an
+  argument *exists*, not that its value is sensible: a nonexistent argument is
+  a defect, a wrong learning rate is a research decision.
 - **`egs/yesno/asr` assigns every utterance one speaker.** `prepare_data.sh`
   writes `global` for all of them, and Kaldi's `split_scp.pl` refuses to split
   data into more parts than there are speakers, so the recipe could not get
