@@ -20,6 +20,7 @@ Authors:
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,18 @@ pytestmark = pytest.mark.torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
+
+# Locating an executable is POSIX-shaped: `shutil.which` on Windows wants a
+# PATHEXT extension, `os.access(..., X_OK)` is meaningless there because
+# Windows has no execute bit, and a `#!` line does not run a file. None of
+# that is a defect in the capture, which runs only inside the Linux Kaldi
+# image -- the recipes are Linux and macOS only (see CLAUDE.md). The tests
+# that do not depend on those semantics still run everywhere.
+posix_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="locating and running an executable this way is POSIX-only; the "
+    "capture runs in the Linux image",
+)
 
 import capture  # noqa: E402
 
@@ -102,7 +115,13 @@ def recipe(tmp_path):
 
 
 def run(recipe_dir, destination, *extra):
-    """Run the capture and return its exit status."""
+    """
+    Run the capture and return its exit status.
+
+    `--allow-no-fstprint` because the synthetic recipe has no compiled FSTs
+    and this machine need not have OpenFST. The requirement itself is tested
+    in TestFstprint, which is where it belongs.
+    """
     return capture.main(
         [
             str(recipe_dir),
@@ -112,6 +131,7 @@ def run(recipe_dir, destination, *extra):
             "--datasets",
             "train_yesno",
             "test_yesno",
+            "--allow-no-fstprint",
             *extra,
         ]
     )
@@ -339,3 +359,139 @@ class TestRobustness:
             return payload
 
         assert without_date(first) == without_date(second)
+
+
+class TestFstprint:
+    """
+    Finding fstprint, and refusing to produce a capture without it.
+
+    The first two real captures came out with no FSTs at all: fstprint is in
+    the Kaldi image but only on the PATH a recipe's path.sh builds, and the
+    capture is invoked directly. `shutil.which` found nothing and the code
+    carried on quietly, which is how an incomplete reference nearly got
+    committed.
+    """
+
+    @posix_only
+    def test_it_is_found_on_the_path(self, tmp_path, monkeypatch):
+        fake = tmp_path / "bin"
+        fake.mkdir()
+        (fake / "fstprint").write_text("#!/bin/sh\necho\n")
+        (fake / "fstprint").chmod(0o755)
+        monkeypatch.setenv("PATH", str(fake), prepend=False)
+        assert capture.find_fstprint() == str(fake / "fstprint")
+
+    @posix_only
+    def test_it_is_found_under_kaldi_root(self, tmp_path, monkeypatch):
+        """The case that matters: no PATH, but a Kaldi tree to look in."""
+        root = tmp_path / "kaldi"
+        binary = root / "tools" / "openfst" / "bin" / "fstprint"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\necho\n")
+        binary.chmod(0o755)
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("KALDI_ROOT", str(root))
+        assert capture.find_fstprint() == str(binary)
+
+    @posix_only
+    def test_a_non_executable_candidate_is_not_used(self, tmp_path, monkeypatch):
+        root = tmp_path / "kaldi"
+        binary = root / "tools" / "openfst" / "bin" / "fstprint"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("not executable")
+        binary.chmod(0o644)
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("KALDI_ROOT", str(root))
+        assert capture.find_fstprint() is None
+
+    def test_missing_fstprint_is_an_error_by_default(
+        self, recipe, tmp_path, monkeypatch
+    ):
+        """
+        Not a warning. A capture without the lexicon and graph FSTs cannot
+        gate the work it exists for, so it must not look like a success.
+        """
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("KALDI_ROOT", str(tmp_path / "no-kaldi"))
+        status = capture.main([str(recipe), str(tmp_path / "out"), "--corpus", "yesno"])
+        assert status == 1
+
+    def test_missing_fstprint_can_be_allowed_explicitly(
+        self, recipe, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("KALDI_ROOT", str(tmp_path / "no-kaldi"))
+        assert run(recipe, tmp_path / "out") == 0
+
+    @posix_only
+    def test_the_fsts_are_captured_when_fstprint_works(
+        self, recipe, tmp_path, monkeypatch
+    ):
+        """
+        End to end with a stand-in fstprint, so the wiring from "found the
+        binary" to "the manifest has the FST" is exercised rather than
+        assumed.
+        """
+        import sys as _sys
+
+        lang = recipe / "data" / "lang"
+        (lang / "L.fst").write_bytes(b"binary")
+        (lang / "L_disambig.fst").write_bytes(b"binary")
+        for topology in TOPOLOGIES:
+            graph = recipe / "data" / f"lang_test_tg_{topology}"
+            for name in ("G.fst", "TLG.fst", "LG.fst"):
+                (graph / name).write_bytes(b"binary")
+
+        fake = tmp_path / "bin"
+        fake.mkdir()
+        printer = fake / "fstprint"
+        # Prints a one-arc FST, whatever it is given, so the captured text is
+        # recognisable and the same for every input.
+        printer.write_text(
+            f"#!{_sys.executable}\n" "print('0 1 2 3 0.0')\n" "print('1')\n"
+        )
+        printer.chmod(0o755)
+        monkeypatch.setenv("PATH", str(fake))
+
+        destination = tmp_path / "out"
+        status = capture.main(
+            [
+                str(recipe),
+                str(destination),
+                "--corpus",
+                "yesno",
+                "--datasets",
+                "train_yesno",
+                "test_yesno",
+            ]
+        )
+        assert status == 0
+
+        out = destination / "yesno"
+        manifest = Manifest.read(out / MANIFEST_NAME)
+        assert "lang/L.fst.txt" in manifest.exact
+        assert "lang/L_disambig.fst.txt" in manifest.exact
+        for topology in TOPOLOGIES:
+            assert f"graph/{topology}/TLG.fst.txt" in manifest.exact
+        assert (out / "lang" / "L.fst.txt").read_text() == "0 1 2 3 0.0\n1\n"
+
+    @posix_only
+    def test_an_expected_fst_that_never_got_built_is_an_error(
+        self, recipe, tmp_path, monkeypatch
+    ):
+        """
+        fstprint present, but the recipe produced no L.fst. Reporting
+        success here would commit a reference with nothing to compare the
+        lexicon against.
+        """
+        import sys as _sys
+
+        fake = tmp_path / "bin"
+        fake.mkdir()
+        printer = fake / "fstprint"
+        printer.write_text(f"#!{_sys.executable}\nprint('0')\n")
+        printer.chmod(0o755)
+        monkeypatch.setenv("PATH", str(fake))
+
+        status = capture.main([str(recipe), str(tmp_path / "out"), "--corpus", "yesno"])
+        assert status == 1
