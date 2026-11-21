@@ -1,9 +1,8 @@
 name: Docker image
 
-# The Kaldi-dependent test tier needs a Kaldi build, which takes most of an
-# hour to compile. Building it on every push would be absurd, so the image is
-# built only when its own definition changes, and the nightly recipe job
-# pulls the published result.
+# The Kaldi-dependent test tier needs Kaldi, which this image derives from
+# the Kaldi project's own prebuilt one. Built only when its own definition
+# changes; the nightly recipe job pulls the published result.
 on:
   push:
     branches: [master]
@@ -28,10 +27,10 @@ jobs:
   build:
     name: Build the Kaldi image
     runs-on: ubuntu-latest
-    # Compiling Kaldi takes about 45 minutes on a runner; the ceiling is set
-    # above that so a slow day does not look like a hang, and well under the
-    # six-hour limit so a genuine hang still fails.
-    timeout-minutes: 150
+    # Kaldi arrives prebuilt, so this is a pull plus a pip install. The
+    # ceiling allows for a slow registry without letting a hang run for
+    # hours.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -71,9 +70,8 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
-          # The Kaldi layers are the whole cost, and they change only when the
-          # pinned commit does, so a layer cache turns a rebuild for a changed
-          # dependency list into a couple of minutes.
+          # The torch and k2 wheels are the bulk of the build, and they
+          # change only when their pins do.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

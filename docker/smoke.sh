@@ -14,6 +14,11 @@ set -uo pipefail
 
 kaldi_root="${KALDI_ROOT:-/opt/kaldi}"
 
+if [ ! -f "$kaldi_root/tools/config/common_path.sh" ]; then
+    echo "smoke: no Kaldi at $kaldi_root" >&2
+    exit 1
+fi
+
 # Kaldi binaries, by the stage that needs them.
 binaries=(
     # feature extraction and CMVN
@@ -46,6 +51,9 @@ sctk_binaries=(sclite)
 # Kaldi's shell and Perl helpers, reached through path.sh and the utils and
 # steps symlinks in a recipe directory.
 scripts=(
+    # Sourced by every recipe's path.sh, which exits if it is absent, so its
+    # absence would break every single stage.
+    "$kaldi_root/tools/config/common_path.sh"
     "$kaldi_root/egs/wsj/s5/utils/parse_options.sh"
     "$kaldi_root/egs/wsj/s5/utils/prepare_lang.sh"
     "$kaldi_root/egs/wsj/s5/utils/split_data.sh"
@@ -73,8 +81,14 @@ report() {
     fi
 }
 
-export PATH="$kaldi_root/src/featbin:$kaldi_root/src/bin:$kaldi_root/src/fstbin:$PATH"
-export PATH="$kaldi_root/src/latbin:$kaldi_root/src/gmmbin:$PATH"
+# Exactly the PATH a recipe gets, rather than one assembled here: every
+# recipe's path.sh sources this same file, so the binaries are looked for
+# where they will actually be looked for. Building the list by hand got
+# arpa2fst wrong -- it lives in src/lmbin, not src/bin -- and reported a
+# complete image as broken.
+export KALDI_ROOT="$kaldi_root"
+# shellcheck source=/dev/null
+. "$kaldi_root/tools/config/common_path.sh"
 export PATH="$kaldi_root/tools/openfst/bin:$kaldi_root/tools/sctk/bin:$PATH"
 
 echo "Kaldi binaries:"
