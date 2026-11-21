@@ -173,9 +173,15 @@ class TestTheCheckItself:
         check(Anything, {"whatever": 1}, "synthetic")
 
     def test_the_message_names_the_torch_version(self):
+        import re
+
         import torch
 
-        with pytest.raises(AssertionError, match=torch.__version__):
+        # Escaped: `match` is a regular expression, and a CPU wheel reports
+        # "2.15.0+cpu", whose `+` is a quantifier. The message was right and
+        # the pattern was wrong -- it passed locally on a build whose version
+        # happens to contain no metacharacters.
+        with pytest.raises(AssertionError, match=re.escape(torch.__version__)):
             check(
                 torch.optim.lr_scheduler.ReduceLROnPlateau,
                 {"verbose": True},
