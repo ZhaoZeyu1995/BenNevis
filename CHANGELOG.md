@@ -21,6 +21,13 @@ Notable changes to BenNevis. This project follows
   configuration found in the checkpoint, which silently discarded changes made
   when resuming, such as a different `max_epochs`. The checkpoint's
   configuration is kept as `self.ckpt_config` for provenance.
+- `BenNevis/core/trainer.py` no longer requires `k2` to be imported. It
+  referred to `GraphLoss` only in a type annotation, but imported it eagerly,
+  so `BenNevis.core.losses` -- and therefore k2 -- was pulled in just to
+  import the trainer. The import is now guarded by `TYPE_CHECKING`. This
+  matters beyond tidiness: the k2 wheel is tied to an exact torch version, so
+  needing it to import the trainer made the trainer untestable anywhere k2 is
+  not installed.
 - `BenNevis/models/transformer.py` no longer requires `openai-whisper`. It
   imported `sinusoids` from `BenNevis/models/whisper.py`, which imports the
   `whisper` package at module scope, so the Transformer model could not be

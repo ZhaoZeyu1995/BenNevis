@@ -72,10 +72,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install torch (CPU) and test dependencies
+      # CPU torch first, so installing the package does not pull the much
+      # larger CUDA build from PyPI. The rest comes from pyproject's declared
+      # dependencies rather than a list maintained separately here; k2 is not
+      # among them and is not needed, because nothing in this tier imports it.
+      - name: Install torch (CPU) and the package
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install pytest omegaconf
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+          pip install pytest
       - name: Run tier 1b
         run: pytest tests/ -v -m "torch and not k2 and not kaldi and not gpu"
 

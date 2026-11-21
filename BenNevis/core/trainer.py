@@ -18,13 +18,18 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import logging
 import wandb
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from tqdm import tqdm
 from torchinfo import summary
 from kaldiio import WriteHelper
 from omegaconf import OmegaConf
-from BenNevis.core.losses import GraphLoss
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
+
+if TYPE_CHECKING:
+    # Imported for typing only. BenNevis.core.losses imports k2, and the
+    # Trainer itself never touches it, so importing it eagerly would make k2 a
+    # requirement just to import this module.
+    from BenNevis.core.losses import GraphLoss
 
 
 class Trainer:
@@ -74,7 +79,7 @@ class Trainer:
         model: torch.nn.Module,
         optimizers: Optional[List[torch.optim.Optimizer]] = None,
         schedulers: Optional[List[torch.optim.lr_scheduler._LRScheduler]] = None,
-        loss_func: Optional[GraphLoss] = None,
+        loss_func: Optional["GraphLoss"] = None,
         exp_dir: Optional[str] = None,
         save_every_n_epochs: Optional[float] = 1.0,
         save_every_n_steps: Optional[int] = None,

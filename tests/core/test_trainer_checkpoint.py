@@ -180,3 +180,12 @@ class TestLoadWeights:
             stub.model.weight, torch.full_like(stub.model.weight, 99.0)
         ), "weights were not replaced"
         assert not hasattr(stub, "epoch"), "_load_weights must not restore progress"
+
+
+def test_trainer_does_not_require_k2(import_without):
+    """
+    Trainer only mentions GraphLoss in a type annotation, so k2 must not be
+    needed to import it. Keeping it out means the trainer can be tested
+    without the k2 wheel, which is tied to an exact torch version.
+    """
+    import_without("BenNevis.core.trainer", "k2")

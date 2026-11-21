@@ -12,10 +12,6 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
-import subprocess
-import sys
-import textwrap
-
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -75,37 +71,9 @@ class TestSinusoids:
         assert torch.equal(short, long[:100])
 
 
-def test_transformer_does_not_require_the_whisper_package():
+def test_transformer_does_not_require_the_whisper_package(import_without):
     """
-    Import BenNevis.models.transformer in a subprocess where importing
-    `whisper` is made to fail, proving the Transformer model no longer depends
-    on openai-whisper. Run out of process so the block cannot leak into the
-    rest of the session's import state.
+    The Transformer model has no relationship to Whisper and must not inherit
+    a dependency on it for the sake of one positional-embedding function.
     """
-    script = textwrap.dedent(
-        """
-        import sys
-
-        class Blocker:
-            def find_module(self, name, path=None):
-                return self if name == "whisper" else None
-
-            def find_spec(self, name, path=None, target=None):
-                if name == "whisper":
-                    raise ImportError("blocked by test: whisper must not be needed")
-                return None
-
-        sys.meta_path.insert(0, Blocker())
-        import BenNevis.models.transformer  # noqa: F401
-        assert "whisper" not in sys.modules, "whisper was imported after all"
-        print("OK")
-        """
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True
-    )
-    assert result.returncode == 0, (
-        "importing BenNevis.models.transformer without the whisper package "
-        f"failed:\n{result.stderr}"
-    )
-    assert "OK" in result.stdout
+    import_without("BenNevis.models.transformer", "whisper")
