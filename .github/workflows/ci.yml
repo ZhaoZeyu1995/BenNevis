@@ -30,14 +30,14 @@ jobs:
       - name: Install linters
         run: pip install black==24.10.0 isort==5.13.2 flake8==7.1.1
       - name: black
-        run: black --check --diff --line-length=88 BenNevis/ tests/
-      # Scoped to tests/ for now: BenNevis/ has never been isorted, and doing it
-      # here would bury this change under an import reshuffle of the whole
-      # package. It gets its own deliberate PR.
+        run: black --check --diff --line-length=88 BenNevis/ tests/ docker/
+      # Scoped to tests/ and docker/ for now: BenNevis/ has never been
+      # isorted, and doing it here would bury this change under an import
+      # reshuffle of the whole package. It gets its own deliberate PR.
       - name: isort
-        run: isort --check --diff --profile=black --line-length=88 tests/
+        run: isort --check --diff --profile=black --line-length=88 tests/ docker/
       - name: flake8
-        run: flake8 BenNevis/ tests/
+        run: flake8 BenNevis/ tests/ docker/
 
   # Tier 1: no k2, no Kaldi, no GPU. Runs on every push and must stay fast.
   # These tests import nothing heavier than the standard library, so they need
