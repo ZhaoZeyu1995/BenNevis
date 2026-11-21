@@ -56,20 +56,59 @@ class TestShape:
         """
         assert sum(ledger["utterances"].values()) == 60
 
-    def test_every_entry_has_both_numbers(self, ledger):
+    def test_every_entry_has_its_numbers(self, ledger):
+        expected = {
+            "reference_wer",
+            "measured_wer",
+            "measured_errors",
+            "max_wer",
+        }
         for name, entry in ledger["topologies"].items():
-            assert set(entry) == {"reference_wer", "max_wer"}, name
-            assert isinstance(entry["reference_wer"], (int, float)), name
-            assert isinstance(entry["max_wer"], (int, float)), name
+            assert set(entry) == expected, name
+            for key in expected:
+                assert isinstance(entry[key], (int, float)), f"{name}.{key}"
 
-    def test_the_gate_is_not_below_the_reference(self, ledger):
+    def test_the_gate_is_above_what_was_measured(self, ledger):
         """
-        A gate under the published number would fail on a correct run, which
+        A gate below the recorded run would fail on a correct one, which
         trains everyone to raise it -- the one thing that must not happen to
         a ledger.
         """
         for name, entry in ledger["topologies"].items():
-            assert entry["max_wer"] >= entry["reference_wer"], name
+            assert entry["max_wer"] > entry["measured_wer"], name
+
+    def test_the_measured_value_agrees_with_its_error_count(self, ledger):
+        """
+        The two are the same fact twice. If they disagree, one was edited by
+        hand.
+        """
+        words = ledger["reference_words"]
+        for name, entry in ledger["topologies"].items():
+            implied = 100.0 * entry["measured_errors"] / words
+            assert abs(entry["measured_wer"] - implied) < 0.01, name
+
+    def test_the_measurement_records_where_it_came_from(self, ledger):
+        """
+        A number with no provenance cannot be reproduced or doubted.
+        """
+        measured = ledger["measured"]
+        for key in ("run", "date", "image"):
+            assert measured.get(key), key
+        assert "@sha256:" in measured["image"]
+
+    def test_the_measurement_is_close_to_the_published_result(self, ledger):
+        """
+        The point of the exercise: this repository still reproduces the
+        author's pre-refactor numbers. Three word errors of latitude, across
+        a change of device, torch version and most of the toolkit.
+        """
+        allowance = 3 * 100.0 / ledger["reference_words"]
+        for name, entry in ledger["topologies"].items():
+            drift = abs(entry["measured_wer"] - entry["reference_wer"])
+            assert drift <= allowance, (
+                f"{name}: measured {entry['measured_wer']}% against the "
+                f"published {entry['reference_wer']}%"
+            )
 
     def test_the_gate_is_not_absurdly_loose(self, ledger):
         """

@@ -3,18 +3,19 @@
     "The baseline WER ledger for egs/yesno/asr.",
     "",
     "reference_wer is the number in egs/yesno/asr/README.md, measured by the",
-    "author on CUDA with torch 2.1 and sclite. The recipe tier runs on CPU",
-    "with a newer torch, so the two are not expected to agree exactly, and",
-    "max_wer is the gate: a run above it fails, a run below it does not.",
+    "author on CUDA with torch 2.1. measured_wer is what this repository",
+    "produces now, on CPU with torch 2.15, recorded from the run named under",
+    "`measured`. max_wer is the gate.",
     "",
-    "The gate is deliberately loose to begin with. test_yesno has 232",
-    "reference words, so one word error is 0.43%, and a 1.5% allowance is",
-    "about three word errors. Tighten these once several real runs have been",
-    "recorded; a gate nobody has seen pass is not yet a baseline.",
+    "The gate is measured_wer plus three word errors. test_yesno has 232",
+    "reference words, so one word error is 0.43%: the allowance absorbs a",
+    "different runner's floating-point rounding without admitting a real",
+    "regression, which on this corpus means tens of percent rather than",
+    "fractions of one.",
     "",
-    "Judge a change against reference_wer and tighten max_wer deliberately.",
-    "Raising max_wer to make a run pass is how a ledger stops meaning",
-    "anything.",
+    "Judge a change against measured_wer. **Raising max_wer to make a run",
+    "pass is how a ledger stops meaning anything** -- if a run exceeds the",
+    "gate, find out why.",
     "",
     "utterances pins the data split. It is 31/29 rather than an even 30/30",
     "because that is the split the published results were measured on: it",
@@ -32,13 +33,59 @@
   },
   "reference_source": "egs/yesno/asr/README.md, pre-refactor CUDA run",
   "topologies": {
-    "ctc": { "reference_wer": 0.0, "max_wer": 1.5 },
-    "mmictc": { "reference_wer": 0.4, "max_wer": 1.9 },
-    "mmictc-1": { "reference_wer": 0.9, "max_wer": 2.4 },
-    "2state": { "reference_wer": 0.0, "max_wer": 1.5 },
-    "2state-1": { "reference_wer": 0.9, "max_wer": 2.4 },
-    "3state-skip": { "reference_wer": 0.0, "max_wer": 1.5 },
-    "3state-skip-1": { "reference_wer": 0.4, "max_wer": 1.9 },
-    "3state-skip-2": { "reference_wer": 0.4, "max_wer": 1.9 }
+    "ctc": {
+      "reference_wer": 0.0,
+      "max_wer": 1.29,
+      "measured_wer": 0.0,
+      "measured_errors": 0
+    },
+    "mmictc": {
+      "reference_wer": 0.4,
+      "max_wer": 2.15,
+      "measured_wer": 0.86,
+      "measured_errors": 2
+    },
+    "mmictc-1": {
+      "reference_wer": 0.9,
+      "max_wer": 2.15,
+      "measured_wer": 0.86,
+      "measured_errors": 2
+    },
+    "2state": {
+      "reference_wer": 0.0,
+      "max_wer": 1.72,
+      "measured_wer": 0.43,
+      "measured_errors": 1
+    },
+    "2state-1": {
+      "reference_wer": 0.9,
+      "max_wer": 1.29,
+      "measured_wer": 0.0,
+      "measured_errors": 0
+    },
+    "3state-skip": {
+      "reference_wer": 0.0,
+      "max_wer": 1.29,
+      "measured_wer": 0.0,
+      "measured_errors": 0
+    },
+    "3state-skip-1": {
+      "reference_wer": 0.4,
+      "max_wer": 1.72,
+      "measured_wer": 0.43,
+      "measured_errors": 1
+    },
+    "3state-skip-2": {
+      "reference_wer": 0.4,
+      "max_wer": 1.29,
+      "measured_wer": 0.0,
+      "measured_errors": 0
+    }
+  },
+  "measured": {
+    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/44939092537",
+    "date": "2026-11-21",
+    "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:8e57ab123343df7f57908cee5cb6f1251f4e8aed8d110d69ce6ffb5f80994779",
+    "note": "CPU, torch 2.15. reference_wer is the author's pre-refactor CUDA run at torch 2.1, kept as the historical record; every topology landed within two word errors of it."
   }
 }
