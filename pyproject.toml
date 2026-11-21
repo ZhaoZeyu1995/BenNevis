@@ -33,6 +33,10 @@ dependencies = [
     "kaldiio",
     "hydra-core",
     "omegaconf",
+    # Imported directly to read the topology specs. It arrives anyway as an
+    # omegaconf dependency, but relying on that would make it vanish the day
+    # omegaconf stops needing it.
+    "pyyaml",
     "tqdm",
     "torchinfo",
     "wandb",
@@ -57,6 +61,11 @@ Issues = "https://github.com/ZhaoZeyu1995/BenNevis/issues"
 [tool.setuptools.packages.find]
 include = ["BenNevis*"]
 exclude = ["tests*", "egs*", "tools*"]
+
+# The topology specs are data, not code, so they need declaring explicitly or
+# an installed BenNevis has no topologies at all.
+[tool.setuptools.package-data]
+"BenNevis.topos" = ["specs/*.yaml"]
 
 [tool.black]
 line-length = 88

@@ -1,0 +1,36 @@
+# 3state-skip with the third token given its own state, so it may repeat.
+name: 3state-skip-1
+summary: |
+  0 -> a_0:a -> (a_1:<eps>) -> (a_2:<eps>) -> 0
+            -> - - - a_2 - ->
+
+tokens_per_phone: ["{phone}_0", "{phone}_1", "{phone}_2"]
+
+variants:
+  lang:
+    stride: 3
+    disambig: self_loop
+    disambig_advances: true
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, s2, "{phone}_2", "<eps>"]
+      - [s2, s2, "{phone}_2", "<eps>"]
+      - [s2, hub, "<eps>", "<eps>"]
+      - [s0, s2, "{phone}_2", "<eps>"]   # the skip
+  k2:
+    stride: 3
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "{phone}_2", "<eps>"]
+      - [s0, s2, "{phone}_2", "<eps>"]
+      - [s2, s2, "{phone}_2", "<eps>"]
+      - [s2, hub, "{phone}_2", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, s2, "{phone}_2", "<eps>"]
+      - [s1, hub, "{phone}_2", "<eps>"]

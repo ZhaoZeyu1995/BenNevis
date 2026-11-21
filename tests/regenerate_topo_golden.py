@@ -2,13 +2,18 @@
 """
 Regenerate the golden topology FSTs in tests/golden/topos/.
 
-The generators in BenNevis/bin/topos/ emit OpenFST text for a given phone
-symbol table. Their output defines the semantics of each topology, so it is
-captured here and asserted by tests/bin/test_topos.py.
+A golden file is the specification of a topology, not a cache. Run this only
+when a topology's output is *intended* to change, and review the resulting
+diff as carefully as you would review the change that caused it.
 
-Run this only when a topology's output is *intended* to change, and review
-the resulting diff as carefully as you would review the generator change:
-a golden file is the specification of a topology, not a cache.
+A note on provenance. These files were originally produced by the fifteen
+`get_token_fst_*.py` scripts that used to define the topologies, and the
+declarative specs in BenNevis/topos/specs/ were written to reproduce them byte
+for byte. That is what makes them an independent check on the rewrite.
+Regenerating them from the specs gives that up: from then on the specs and the
+goldens can only agree. So prefer adding a golden for a *new* topology over
+regenerating the existing ones, and if you must regenerate, read every line of
+the diff.
 
 Usage:
     python tests/regenerate_topo_golden.py
@@ -17,41 +22,25 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
-import subprocess
-import sys
 from pathlib import Path
-from typing import List
+
+from BenNevis.topos import build, spec
 
 TESTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = TESTS_DIR.parent
-TOPO_DIR = REPO_ROOT / "BenNevis" / "bin" / "topos"
 GOLDEN_DIR = TESTS_DIR / "golden" / "topos"
 PHONES = TESTS_DIR / "fixtures" / "phones.txt"
 
 
-def generator_paths() -> List[Path]:
-    """Return every topology generator, sorted by name."""
-    return sorted(TOPO_DIR.glob("get_token_fst_*.py"))
-
-
-def run_generator(script: Path) -> str:
-    """Run one generator against the fixture phone table and return its stdout."""
-    result = subprocess.run(
-        [sys.executable, str(script), str(PHONES)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout
-
-
 def main() -> None:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
-    for script in generator_paths():
-        name = script.stem.replace("get_token_fst_", "")
-        out = run_generator(script)
-        (GOLDEN_DIR / f"{name}.fst.txt").write_text(out)
-        print(f"{name}: {len(out.splitlines())} lines")
+    phones = build.read_phone_table(PHONES)
+    for name in spec.available():
+        topology = spec.load(name)
+        for variant in sorted(topology.variants):
+            label = name if variant == "lang" else f"{name}_{variant}"
+            text = build.build_openfst_text(topology, variant, phones)
+            (GOLDEN_DIR / f"{label}.fst.txt").write_text(text)
+            print(f"{label}: {len(text.splitlines())} lines")
 
 
 if __name__ == "__main__":

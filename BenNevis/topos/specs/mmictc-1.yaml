@@ -1,0 +1,34 @@
+# mmictc with a self-loop on the first state as well, so the first token may
+# repeat before the second is reached.
+name: mmictc-1
+summary: |
+  0 -> (a_0:a) -> (a_1:<eps>) -> 0
+             -> - - - - - - -> 0
+
+tokens_per_phone: ["{phone}_0", "{phone}_1"]
+
+variants:
+  lang:
+    stride: 2
+    disambig: self_loop
+    disambig_advances: true
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s0, "{phone}_0", "<eps>"]
+      - [s0, hub, "<eps>", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "<eps>", "<eps>"]
+  k2:
+    stride: 2
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, hub, "{phone}_0", "{phone}"]
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s0, "{phone}_0", "<eps>"]
+      - [s0, hub, "{phone}_1", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_1", "<eps>"]

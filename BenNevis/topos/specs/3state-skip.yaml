@@ -1,0 +1,37 @@
+# Three tokens per phone with a skip: the third token may be reached from the
+# first, so a phone can be covered in two frames rather than three. Note the
+# stride is 2, not 3 -- the topology labels three tokens but occupies only two
+# states, because the third token is only ever the arc back to the hub.
+name: 3state-skip
+summary: |
+  0 -> a_0:a -> (a_1:<eps>) -> a_2:<eps> -> 0
+            -> - - - - - a_2 - - - - - -> 0
+
+tokens_per_phone: ["{phone}_0", "{phone}_1", "{phone}_2"]
+
+variants:
+  lang:
+    stride: 2
+    disambig: self_loop
+    disambig_advances: true
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_2", "<eps>"]
+      - [s0, hub, "{phone}_2", "<eps>"]   # the skip
+  # Already epsilon-free on the input side: the only differences from the lang
+  # variant are that the disambiguation symbols are dropped and that the arcs
+  # come out in a different order, which the script this replaces chose and
+  # the golden files record.
+  k2:
+    stride: 2
+    disambig: skip
+    finals: hub
+    arcs:
+      - [hub, s0, "{phone}_0", "{phone}"]
+      - [s0, hub, "{phone}_2", "<eps>"]
+      - [s0, s1, "{phone}_1", "<eps>"]
+      - [s1, s1, "{phone}_1", "<eps>"]
+      - [s1, hub, "{phone}_2", "<eps>"]

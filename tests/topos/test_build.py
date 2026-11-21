@@ -1,28 +1,32 @@
 """
-Tests for the topology FST generators in BenNevis/bin/topos/.
+Tests for the declarative topology specifications in BenNevis/topos/.
 
 These lock down the semantics of every topology in two ways:
 
-1. Golden-file comparison. The generators' output *is* the definition of each
-   topology, so it is captured in tests/golden/topos/ and compared exactly.
+1. Golden-file comparison. The fifteen `get_token_fst_*.py` scripts that used
+   to define these topologies are gone, but their output is preserved in
+   tests/golden/topos/ and compared byte for byte, so the rewrite is pinned to
+   what the scripts actually produced rather than to what the specs claim.
    Regenerate deliberately with tests/regenerate_topo_golden.py and review the
    diff; a change there is a change to a topology, not a formatting detail.
 2. Structural invariants. These hold for any phone table and would catch a
    semantic break even if the golden files were regenerated carelessly.
 
+The golden files keep the names the scripts had: `<topo>` for the variant that
+builds `T.fst` and `<topo>_k2` for the one that builds `k2/T.fst`.
+
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from BenNevis.topos import build, spec
+
 TESTS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = TESTS_DIR.parent
-TOPO_DIR = REPO_ROOT / "BenNevis" / "bin" / "topos"
 GOLDEN_DIR = TESTS_DIR / "golden" / "topos"
 PHONES = TESTS_DIR / "fixtures" / "phones.txt"
 
@@ -31,24 +35,35 @@ EPS = "<eps>"
 BLANK = "<blk>"
 SILENCE = "<SIL>"
 
-GENERATORS = sorted(p.name for p in TOPO_DIR.glob("get_token_fst_*.py"))
-TOPO_NAMES = [name[len("get_token_fst_") : -len(".py")] for name in GENERATORS]
+
+def _outputs():
+    """
+    Every FST the specs can produce, keyed by the name of its golden file.
+
+    Returns
+    -------
+    Dict[str, Tuple[str, str]]
+        Golden name -> (topology name, variant name).
+    """
+    outputs = {}
+    for name in spec.available():
+        topology = spec.load(name)
+        for variant in sorted(topology.variants):
+            label = name if variant == "lang" else f"{name}_{variant}"
+            outputs[label] = (name, variant)
+    return outputs
 
 
-def topo_script(name: str) -> Path:
-    """Return the generator script for a topology name."""
-    return TOPO_DIR / f"get_token_fst_{name}.py"
+OUTPUTS = _outputs()
+TOPO_NAMES = sorted(OUTPUTS)
 
 
 def generate(name: str, phones: Path = PHONES) -> str:
-    """Run a topology generator against a phone table and return its stdout."""
-    result = subprocess.run(
-        [sys.executable, str(topo_script(name)), str(phones)],
-        capture_output=True,
-        text=True,
-        check=True,
+    """Expand one topology output and return its OpenFST text."""
+    topology_name, variant = OUTPUTS[name]
+    return build.build_openfst_text(
+        spec.load(topology_name), variant, build.read_phone_table(phones)
     )
-    return result.stdout
 
 
 def parse_arcs(text: str):
@@ -93,14 +108,12 @@ def emittable_phones(path: Path = PHONES):
     ]
 
 
-def test_every_generator_has_a_golden_file():
+def test_every_topology_output_has_a_golden_file():
     """A new topology must arrive with its golden file, or it is untested."""
     have = {p.name[: -len(".fst.txt")] for p in GOLDEN_DIR.glob("*.fst.txt")}
     assert set(TOPO_NAMES) == have, (
-        "Topologies without golden files: "
-        f"{sorted(set(TOPO_NAMES) - have)}; "
-        "golden files without topologies: "
-        f"{sorted(have - set(TOPO_NAMES))}. "
+        f"Topology outputs without golden files: {sorted(set(TOPO_NAMES) - have)}; "
+        f"golden files without topology outputs: {sorted(have - set(TOPO_NAMES))}. "
         "Run tests/regenerate_topo_golden.py."
     )
 

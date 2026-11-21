@@ -21,14 +21,11 @@ Authors:
 """
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TOPO_DIR = REPO_ROOT / "BenNevis" / "bin" / "topos"
 
 # A deliberately tiny symbol set with a one-to-one word-to-phone lexicon, so
 # that a phone sequence and a word sequence are interchangeable and the loss
@@ -81,14 +78,13 @@ def openfst_text_to_int(text: str, isym: dict, osym: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def generate_topo(name: str, phones_path: Path) -> str:
-    """Run one topology generator and return its OpenFST text."""
-    return subprocess.run(
-        [sys.executable, str(TOPO_DIR / f"get_token_fst_{name}.py"), str(phones_path)],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+def generate_topo(name: str, phones_path: Path, variant: str = "lang") -> str:
+    """Expand one topology from its spec and return its OpenFST text."""
+    from BenNevis.topos import build, spec
+
+    return build.build_openfst_text(
+        spec.load(name), variant, build.read_phone_table(phones_path)
+    )
 
 
 @pytest.fixture
