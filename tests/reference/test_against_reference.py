@@ -33,6 +33,7 @@ from BenNevis.utils.reference import (
 )
 
 TESTS_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = TESTS_DIR.parent
 REFERENCE_DIR = TESTS_DIR / "golden" / "reference" / "yesno"
 MANIFEST_PATH = REFERENCE_DIR / MANIFEST_NAME
 
@@ -198,3 +199,65 @@ class TestCoverage:
             name.startswith("transcriptions/") and name.endswith("hyp.wrd.trn")
             for name in manifest.exact
         ), sorted(manifest.exact)
+
+
+class TestTheConfigurationStillMatches:
+    """
+    That the reference describes the recipe as it is now.
+
+    A capture is only a reference for the settings it was taken under. Change
+    `conf/fbank.conf` and every captured feature becomes a record of
+    something the recipe no longer does -- and nothing else would notice,
+    because the integrity checks above only compare the capture with itself.
+
+    This is not hypothetical: setting `--dither=0`, which had to be done
+    before features could be replaced at all, invalidated the features in the
+    capture that preceded it.
+
+    Skips while the capture predates the recording of these files, so an
+    older reference does not fail for lacking something it never held.
+    """
+
+    @pytest.fixture(scope="class")
+    def recorded(self, manifest):
+        names = [n for n in manifest.exact if n.startswith("recipe/conf/")]
+        if not names:
+            pytest.skip(
+                "this capture predates the recording of the feature "
+                "configuration; re-capture to activate this check"
+            )
+        return sorted(names)
+
+    def test_the_feature_configuration_is_recorded(self, recorded):
+        assert any(name.endswith("fbank.conf") for name in recorded)
+
+    def test_it_matches_the_recipe_as_it_stands(self, manifest, recorded):
+        from BenNevis.utils.reference import sha256_bytes
+
+        recipe = REPO_ROOT / manifest.recipe
+        stale = []
+        for name in recorded:
+            current = recipe / name[len("recipe/") :]
+            if not current.is_file():
+                stale.append(f"{name} no longer exists in the recipe")
+                continue
+            if sha256_bytes(current.read_bytes()) != manifest.exact[name]:
+                stale.append(f"{name} has changed since the capture")
+        assert not stale, (
+            "the reference was taken under a different configuration, so the "
+            "captured features no longer describe what the recipe produces: "
+            + "; ".join(stale)
+            + ". Re-run the recipe, re-capture, and commit the result."
+        )
+
+    def test_dither_is_off_in_the_captured_configuration(self, manifest, recorded):
+        """
+        Stated separately because it is the one setting that makes features
+        unreproducible outside Kaldi, rather than merely different.
+        """
+        fbank = next(n for n in recorded if n.endswith("fbank.conf"))
+        text = (REFERENCE_DIR / fbank).read_text()
+        assert "--dither=0" in text, (
+            "the capture was taken with dither enabled, so its features "
+            "cannot be reproduced by any implementation but Kaldi's"
+        )
