@@ -43,6 +43,8 @@ import torch
 import numpy as np
 from torch.utils.data import Sampler, Dataset
 import torch.distributed as dist
+
+from BenNevis.utils.platform import collective_device
 import logging
 
 
@@ -124,6 +126,13 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
         self.seed = seed
         self.dataset_length = len(self.dataset)
         self.max_sum_dur = max_sum_dur
+        # How many batches the current epoch holds. None until `__iter__`
+        # has run, because that is where the batches are formed: the sizes
+        # depend on the durations of whichever samples this rank was given,
+        # and they are agreed across ranks by a broadcast inside `__iter__`.
+        # Declared here so the attribute always exists; a caller that needs
+        # the count must read it after iteration has begun.
+        self.num_batches = None
 
         assert self.dataset.sort in [
             "ascending",
@@ -183,6 +192,14 @@ class DistributedDynamicBatchSampler(Sampler[List[int]]):
                 batch_size += 1
                 pointer += 1
             else:
+                if start == pointer:
+                    # One sample on its own exceeds the budget. Give it a
+                    # batch to itself and move past it: yielding
+                    # indices[start:pointer] here would be an empty batch
+                    # and would leave the pointer where it was, which spun
+                    # forever appending nothing. Dropping it instead would
+                    # lose an utterance silently.
+                    pointer += 1
                 yield indices[start:pointer]
                 start = pointer
                 accumulate = 0
@@ -277,6 +294,13 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
         self.seed = seed
         self.dataset_length = len(self.dataset)
         self.max_sum_dur = max_sum_dur
+        # How many batches the current epoch holds. None until `__iter__`
+        # has run, because that is where the batches are formed: the sizes
+        # depend on the durations of whichever samples this rank was given,
+        # and they are agreed across ranks by a broadcast inside `__iter__`.
+        # Declared here so the attribute always exists; a caller that needs
+        # the count must read it after iteration has begun.
+        self.num_batches = None
 
         assert self.dataset.sort in [
             "ascending",
@@ -327,7 +351,11 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
             indices = np.random.permutation(indices)
         indices = indices[self.num_replicas - self.rank - 1].tolist()
         assert len(indices) == self.num_samples, f"{len(indices)} vs {self.num_samples}"
-        device = torch.cuda.current_device()
+        # Where the broadcast tensors have to live: CUDA for NCCL, the CPU
+        # for gloo. This was torch.cuda.current_device() unconditionally,
+        # which raised on any machine without CUDA and made dynamic batching
+        # unusable on the CPU.
+        device = collective_device()
 
         logging.debug(
             f"Rank {self.rank}: len(indices) {len(indices)}, len(self.dataset) {len(self.dataset)}"
@@ -345,6 +373,12 @@ class DistributedSyncDynamicBatchSampler(Sampler[List[int]]):
                     batch_size += 1
                     pointer += 1
                 else:
+                    if batch_size == 0:
+                        # As above: one sample longer than the budget gets a
+                        # batch of its own, rather than appending a zero and
+                        # never advancing.
+                        batch_size = 1
+                        pointer += 1
                     batch_sizes.append(batch_size)
                     accumulate = 0
                     batch_size = 0

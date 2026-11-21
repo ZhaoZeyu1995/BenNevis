@@ -257,6 +257,74 @@ class TestDescribePlatform:
         assert "cpu only" in bp.describe_platform()
 
 
+class TestCollectiveDevice:
+    """
+    Where a tensor must live to be broadcast between ranks.
+
+    Not the device the model is on. `DistributedSyncDynamicBatchSampler`
+    agrees its batch boundaries this way, and used to call
+    `torch.cuda.current_device()` unconditionally -- which raised on any
+    machine without CUDA and so made dynamic batching unusable on the CPU,
+    including in CI, where it stopped the first real training run.
+    """
+
+    def test_gloo_broadcasts_on_the_cpu(self, monkeypatch):
+        import torch.distributed as dist
+
+        monkeypatch.setattr(dist, "is_available", lambda: True)
+        monkeypatch.setattr(dist, "is_initialized", lambda: True)
+        monkeypatch.setattr(dist, "get_backend", lambda: "gloo")
+        assert bp.collective_device().type == "cpu"
+
+    def test_gloo_on_the_cpu_even_where_cuda_exists(self, monkeypatch):
+        """
+        gloo accepts CPU tensors whatever hardware is present, and the CPU is
+        the simpler choice for a two-element control tensor.
+        """
+        import torch.distributed as dist
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(dist, "is_available", lambda: True)
+        monkeypatch.setattr(dist, "is_initialized", lambda: True)
+        monkeypatch.setattr(dist, "get_backend", lambda: "gloo")
+        assert bp.collective_device().type == "cpu"
+
+    def test_nccl_needs_cuda(self, monkeypatch):
+        """
+        The reason this is not simply always the CPU: NCCL collectives
+        require CUDA tensors, so a CUDA run must keep getting one.
+        """
+        import torch.distributed as dist
+
+        monkeypatch.setattr(dist, "is_available", lambda: True)
+        monkeypatch.setattr(dist, "is_initialized", lambda: True)
+        monkeypatch.setattr(dist, "get_backend", lambda: "nccl")
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+        assert bp.collective_device().type == "cuda"
+
+    def test_without_a_process_group_it_follows_the_hardware(self, monkeypatch):
+        import torch.distributed as dist
+
+        monkeypatch.setattr(dist, "is_initialized", lambda: False)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        assert bp.collective_device().type == "cpu"
+
+    def test_it_agrees_with_the_backend_resolver(self, monkeypatch):
+        """
+        The two must not disagree: `resolve_dist_backend` picks gloo for
+        anything but CUDA, and this must then not demand a CUDA tensor.
+        """
+        import torch.distributed as dist
+
+        monkeypatch.setattr(dist, "is_available", lambda: True)
+        monkeypatch.setattr(dist, "is_initialized", lambda: True)
+        for backend in ("gloo", "nccl"):
+            monkeypatch.setattr(dist, "get_backend", lambda b=backend: b)
+            monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+            device = bp.collective_device()
+            assert bp.resolve_dist_backend(device) == backend
+
+
 class TestRealMachine:
     """Invariants that must hold on whatever runner this is."""
 
@@ -271,3 +339,12 @@ class TestRealMachine:
 
     def test_symlink_support_matches_the_platform_family(self):
         assert bp.supports_symlink() == (os.name != "nt")
+
+    def test_a_tensor_can_be_allocated_on_the_collective_device(self):
+        """
+        Whatever this runner is, the answer has to be usable: the original
+        bug was precisely an unusable answer on a machine without CUDA.
+        """
+        device = bp.collective_device()
+        tensor = torch.zeros(2, dtype=torch.int32, device=device)
+        assert tensor.device.type == device.type

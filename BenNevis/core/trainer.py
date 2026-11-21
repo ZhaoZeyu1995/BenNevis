@@ -644,12 +644,18 @@ class Trainer:
             progress_bar.set_postfix(self.metrics_dict)
             progress_bar.refresh()
 
+        # A fixed-size sampler knows its batch count up front. A dynamic one
+        # does not: it forms the batches in `__iter__`, from the durations of
+        # the samples this rank was given, so the count is only available once
+        # iteration has begun. Reading it before the loop is what broke the
+        # first real training run in CI -- the attribute did not exist yet.
+        epoch_num_batches = None
         if isinstance(self.train_sampler, DistributedSampler):
             epoch_num_batches = len(self.train_dl.batch_sampler)
-        else:
-            epoch_num_batches = self.train_sampler.num_batches
 
         for batch in self.train_dl:
+            if epoch_num_batches is None:
+                epoch_num_batches = getattr(self.train_sampler, "num_batches", None)
             batch_size = batch["batch_size"]
             loss_value = self._train_batch(batch, pin_memory=self.train_dl.pin_memory)
             num_steps += 1
@@ -674,8 +680,12 @@ class Trainer:
             # Save the model every n epochs, where n can be a float number.
             # self.save_every_n_epochs is None when saving is driven by
             # save_every_n_steps instead, in which case this is skipped.
+            # `epoch_num_batches` is None only if the sampler never reported
+            # one, in which case there is no epoch length to schedule
+            # against and the save is left to save_every_n_steps.
             if (
                 self.save_every_n_epochs
+                and epoch_num_batches
                 and num_steps % math.ceil(epoch_num_batches * self.save_every_n_epochs)
                 == 0
                 and num_steps != epoch_num_batches
