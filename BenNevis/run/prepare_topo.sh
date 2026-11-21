@@ -8,6 +8,9 @@
 #    disambiguation symbols, so it matches the neural network's outputs directly
 # 6. k2/tokens.txt, the input symbol table for k2/T.fst
 # 7. k2/phones.txt, the output symbol table for k2/T.fst, without the disambiguation symbols
+# 8. k2/topo.yaml, the topology specification, copied in so that `Lang` can build the training FSA in Python
+#    rather than reading k2/T.fst back with `fstprint`. A copy rather than a reference, so that a language
+#    directory stays reproducible when the bundled specifications change.
 #
 # The topology itself, and the token inventory derived from it, come from
 # BenNevis/topos/specs/<topo>.yaml. This script used to carry one branch per
@@ -83,6 +86,14 @@ python3 -m BenNevis.topos fst $topo $des/phones.txt |\
 # k2/T.fst, for training. The k2 variant is epsilon-free on the input side by
 # construction, so unlike the previous ctc branch there is nothing for
 # fstrmepsilon to remove and it can be compiled against k2/tokens.txt directly.
+#
+# Training no longer reads this file: `Lang` builds the FSA from k2/topo.yaml
+# below. It is still written because it is a useful artefact to inspect with
+# the OpenFST tools, and because a checkout that has one but no specification
+# must stay loadable.
 python3 -m BenNevis.topos fst $topo $des/k2/phones.txt --variant k2 |\
     fstcompile --isymbols=$des/k2/tokens.txt --osymbols=$des/k2/phones.txt |\
     fstarcsort --sort_type=olabel > $des/k2/T.fst
+
+# The specification itself, which is what `Lang` expands at training time.
+python3 -m BenNevis.topos spec $topo > $des/k2/topo.yaml

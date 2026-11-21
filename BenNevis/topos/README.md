@@ -11,6 +11,7 @@ to write to add one.
 ```
 python -m BenNevis.topos list                 # what is available
 python -m BenNevis.topos describe 3state-skip # what the machine looks like
+python -m BenNevis.topos spec ctc             # the file itself
 ```
 
 ## What a spec contains
@@ -63,6 +64,24 @@ its input alphabet *is* the network's output layer, and a network cannot emit
 `<eps>`. Removing the epsilons with `fstrmepsilon` instead would produce a far
 larger FST, so the `k2` variants give up determinism rather than size. This is
 checked when a spec is loaded.
+
+## In a language directory
+
+`prepare_topo.sh` copies the spec into the language directory it prepares, as
+`k2/topo.yaml`, and `Lang.load_topo` expands *that* into the training FSA
+directly:
+
+```
+spec + k2/tokens.txt + k2/phones.txt  ->  k2.Fsa
+```
+
+So training needs neither OpenFST nor a shell, and a language directory keeps
+describing the topology it was actually built with even if the bundled spec of
+the same name later changes. `k2/T.fst` is still compiled, because the
+decoding graph is built with Kaldi and because it is a useful thing to inspect
+with the OpenFST tools, but nothing in training reads it. A directory prepared
+before `k2/topo.yaml` existed still loads, through a `fstprint` fallback that
+warns.
 
 ## Adding a topology
 

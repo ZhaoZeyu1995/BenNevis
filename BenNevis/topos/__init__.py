@@ -16,10 +16,14 @@ Authors:
 """
 
 from BenNevis.topos.build import (
+    build_openfst_int_text,
     build_openfst_text,
     build_phone_symbols,
     build_tokens,
+    expand,
     read_phone_table,
+    read_symbol_table,
+    symbol_ids,
     write_symbol_table,
 )
 from BenNevis.topos.spec import TopologySpec, available, load, load_spec
@@ -29,9 +33,13 @@ __all__ = [
     "available",
     "load",
     "load_spec",
+    "build_openfst_int_text",
     "build_openfst_text",
     "build_phone_symbols",
     "build_tokens",
+    "expand",
     "read_phone_table",
+    "read_symbol_table",
+    "symbol_ids",
     "write_symbol_table",
 ]

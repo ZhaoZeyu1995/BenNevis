@@ -95,6 +95,30 @@ class TestPhones:
         assert out.splitlines()[-1] == "B 4"
 
 
+class TestSpec:
+    """
+    `spec` is what copies a specification into a language directory, so its
+    output has to be loadable again -- that copy is what `Lang` expands at
+    training time.
+    """
+
+    @pytest.mark.parametrize("name", spec.available())
+    def test_prints_the_file_verbatim(self, capsys, name):
+        out = run(capsys, "spec", name)
+        assert out == spec.spec_path(name).read_text()
+
+    @pytest.mark.parametrize("name", spec.available())
+    def test_the_output_loads_back(self, capsys, tmp_path, name):
+        out = run(capsys, "spec", name)
+        path = tmp_path / "topo.yaml"
+        path.write_text(out)
+        assert spec.load_spec(path) == spec.load(name)
+
+    def test_an_unknown_topology_is_refused(self):
+        with pytest.raises(FileNotFoundError):
+            cli.main(["spec", "nope"])
+
+
 class TestListAndDescribe:
     def test_list_prints_every_topology(self, capsys):
         out = run(capsys, "list")

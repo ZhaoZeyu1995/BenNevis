@@ -1,17 +1,19 @@
 """
 Fixtures for the k2-dependent core tests.
 
-Building a usable `Lang` without a Kaldi or OpenFST installation needs two
-tricks, both worth knowing about:
+Building a usable `Lang` without a Kaldi or OpenFST installation needs one
+remaining trick, and used to need two:
 
-- `Lang.load_topo` shells out to `fstprint` to turn a binary `k2/T.fst` into
-  text, so a topology cannot be loaded without OpenFST on PATH. These tests
-  construct `lang.topo` directly instead. (Removing that shell-out is one of
-  the motivations for replacing the topology generators with declarative
-  specs built straight into k2.)
 - `Lang.load_lexicon` reads `k2/L_inv.pt` with `torch.load` when it exists and
   only falls back to `fstprint` on `L.fst` otherwise, so writing the `.pt`
   avoids OpenFST entirely.
+- `Lang.load_topo` used to shell out to `fstprint` to turn a binary `k2/T.fst`
+  into text, so a topology could not be loaded without OpenFST on PATH and
+  these tests assigned `lang.topo` directly. It now expands `k2/topo.yaml`
+  instead, so `lang_dir` writes that file and `load_topo=True` works here.
+  The `lang` fixture still assigns `k2.ctc_topo` so that the built-in
+  topology stays the independent oracle for the loss tests; see
+  `test_lang_topo.py` for the tests of the loading itself.
 
 k2 is imported inside the fixtures rather than at module scope, so collecting
 the dependency-free tiers does not require it.
@@ -98,6 +100,8 @@ def lang_dir(tmp_path):
     import k2
     import torch
 
+    from BenNevis.topos import spec as topo_spec
+
     (tmp_path / "k2").mkdir()
     (tmp_path / "phones").mkdir()
     (tmp_path / "phones.txt").write_text(PHONES)
@@ -105,6 +109,8 @@ def lang_dir(tmp_path):
     (tmp_path / "k2" / "tokens.txt").write_text(TOKENS)
     (tmp_path / "words.txt").write_text(WORDS)
     (tmp_path / "phones" / "align_lexicon.int").write_text(ALIGN_LEXICON)
+    # The topology specification, exactly as prepare_topo.sh copies it in.
+    (tmp_path / "k2" / "topo.yaml").write_text(topo_spec.spec_path("ctc").read_text())
 
     # L_inv: words on the input side, phones as aux labels, as Lang expects
     # after inverting Kaldi's phones-to-words L.fst.
@@ -119,8 +125,9 @@ def lang(lang_dir):
     """
     A `Lang` with a CTC topology, built from `k2.ctc_topo`.
 
-    `load_topo=False` because loading one from disk requires OpenFST; the
-    topology is assigned directly instead.
+    `load_topo=False` and the topology assigned afterwards, so that
+    `k2.ctc_topo` rather than the project's own expansion is what the loss
+    tests are measured against.
     """
     import k2
 

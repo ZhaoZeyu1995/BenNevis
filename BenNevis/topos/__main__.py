@@ -7,6 +7,7 @@ takes the topology by name:
     python -m BenNevis.topos fst ctc data/lang/phones.txt
     python -m BenNevis.topos fst 2state --variant k2 data/lang/k2/phones.txt
     python -m BenNevis.topos tokens 2state data/lang/phones.txt
+    python -m BenNevis.topos spec ctc > data/lang_ctc/k2/topo.yaml
     python -m BenNevis.topos list
 
 `fst` writes OpenFST text on stdout, exactly as the old scripts did, so it
@@ -99,6 +100,12 @@ def main(argv=None) -> int:
     disambig.add_argument("topo", help="topology name")
     _add_phones(disambig)
 
+    specification = sub.add_parser(
+        "spec",
+        help="print a topology's specification file verbatim",
+    )
+    specification.add_argument("topo", help="topology name")
+
     sub.add_parser("list", help="list the available topologies")
 
     described = sub.add_parser("describe", help="print a topology's summary")
@@ -109,6 +116,14 @@ def main(argv=None) -> int:
     if args.command == "list":
         for name in spec.available():
             sys.stdout.write(f"{name}\n")
+        return 0
+
+    if args.command == "spec":
+        # Copied into a prepared language directory so that `Lang` can build
+        # the topology FSA without depending on the installed spec set still
+        # matching the one the directory was built with.
+        topology = spec.load(args.topo)
+        sys.stdout.write(topology.source.read_text(encoding="utf-8"))
         return 0
 
     if args.command == "describe":

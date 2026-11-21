@@ -225,6 +225,28 @@ class TopologySpec:
     skip_phones: Tuple[str, ...] = (EPS, "<SIL>")
     _source: Optional[Path] = field(default=None, compare=False, repr=False)
 
+    @property
+    def source(self) -> Path:
+        """
+        The file this spec was loaded from.
+
+        Returns
+        -------
+        Path
+            The spec file.
+
+        Raises
+        ------
+        ValueError
+            If the spec was built in memory rather than loaded from a file.
+        """
+        if self._source is None:
+            raise ValueError(
+                f"topology {self.name!r} was not loaded from a file, so it has "
+                f"no source path"
+            )
+        return self._source
+
     def variant(self, which: str) -> Variant:
         """
         Look up a variant by name, with a legible error if it is missing.

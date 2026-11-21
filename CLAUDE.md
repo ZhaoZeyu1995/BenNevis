@@ -200,6 +200,24 @@ test tier and for cloud runs.
   determines the neural network's output vocabulary. Both now come from the
   same spec, and `TopologySpec.validate` rejects a spec whose arcs use a token
   its inventory does not list, so the two cannot drift apart silently.
+- **`prepare_topo.sh` copies the spec into the language directory** as
+  `k2/topo.yaml`, and `Lang.load_topo` expands *that*, not the bundled spec of
+  the same name. A language directory therefore stays reproducible when the
+  bundled specs change, and the training path needs no OpenFST. The symbol
+  tables are read from the directory too, never recomputed: `k2/tokens.txt`
+  fixes the network's output indices, and a checkpoint is only valid while
+  those indices stay put. `k2/T.fst` is still compiled, but nothing in
+  training reads it.
+- **The topology FSA is not arc-sorted, and `k2.intersect_dense` documents
+  that its graphs must be.** `fstarcsort --sort_type=olabel` in
+  `prepare_topo.sh` sorted by *output* label, which does not make a k2 FSA
+  `ARC_SORTED` — measured False for all eight topologies, before and after
+  the spec rewrite. `k2.compose` arc-sorts its first argument itself, so the
+  numerator is fine; `GraphLoss.get_den_graph` passes the topology straight to
+  `intersect_dense`, which is the violation. On CPU the denominator scores are
+  identical either way (measured on all eight), so this has not been biting,
+  but `k2.arc_sort` there would make the precondition hold and wants checking
+  on CUDA.
 - **A topology's golden file is its specification, not a cache.** The files in
   `tests/golden/topos/` were produced by the fifteen `get_token_fst_*.py`
   scripts that used to define the topologies, and the YAML specs were written
@@ -209,14 +227,14 @@ test tier and for cloud runs.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
-- **The remaining POSIX-only sites are deliberate.** `Lang.load_topo` and
-  `Lang.load_lexicon` shell out to `fstprint | awk`. `load_topo`'s call goes
-  once `Lang` builds the topology FSA from its spec rather than reading a
-  compiled `T.fst`; `load_lexicon`'s needs the lexicon off Kaldi first, which
-  is a larger piece of goal 2. `run/predict.py`'s `cat | awk` merge and
+- **The remaining POSIX-only sites are deliberate.** `Lang.load_lexicon`
+  shells out to `fstprint | awk`, and needs the lexicon off Kaldi first,
+  which is a larger piece of goal 2. `run/predict.py`'s `cat | awk` merge and
   `run/align.py`'s `gzip -c` pipe are portable in a few lines of Python each,
   but the entry-point scripts have no test coverage, so they wait for tier 3
-  rather than being changed blind.
+  rather than being changed blind. `Lang.load_topo` keeps a `fstprint`
+  *fallback* for a language directory prepared before `k2/topo.yaml` existed;
+  it warns, and no new directory takes that path.
 - **Shell text processing is dialect-dependent, and was relied on.**
   `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
   which picks out `#0` only where `\d` inside a bracket expression means the
