@@ -411,6 +411,19 @@ workflow changes.
   CMVN statistics are read directly, because they are double and never
   compressed — putting them through `copy-feats` would narrow them to float
   and lose the precision the whole normaliser rests on.
+  With that in place the Python CMVN is **bit-exact** with `apply-cmvn`, and
+  the re-captured features turned out to differ from the old ones by at most
+  3.8e-6 — precisely the residual that had been showing up in the output.
+- **Bit-exact arithmetic is not the same as a bit-exact pipeline.** The CMVN
+  equivalence holds *given identical inputs*. In the live recipe, a Python
+  stage would read the compressed `feats.scp` through `kaldiio` and so start
+  from values up to 3.8e-6 away from the ones Kaldi used. Replacing a stage
+  therefore moves the decompression boundary rather than removing it, and
+  the boundary only disappears once feature extraction is Python too and
+  owns the storage format. Until then, swapping CMVN into the recipe costs
+  about 4e-6 on its inputs — which is inside the documented feature
+  tolerance but is **not** nothing, and is a decision rather than a
+  detail.
 - **Reproduce Kaldi's order of operations, not just its formula.**
   `ApplyCmvn` computes the moments and scale in double, rounds scale and
   offset to float32 as it stores them, then applies them as two separate
