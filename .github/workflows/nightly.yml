@@ -63,6 +63,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Created here, as the runner, before any container writes into the
+      # workspace. The capture step runs as root in Docker and used to create
+      # this directory itself, after which the host-side tar below could not
+      # write into it -- and its `|| true` swallowed the permission error, so
+      # the scores artefact uploaded empty while the job reported success.
+      - name: Make the artefact directory
+        run: mkdir -p artefacts/reference
+
       - name: Pull the Kaldi image
         run: |
           docker pull "$IMAGE"
@@ -163,12 +171,22 @@ jobs:
       - name: Collect the scores and logs
         if: always()
         run: |
-          mkdir -p artefacts
+          set -o pipefail
           cd egs/yesno/asr
-          find exp -name 'results.wrd.txt' -o -name 'hyp.wrd.trn' \
-               -o -name 'ref.wrd.trn' -o -name '*.log' \
-               | tar czf ../../../artefacts/yesno-scores.tar.gz -T - || true
+          find exp \( -name 'results.wrd.txt' -o -name 'hyp.wrd.trn' \
+               -o -name 'ref.wrd.trn' -o -name '*.log' \) -print \
+               > "${RUNNER_TEMP}/scores.list" || true
           cd ../../..
+          # Reported rather than ignored. An empty list is legitimate when
+          # the recipe failed before decoding, so it is not an error -- but
+          # it is said out loud, because "the artefact is empty" and "the
+          # step could not write" used to look identical.
+          count=$(wc -l < "${RUNNER_TEMP}/scores.list" | tr -d ' ')
+          echo "collecting ${count} score and log file(s)"
+          if [ "${count}" -gt 0 ]; then
+            tar czf artefacts/yesno-scores.tar.gz \
+                -C egs/yesno/asr -T "${RUNNER_TEMP}/scores.list"
+          fi
           {
             echo "## yesno error rates"
             echo

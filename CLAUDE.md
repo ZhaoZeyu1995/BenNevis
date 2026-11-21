@@ -386,6 +386,13 @@ workflow changes.
   serious error"* went unnoticed — the recipe simply continued. `pipefail`
   matters as much as `errexit`, because nearly everything in a Kaldi recipe
   is a pipeline.
+- **A container writing into the workspace writes as root.** The nightly's
+  capture step runs in Docker, and anything it creates is root-owned, after
+  which a later host-side step cannot write there. That is how the scores
+  artefact uploaded empty while the job reported success — the `tar` failed
+  with permission denied and a `|| true` swallowed it. Create a directory on
+  the runner *before* any container touches it, and do not let a collection
+  step hide its own failure: report what it collected, including zero.
 - **The reference capture needs `fstprint`, and will not pretend otherwise.**
   It is in the image but only on the PATH a recipe's `path.sh` builds, and
   `tests/reference/capture.py` is invoked directly — so the first two real
