@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [master]
+  # Every pull request, not only those targeting master. Stacked PRs -- one
+  # based on another that has not merged yet -- would otherwise get no checks
+  # at all, which is precisely when they are most wanted.
   pull_request:
-    branches: [master]
 
 # A new push to a PR cancels the previous run rather than queueing behind it.
 concurrency:
