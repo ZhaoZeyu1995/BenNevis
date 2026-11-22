@@ -29,14 +29,30 @@ on:
         description: "Last recipe stage to run. Blank means to the end."
         required: false
         default: ""
+      recipe:
+        description: >-
+          Which recipe to run, as a path under egs/. The scheduled run is
+          always yesno; mini_librispeech is for a dispatch, and its stages 5
+          and up take hours, so pair it with stop_stage 4 unless you mean to
+          train.
+        required: false
+        default: egs/yesno/asr
+        type: choice
+        options:
+          - egs/yesno/asr
+          - egs/mini_librispeech/asr
 
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+env:
+  # The scheduled run has no inputs, so it falls back to yesno here.
+  RECIPE: ${{ github.event.inputs.recipe || 'egs/yesno/asr' }}
+
 jobs:
-  yesno:
-    name: yesno end to end
+  recipe:
+    name: recipe end to end
     runs-on: ubuntu-latest
     # Eight topologies at eighty epochs each, plus feature extraction, graph
     # compilation, decoding and alignment. Well under the six-hour ceiling,
@@ -48,6 +64,25 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
+
+      # The capture needs to know the corpus name it writes under and which
+      # data directories to read, and those differ per recipe. Kept here
+      # rather than guessed inside capture.py, so adding a recipe is an
+      # explicit edit in one place.
+      - name: Work out the capture arguments
+        run: |
+          case "${RECIPE}" in
+            egs/yesno/asr)
+              echo 'CAPTURE_ARGS=--corpus yesno --model rnnp \
+                --test-set test_yesno --datasets train_yesno test_yesno' \
+                >> "$GITHUB_ENV" ;;
+            egs/mini_librispeech/asr)
+              echo 'CAPTURE_ARGS=--corpus mini_librispeech --model rnnp \
+                --test-set dev_clean_2 --datasets train_clean_5 dev_clean_2' \
+                >> "$GITHUB_ENV" ;;
+            *)
+              echo "no capture arguments for ${RECIPE}" >&2; exit 1 ;;
+          esac
 
       - name: Work out the image name
         run: |
@@ -83,7 +118,13 @@ jobs:
       # 4.7MB from openslr. Cached so that a nightly job does not fetch it
       #365 times a year; run.sh skips the download when the directory is
       # already there.
-      - name: Restore the corpus
+      # yesno's corpus is 4.7MB and worth caching. mini-librispeech's is
+      # 500MB and would not fit the cache budget usefully, so it is
+      # downloaded each time; `download_and_untar.sh` skips the work when
+      # the directory is already there, which matters for a resumed run on
+      # the same runner rather than across runs.
+      - name: Restore the yesno corpus
+        if: env.RECIPE == 'egs/yesno/asr'
         uses: actions/cache@v4
         with:
           path: egs/yesno/asr/waves_yesno
@@ -116,7 +157,7 @@ jobs:
           fi
           docker run --rm \
             -v "$PWD:/workspace" \
-            -w /workspace/egs/yesno/asr \
+            -w "/workspace/${RECIPE}" \
             -e HOME=/tmp \
             -e PYTHONPATH=/workspace \
             -e WANDB_MODE=disabled \
@@ -154,7 +195,7 @@ jobs:
             -e BENNEVIS_IMAGE="${IMAGE_DIGEST:-$IMAGE}" \
             "$IMAGE" \
             python3 tests/reference/capture.py \
-              egs/yesno/asr /workspace/artefacts/reference
+              "${RECIPE}" /workspace/artefacts/reference ${CAPTURE_ARGS}
 
       - name: Upload the Kaldi reference
         if: always()
@@ -172,7 +213,7 @@ jobs:
         if: always()
         run: |
           set -o pipefail
-          cd egs/yesno/asr
+          cd "${RECIPE}"
           find exp \( -name 'results.wrd.txt' -o -name 'hyp.wrd.trn' \
                -o -name 'ref.wrd.trn' -o -name '*.log' \) -print \
                > "${RUNNER_TEMP}/scores.list" || true
@@ -185,14 +226,14 @@ jobs:
           echo "collecting ${count} score and log file(s)"
           if [ "${count}" -gt 0 ]; then
             tar czf artefacts/yesno-scores.tar.gz \
-                -C egs/yesno/asr -T "${RUNNER_TEMP}/scores.list"
+                -C "${RECIPE}" -T "${RUNNER_TEMP}/scores.list"
           fi
           {
-            echo "## yesno error rates"
+            echo "## ${RECIPE} error rates"
             echo
             echo '| topology | sclite WER |'
             echo '| --- | --- |'
-            for d in egs/yesno/asr/exp/*/dec_*/aw_*/results.wrd.txt; do
+            for d in "${RECIPE}"/exp/*/dec_*/aw_*/results.wrd.txt; do
               [ -f "$d" ] || continue
               topo=$(echo "$d" | sed -E 's|.*/exp/rnnp-([^/]*)/.*|\1|')
               wer=$(grep -E '\| *Sum/Avg' "$d" | awk '{print $(NF-2)}')
