@@ -389,6 +389,28 @@ ended in `yesno`, so it skipped unconditionally — **a test that could not
 fail**. It now asserts that it compared something, which is the only way a
 skip-shaped bug announces itself.
 
+**Kaldi's decoding graph weights are quantised to 1/1024, and ours are
+not.** `fstminimizeencoded` rounds every weight to a multiple of OpenFST's
+`kDelta`: yesno's `G.fst` carries `2.30258512` for `-log(0.1)` and its
+`LG.fst` carries `2.30273438`, which is exactly `2358/1024`. So each arc of
+a Kaldi-built graph loses up to `kDelta/2`, about 1.5e-4, and a path through
+*n* arcs can differ by `n * kDelta / 2`. The k2 graph keeps full precision —
+**Kaldi is the less precise side here**, and matching it would mean
+deliberately rounding to Kaldi's grid. `QUANTISATION_DELTA` in
+`BenNevis.decode.graph` exists to *bound a comparison*, never to reproduce
+the rounding. This is the clearest example in the project of an equivalence
+gate that would turn an accident into a requirement.
+
+**`TLG.fst`'s only consumer is Kaldi's `decode-faster`.** Training never
+reads it — that path goes through `k2/topo.yaml` and is already Python. So
+porting the graph alone buys nothing: a Python-built text FST still needs
+`fstcompile` to become the binary the decoder wants, and Kaldi and OpenFST
+both stay. The graph and the decoder have to go together, and doing so drops
+`fsttablecompose`, `fstdeterminizestar`, `fstminimizeencoded`,
+`fstrmsymbols`, `fstrmepslocal`, `fstarcsort`, `fstcompile` and
+`decode-faster` at once, along with the 334MB artefact. `int2sym.pl` and
+`sclite` fall out too, because `BenNevis.utils.scoring` is already Python.
+
 **The equivalence gates are scaffolding, and retiring them is a decision.**
 Everything that compares against `tests/golden/reference/` exists to answer
 one question — *does the Python do what Kaldi did?* — and that question
