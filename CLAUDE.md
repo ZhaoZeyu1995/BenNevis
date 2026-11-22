@@ -411,6 +411,18 @@ both stay. The graph and the decoder have to go together, and doing so drops
 `decode-faster` at once, along with the 334MB artefact. `int2sym.pl` and
 `sclite` fall out too, because `BenNevis.utils.scoring` is already Python.
 
+**An FsaVec's arcs are three levels deep, not two.** `fsa.arcs.shape()` is
+FSA, then state, then arc, so `row_splits(1)` gives *state* boundaries per
+FSA and `row_splits(2)` gives arc boundaries per state. Slicing per-arc data
+such as `aux_labels` with `row_splits(1)` runs one utterance's labels into
+the next: a batch of two decoded as `[[1, 2], [2]]` where the answer was
+`[[1], [2]]`. A batch of one never shows it, which is why the decoder's
+tests batch two.
+`aux_labels` is also a plain tensor on some graphs and a `RaggedTensor`
+once composition has put several output labels on an arc, and which one
+depends on how the graph was built rather than on anything the caller
+chose — so both have to be handled.
+
 **The equivalence gates are scaffolding, and retiring them is a decision.**
 Everything that compares against `tests/golden/reference/` exists to answer
 one question — *does the Python do what Kaldi did?* — and that question
