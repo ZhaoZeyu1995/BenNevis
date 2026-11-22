@@ -260,6 +260,54 @@ def read_archive(scp: Path, copy_feats: Optional[str] = None) -> Dict[str, "obje
         return {key: value for key, value in kaldiio.load_ark(str(plain))}
 
 
+#: Artefacts whose *lines* are reproducible but whose line *order* is not,
+#: normalised by sorting before they are stored and digested.
+#:
+#: `extra_questions.txt` is the one. Two captures from the same commit in
+#: the same image produced the same five lines in a different order --
+#: Kaldi's `prepare_dict.sh` builds it by iterating a Perl hash, and Perl
+#: has randomised hash order per process since 5.18. So its bytes cannot be
+#: compared and its digest means nothing unless the order is pinned.
+#:
+#: Sorting here rather than at comparison time, so that the stored bytes and
+#: the recorded digest agree and the integrity check still works. This is a
+#: normalisation of how the reference is *read*, the same kind of thing as
+#: having Kaldi rewrite the feature archives uncompressed -- not an edit to
+#: make a test pass, and the recipe is untouched.
+#:
+#: Nothing yet depends on this file: it feeds the decision-tree questions in
+#: GMM training, not the lexicon FSTs. It is fixed now because the failure
+#: it would cause is a test that fails on a *re-capture* rather than on a
+#: change, which is the hardest kind to read.
+UNORDERED_TEXT = ("extra_questions.txt",)
+
+
+def normalise_unordered(relative: str, payload: bytes) -> bytes:
+    """
+    Sort the lines of an artefact whose order is not reproducible.
+
+    Arguments
+    ---------
+    relative: str
+        Its path within the capture directory.
+    payload: bytes
+        The content as captured.
+
+    Returns
+    -------
+    bytes
+        The content with its lines sorted, for an artefact named in
+        UNORDERED_TEXT; unchanged otherwise.
+    """
+    if PurePosixPath(relative).name not in UNORDERED_TEXT:
+        return payload
+    text = payload.decode("utf-8", errors="replace")
+    lines = sorted(line for line in text.splitlines())
+    if not lines:
+        return payload
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 #: Above this, an exact artefact's digest is recorded but its bytes are not
 #: stored. An exact artefact is compared *by digest*, so the content is not
 #: needed to tell whether a replacement reproduces it -- only to see how it
@@ -332,12 +380,14 @@ def store(
     relative: str
         Its path within that directory, which is also its manifest key.
     payload: bytes
-        The content.
+        The content. An artefact named in UNORDERED_TEXT has its lines
+        sorted first; see `normalise_unordered`.
     max_bytes: int
         Above this the digest is recorded without the bytes, unless the
         artefact is one `is_input_artefact` keeps whole. See
         MAX_EXACT_BYTES and ALWAYS_STORED.
     """
+    payload = normalise_unordered(relative, payload)
     manifest.exact[relative] = sha256_bytes(payload)
     if len(payload) > max_bytes and not is_input_artefact(relative):
         manifest.large[relative] = len(payload)
