@@ -557,6 +557,12 @@ workflow changes.
   keeps the bytes for ninety days. Content is only ever needed for a
   *tolerance* comparison, which is why the feature matrices are stored whole
   and the FSTs are not.
+  A **symbol table is kept whole however large it is**, because it is an
+  *input* to a replacement rather than an output of one: `words.txt` fixes
+  the integer labels every FST in the directory is written against, so a
+  Python `arpa2fst` cannot be driven at all without it. mini-librispeech's
+  is 3.0MB — over the threshold and nothing like the 334MB the threshold
+  exists for. Same rule as recording both sides of CMVN.
 - **The capture records both sides of CMVN.** `raw/` is `feats.scp` as the
   feature extractor wrote it; `features/` is `feats.cmvn.scp` after
   normalisation. The first captures held only the second, which was no use
