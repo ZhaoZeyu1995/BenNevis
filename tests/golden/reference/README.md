@@ -1,13 +1,5 @@
 # Reference data
 
-> **The committed capture is stale.** It was taken before `--dither=0` was
-> set in the recipes' `conf/fbank.conf`, so its feature matrices record
-> something the recipe no longer produces. The WER ledger is stale for the
-> same reason. Both are replaced by the next full run; the guard in
-> `tests/reference/test_against_reference.py` that would catch this
-> automatically only activates once a capture records the configuration,
-> which this one does not.
-
 What Kaldi produces, recorded, so that replacing Kaldi can be checked against
 it without Kaldi.
 

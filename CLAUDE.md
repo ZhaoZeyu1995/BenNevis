@@ -192,6 +192,19 @@ tolerances chosen per layer:
   `tests/reference/test_against_reference.py` fails if they no longer match
   the recipe — because a reference taken under different settings is a record
   of something the pipeline no longer does, and nothing else would notice.
+  **Removing dither cost one word error in total across all eight
+  topologies**, and it moved downward, so the baseline survived the change
+  intact.
+- **`torchaudio.compliance.kaldi.fbank` is not yet equivalent, and dither was
+  only most of the reason.** Against undithered Kaldi it agrees to 0.065 max
+  and 0.012 mean in the log-mel domain, down from 1.45 and 0.038 with dither
+  on — so dither accounted for about 95% of the gap but not the remainder.
+  0.012 in the log domain is roughly 1% in linear energy: small, systematic,
+  and far outside `rtol=1e-4`. The frame counts match exactly, so framing and
+  `snip-edges` are right; the difference is in the values. It wants its own
+  investigation before fbank is replaced, and the candidates are the mel
+  filterbank edges, the window normalisation and the flooring applied before
+  the log.
 - **Losses**: agreement to ~1e-4 on a fixed batch. This is the fastest and
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
