@@ -284,6 +284,15 @@ workflow changes.
   forever**: the batch was reset but the pointer never advanced. Note
   `max_dur` can exceed `max_sum_dur` in the shipped configs, so that one was
   reachable with real data.
+- **Progress bars are off when stderr is not a terminal, and every epoch
+  logs a line.** `tqdm` writes a fresh line per update off-terminal, so a
+  nightly run produced thousands of near-identical lines with no epoch
+  boundaries, and a healthy run was indistinguishable from a hung one — the
+  author checked on a run and reported it stuck when it was at epoch 68 of 79
+  and converging. Every `tqdm` call passes `disable=None`, which is its
+  documented "off unless interactive", and `fit` logs one line per epoch with
+  both losses and the step. `tests/core/test_training_logs.py` pins both,
+  because neither fails anything when lost.
 - **`opt.nickname` is optional now.** `run/train.py`'s `get_opt` attaches it
   via `setattr`, and `Trainer` used to require it, so a `Trainer` built
   anywhere else — a test, a script, a notebook — crashed inside `wandb`

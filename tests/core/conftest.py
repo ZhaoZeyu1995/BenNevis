@@ -245,3 +245,75 @@ def trainer_factory(process_group, model_factory, tmp_path):
         )
 
     return build
+
+
+@pytest.fixture
+def dataset_for_logs(process_group):
+    """
+    A Trainer and two loaders, built the way the sampler tests build them.
+
+    Shared by the logging tests, which need a real `fit` to run and do not
+    care what it trains on.
+    """
+    import torch
+
+    from BenNevis.core.trainer import Trainer
+
+    class Tiny(torch.utils.data.Dataset):
+        uttids = [f"u{i}" for i in range(4)]
+        utt2dur = {f"u{i}": 1.0 for i in range(4)}
+        sort = None
+
+        def __len__(self):
+            return 4
+
+        def __getitem__(self, index):
+            return index
+
+    def collate(items):
+        size = len(items)
+        return {
+            "feats": torch.zeros(size, 5, 4),
+            "feats_lens": torch.full((size,), 5, dtype=torch.int32),
+            "target_lengths": torch.full((size,), 2, dtype=torch.int32),
+            "word_ids": [[1, 2]] * size,
+            "batch_size": size,
+        }
+
+    def build(tmp_path, **kwargs):
+        from torch.utils.data.distributed import DistributedSampler
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.proj = torch.nn.Linear(4, 3)
+
+            def forward(self, inputs, input_lens):
+                return self.proj(inputs).log_softmax(-1), input_lens
+
+        data = Tiny()
+        model = Model()
+        optimiser = torch.optim.SGD(model.parameters(), lr=0.01)
+        optimiser.nickname = "test.SGD"
+        trainer = Trainer(
+            model=model,
+            optimizers=[optimiser],
+            schedulers=[],
+            loss_func=StubLoss("mean"),
+            exp_dir=str(tmp_path / "exp"),
+            device=torch.device("cpu"),
+            **kwargs,
+        )
+
+        def loader():
+            return torch.utils.data.DataLoader(
+                data,
+                batch_size=2,
+                sampler=DistributedSampler(data, shuffle=False),
+                collate_fn=collate,
+                num_workers=0,
+            )
+
+        return trainer, loader(), loader()
+
+    return build

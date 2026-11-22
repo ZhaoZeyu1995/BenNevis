@@ -639,7 +639,18 @@ class Trainer:
         num_steps = 0
         loss_value_sum = 0
         if self.gpu_id == 0:
-            progress_bar = tqdm(total=self.num_samples, position=0, unit="samples")
+            progress_bar = tqdm(
+                total=self.num_samples,
+                position=0,
+                unit="samples",
+                # None, not False: tqdm then disables itself when
+                # stderr is not a terminal. In a CI log a bar writes a
+                # fresh line per update, which buries the epoch
+                # boundaries under thousands of near-identical lines
+                # and makes a healthy run indistinguishable from a
+                # hung one.
+                disable=None,
+            )
             progress_bar.set_description(f"Epoch {self.epoch}/{self.max_epochs-1}")
             progress_bar.set_postfix(self.metrics_dict)
             progress_bar.refresh()
@@ -738,6 +749,7 @@ class Trainer:
         loss_value_sum = 0
         if self.gpu_id == 0:
             valid_progress_bar = tqdm(
+                disable=None,
                 total=self.num_val_samples,
                 desc="Validating",
                 position=1,
@@ -766,6 +778,7 @@ class Trainer:
         loss_value_sum = 0
         if self.gpu_id == 0:
             test_progress_bar = tqdm(
+                disable=None,
                 total=self.num_test_samples,
                 desc="Testing",
                 position=1,
@@ -798,6 +811,7 @@ class Trainer:
         """
         if self.gpu_id == 0:
             progress_bar = tqdm(
+                disable=None,
                 total=self.num_predict_samples,
                 desc="Predicting",
                 position=0,
@@ -969,6 +983,17 @@ class Trainer:
             self.model.eval()
             with torch.no_grad():
                 valid_loss = self._valid_epoch()
+
+            # One line per epoch, which is what a log needs: with the bars
+            # disabled there is otherwise nothing between "training started"
+            # and "training finished", and with them enabled there is far too
+            # much. This is how a reader tells a slow run from a stuck one.
+            if self.gpu_id == 0:
+                logging.info(
+                    f"Epoch {self.epoch}/{self.max_epochs}: "
+                    f"train loss {train_loss:.6f}, valid loss {valid_loss:.6f}, "
+                    f"step {self.step}"
+                )
             for lrs in self.schedulers:
                 lrs.step(valid_loss)
 
@@ -1039,6 +1064,7 @@ class Trainer:
         check_steps = 2
         if self.gpu_id == 0:
             progress_bar = tqdm(
+                disable=None,
                 total=check_steps,
                 unit="steps",
                 position=1,
