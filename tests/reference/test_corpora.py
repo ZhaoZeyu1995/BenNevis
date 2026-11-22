@@ -417,3 +417,132 @@ class TestDisambigLexiconFstReproducesItsDigest:
             f"of bytes are not committed, so compare against the workflow "
             f"artefact to see how they differ"
         )
+
+
+class TestTheLexiconStagesSeparately:
+    """
+    Each stage of `prepare_lang.sh`'s lexicon pipeline, against the
+    intermediate Kaldi wrote for it.
+
+    `L_disambig.fst`'s digest covers four stages at once, so a mismatch
+    there says something is wrong and nothing about which. These check the
+    two stages that have recorded inputs, each driven by Kaldi's own output
+    from the stage before rather than by this implementation's -- so an
+    error in stage one cannot make stage two look wrong, or hide a second
+    error that cancels it.
+
+    #44 captured these on purpose, before the replacement was written. It
+    is the only time today that happened in the right order.
+    """
+
+    @staticmethod
+    def read_lexiconp(path):
+        """A `lexiconp`: word, pronunciation probability, then phones."""
+        entries = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if fields:
+                entries.append((fields[0], tuple(fields[2:])))
+        return entries
+
+    def test_position_dependent_suffixing_matches(self, corpus):
+        from BenNevis.lm.lexicon import position_dependent, read_lexicon
+
+        name, directory, _manifest = corpus
+        source = directory / "dict" / "lexicon.txt"
+        target = directory / "tmp" / "lexiconp.txt"
+        if not source.is_file() or not target.is_file():
+            pytest.skip(f"{name} has no captured lexicon intermediate")
+
+        settings = TestLexiconFstReproducesItsDigest.SETTINGS[name]
+        if not settings["position_dependent_phones"]:
+            pytest.skip(f"{name} does not use position-dependent phones")
+
+        mine = [
+            (word, position_dependent(pronunciation))
+            for word, pronunciation in read_lexicon(source)
+        ]
+        theirs = self.read_lexiconp(target)
+        assert len(mine) == len(theirs), f"{name}: entry count"
+        differing = [
+            (index, a, b) for index, (a, b) in enumerate(zip(mine, theirs)) if a != b
+        ]
+        assert not differing, (
+            f"{name}: {len(differing)} entries differ, the first at line "
+            f"{differing[0][0] + 1}: {differing[0][1]} against "
+            f"{differing[0][2]}"
+        )
+
+    def test_disambiguation_matches_entry_for_entry(self, corpus):
+        """
+        Driven by Kaldi's suffixed lexicon, not by this implementation's,
+        so the two stages are genuinely independent.
+        """
+        from BenNevis.lm.lexicon import add_disambiguation
+
+        name, directory, _manifest = corpus
+        source = directory / "tmp" / "lexiconp.txt"
+        target = directory / "tmp" / "lexiconp_disambig.txt"
+        if not source.is_file() or not target.is_file():
+            pytest.skip(f"{name} has no captured lexicon intermediates")
+
+        mine, _highest = add_disambiguation(self.read_lexiconp(source))
+        theirs = self.read_lexiconp(target)
+        assert len(mine) == len(theirs), f"{name}: entry count"
+        differing = [
+            (index, a, b) for index, (a, b) in enumerate(zip(mine, theirs)) if a != b
+        ]
+        assert not differing, (
+            f"{name}: {len(differing)} entries differ, the first at line "
+            f"{differing[0][0] + 1}: {differing[0][1]} against "
+            f"{differing[0][2]}"
+        )
+
+    def test_the_symbol_count_matches_what_kaldi_recorded(self, corpus):
+        """
+        `lex_ndisambig` is `add_lex_disambig.pl`'s answer plus the one
+        symbol reserved for silence, and that number decides which symbol
+        goes on `L_disambig.fst`'s silence arc.
+        """
+        from BenNevis.lm.lexicon import add_disambiguation
+
+        name, directory, _manifest = corpus
+        source = directory / "tmp" / "lexiconp.txt"
+        recorded = directory / "tmp" / "lex_ndisambig"
+        if not source.is_file() or not recorded.is_file():
+            pytest.skip(f"{name} has no captured lexicon intermediates")
+
+        _mine, highest = add_disambiguation(self.read_lexiconp(source))
+        expected = int(recorded.read_text(encoding="utf-8").strip())
+        assert highest + 1 == expected, (
+            f"{name}: lex_ndisambig is {expected}, so add_lex_disambig "
+            f"returned {expected - 1}; this returned {highest}"
+        )
+
+    def test_the_pass_through_symbols_are_the_disambiguation_ones(self, corpus):
+        """
+        `fstaddselfloops` gets `#0`'s id on each side. If these were
+        anything else the self-loop would carry a label the grammar never
+        emits, and the composed graph would silently reject every
+        back-off.
+        """
+        name, directory, _manifest = corpus
+        phones_side = directory / "lang" / "phones" / "wdisambig_phones.int"
+        words_side = directory / "lang" / "phones" / "wdisambig_words.int"
+        if not phones_side.is_file():
+            pytest.skip(f"{name} has no captured wdisambig files")
+
+        phones = read_symbol_table_from(directory / "lang" / "phones.txt")
+        words = read_symbol_table_from(directory / "lang" / "words.txt")
+        assert phones_side.read_text().split() == [str(phones["#0"])], name
+        assert words_side.read_text().split() == [str(words["#0"])], name
+
+
+def read_symbol_table_from(path):
+    """An OpenFST symbol table as a mapping."""
+    table = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            table[fields[0]] = int(fields[1])
+    return table

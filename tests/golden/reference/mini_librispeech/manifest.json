@@ -1135,7 +1135,7 @@
   "captured": "2026-11-22",
   "corpus": "mini_librispeech",
   "exact": {
-    "dict/extra_questions.txt": "7401265ce61299600e7edadd35f8619dfe8079820d4f315b387c2cb1c54f01e2",
+    "dict/extra_questions.txt": "817bab2aaacb2e4e9c59aef4262c62d3b96219c08910ecbd38a8ecfc10e7d6dd",
     "dict/lexicon.txt": "e8e2e1fc58cb1348a06b87436d4c10c2d19ff85034732c3acc23535969d38e6f",
     "dict/lexiconp.txt": "62c30df31edbbf33eb469a6e834077ca5f9997cc33ad82cb24342b6f1d7f6bd3",
     "dict/nonsilence_phones.txt": "19c3d211d9d7800621e643f7c77d5bfd7b1fca54f37a7ab392deb876d85295dc",
@@ -1153,9 +1153,14 @@
     "lang/phones/disambig.int": "b957a7e81f6e12d7f3bf5714e25c0ba6d6ec025eb67863daebde9aa65581bab2",
     "lang/phones/optional_silence.int": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
     "lang/phones/silence.int": "bf794518e35d7f1ce3a50b3058c4191bb9401e568fc645d77e10b0f404cf1f22",
+    "lang/phones/wdisambig_phones.int": "40ce6403d9d8b2b62e8fcfac6f45403a5ac9787e68797ade6197eb15968ea339",
+    "lang/phones/wdisambig_words.int": "6f636cd905a018c1caea5ee8b5f0a21a7532dfb4a31d133d440b04b84165e43a",
     "lang/words.txt": "43c4e6ab38c37855b8603f4300f42990ffd07aa56f4538d5b581af9528564794",
     "recipe/conf/fbank.conf": "bb496abe7c9b8d50f2ba549e9ab420170010a6ac21c43ac266e84082ceddafa1",
-    "recipe/conf/pitch.conf": "33a8aa74d8df4ba035d05318f8b091d3becc6890dffe77f75c905818fbfccd18"
+    "recipe/conf/pitch.conf": "33a8aa74d8df4ba035d05318f8b091d3becc6890dffe77f75c905818fbfccd18",
+    "tmp/lex_ndisambig": "e6c21e8d260fe71882debdb339d2402a2ca7648529bc2303f48649bce0380017",
+    "tmp/lexiconp.txt": "c85da8ecec814dd5cd417cae4d7fd44054f1e1a2ddabc17581a45fc8533beedf",
+    "tmp/lexiconp_disambig.txt": "32ef183b236856a3762e38747acba253c2dfa51d0a215f6ba6bfbdd6f255946c"
   },
   "functional": {
     "graph/ctc/G.fst.txt": {
