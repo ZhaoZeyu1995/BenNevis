@@ -1,0 +1,16 @@
+train_ds: data/train_clean_5
+valid_ds: data/dev_clean_2
+lang: ???
+ratio_th: 4
+load_wav: null # decided by the model
+load_feats: null # decided by the model
+sort: ascending
+min_dur: 0.5
+# Equal to max_sum_dur, deliberately. An utterance longer than the batch
+# duration budget gets a batch of its own, which is correct but silently
+# exceeds the budget; keeping them equal means that never happens.
+max_dur: 30.0
+max_sum_dur: 30.0
+num_workers: 4
+val_batch_size: 1
+pin_memory: true

@@ -1,0 +1,15 @@
+# A starting point rather than a tuned configuration. librispeech's own
+# recipe uses 3 x 1024, which is far too slow to train on the CPU runners
+# this recipe is exercised on; this is scaled down to fit a few hours. Tune
+# it deliberately, and record what the change does to the WER ledger.
+module: BenNevis.models.rnnp
+name: Encoder
+kwargs:
+  etype: blstmp
+  idim: 83
+  odim: null  # determined by lang at training stage
+  elayers: 3
+  eunits: 320
+  eprojs: 320
+  subsample: [2, 1, 1]
+  dropout: 0.1

@@ -1,0 +1,1 @@
+../../yesno/asr/path.sh
