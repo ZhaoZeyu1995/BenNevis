@@ -49,7 +49,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -231,6 +231,36 @@ def read_archive(scp: Path, copy_feats: Optional[str] = None) -> Dict[str, "obje
 #: The uploaded workflow artefact holds the bytes for ninety days.
 MAX_EXACT_BYTES = 1 << 20
 
+#: Artefacts stored whole however large they are, because they are *inputs*
+#: to a replacement rather than outputs of one. A symbol table fixes the
+#: integer labels every FST in the directory is written against, so a
+#: Python `arpa2fst` cannot be driven at all without it, let alone compared
+#: -- and "any stage being replaced needs its input captured as well as its
+#: output" is the rule the capture already follows for CMVN's two sides.
+#: mini-librispeech's `words.txt` is 3.0MB, which is above the threshold and
+#: nothing like the 334MB the threshold exists for.
+#:
+#: Matched on the path's suffix, so `lang/words.txt` and
+#: `lang_nosp/words.txt` both qualify.
+ALWAYS_STORED = ("words.txt", "phones.txt", "tokens.txt")
+
+
+def is_input_artefact(relative: str) -> bool:
+    """
+    Whether an artefact is stored whole regardless of its size.
+
+    Arguments
+    ---------
+    relative: str
+        Its path within the capture directory.
+
+    Returns
+    -------
+    bool
+        True for the symbol tables in `ALWAYS_STORED`.
+    """
+    return PurePosixPath(relative).name in ALWAYS_STORED
+
 
 def store(
     manifest: Manifest,
@@ -253,11 +283,12 @@ def store(
     payload: bytes
         The content.
     max_bytes: int
-        Above this the digest is recorded without the bytes; see
-        MAX_EXACT_BYTES.
+        Above this the digest is recorded without the bytes, unless the
+        artefact is one `is_input_artefact` keeps whole. See
+        MAX_EXACT_BYTES and ALWAYS_STORED.
     """
     manifest.exact[relative] = sha256_bytes(payload)
-    if len(payload) > max_bytes:
+    if len(payload) > max_bytes and not is_input_artefact(relative):
         manifest.large[relative] = len(payload)
         return
     target = destination / relative

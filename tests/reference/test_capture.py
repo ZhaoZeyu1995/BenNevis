@@ -809,3 +809,64 @@ class TestLargeArtefacts:
         capture.store(manifest, tmp_path, "edge.txt", b"z" * 16, max_bytes=16)
         assert (tmp_path / "edge.txt").is_file()
         assert "edge.txt" not in manifest.large
+
+
+class TestInputArtefactsAreAlwaysStored:
+    """
+    A symbol table is kept whole however large it is.
+
+    The size rule is about outputs: a 334MB TLG is compared by digest and
+    its bytes answer nothing a digest does not. A symbol table is an
+    *input* -- it fixes the integer labels every FST in the directory is
+    written against, so a Python arpa2fst cannot be driven at all without
+    it. mini-librispeech's is 3.0MB, over the threshold and nothing like
+    what the threshold exists for.
+
+    This is the same rule the capture already follows in recording both
+    sides of CMVN: whatever stage is being replaced needs its input as well
+    as its output.
+    """
+
+    def test_words_txt_is_stored_however_large(self, tmp_path):
+        from BenNevis.utils.reference import Manifest
+
+        manifest = Manifest()
+        payload = b"<eps> 0\n" * 1000
+        capture.store(manifest, tmp_path, "lang/words.txt", payload, max_bytes=16)
+        assert (tmp_path / "lang" / "words.txt").read_bytes() == payload
+        assert "lang/words.txt" not in manifest.large
+
+    def test_an_fst_of_the_same_size_is_not(self, tmp_path):
+        from BenNevis.utils.reference import Manifest
+
+        manifest = Manifest()
+        payload = b"0 1 2 3 4.0\n" * 1000
+        capture.store(manifest, tmp_path, "graph/G.fst.txt", payload, max_bytes=16)
+        assert not (tmp_path / "graph" / "G.fst.txt").exists()
+        assert manifest.large["graph/G.fst.txt"] == len(payload)
+
+    @pytest.mark.parametrize(
+        "relative,expected",
+        [
+            ("lang/words.txt", True),
+            ("lang_nosp/words.txt", True),
+            ("lang/phones.txt", True),
+            ("lang/k2/tokens.txt", True),
+            ("graph/ctc/G.fst.txt", False),
+            ("lang/phones/align_lexicon.int", False),
+            ("lang/words.txt.bak", False),
+        ],
+    )
+    def test_which_paths_qualify(self, relative, expected):
+        """
+        Matched on the file name, so any language directory's table
+        qualifies however it is nested.
+        """
+        assert capture.is_input_artefact(relative) is expected
+
+    def test_a_posix_path_is_used_for_matching(self):
+        """
+        The capture's keys are POSIX whatever the platform, so the match
+        must be too -- this has broken tier 1 on Windows three times.
+        """
+        assert capture.is_input_artefact("a/b/c/words.txt")
