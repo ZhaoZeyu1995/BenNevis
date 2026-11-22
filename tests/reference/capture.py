@@ -87,6 +87,23 @@ LANG_TEXT = (
     "phones/optional_silence.int",
 )
 
+#: The *inputs* `prepare_lang.sh` reads, from `data/local/dict`. The rule
+#: the capture already follows for CMVN and for the symbol tables: whatever
+#: stage is being replaced needs its input captured as well as its output,
+#: because otherwise there is nothing to drive the replacement with.
+#:
+#: Learned by writing a Python `L.fst` and finding that mini-librispeech's
+#: lexicon was not in the reference, so the only thing the build could be
+#: checked against was yesno's four-word dictionary.
+DICT_TEXT = (
+    "lexicon.txt",
+    "lexiconp.txt",
+    "silence_phones.txt",
+    "nonsilence_phones.txt",
+    "optional_silence.txt",
+    "extra_questions.txt",
+)
+
 #: Binary FSTs, converted to text with fstprint so that a diff is readable
 #: and a replacement can be compared without OpenFST.
 LANG_FSTS = ("L.fst", "L_disambig.fst")
@@ -242,7 +259,16 @@ MAX_EXACT_BYTES = 1 << 20
 #:
 #: Matched on the path's suffix, so `lang/words.txt` and
 #: `lang_nosp/words.txt` both qualify.
-ALWAYS_STORED = ("words.txt", "phones.txt", "tokens.txt")
+#: `lexicon.txt` is here for the same reason as the symbol tables: it is the
+#: input a Python `make_lexicon_fst` is driven by, and mini-librispeech's is
+#: several megabytes because the dictionary has 200k words.
+ALWAYS_STORED = (
+    "words.txt",
+    "phones.txt",
+    "tokens.txt",
+    "lexicon.txt",
+    "lexiconp.txt",
+)
 
 
 def is_input_artefact(relative: str) -> bool:
@@ -304,9 +330,10 @@ def capture_language(
     printer: Optional[str],
     lang_dir: str = "data/lang",
     graph_prefix: str = "data/lang_test_tg_",
+    dict_dir: str = "data/local/dict",
 ) -> None:
     """
-    Capture the language directories: symbol tables and lexicon FSTs.
+    Capture the language directories: the dictionary, symbol tables and FSTs.
 
     Arguments
     ---------
@@ -330,7 +357,17 @@ def capture_language(
         yesno's are `data/lang_test_tg_<topo>`, mini_librispeech's
         `data/lang_test_tgsmall_<topo>` after the small 3-gram model Kaldi's
         format_lms.sh builds.
+    dict_dir: str
+        The dictionary `prepare_lang.sh` reads, relative to the recipe. Its
+        contents are the *input* to the stage, so a replacement has
+        something to run on.
     """
+    dict_base = recipe / dict_dir
+    for name in DICT_TEXT:
+        source = dict_base / name
+        if source.is_file():
+            store(manifest, destination, f"dict/{name}", source.read_bytes())
+
     base = recipe / lang_dir
     for name in LANG_TEXT:
         source = base / name
@@ -555,6 +592,14 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--dict-dir",
+        default="data/local/dict",
+        help=(
+            "the dictionary prepare_lang.sh reads, whose contents are the "
+            "input a Python replacement has to be driven by"
+        ),
+    )
+    parser.add_argument(
         "--topos",
         nargs="+",
         default=None,
@@ -645,6 +690,7 @@ def main(argv=None) -> int:
         topologies,
         printer,
         lang_dir=args.lang_dir,
+        dict_dir=args.dict_dir,
         graph_prefix=args.graph_prefix,
     )
     capture_features(

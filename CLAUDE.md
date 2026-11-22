@@ -575,6 +575,10 @@ workflow changes.
   Python `arpa2fst` cannot be driven at all without it. mini-librispeech's
   is 3.0MB — over the threshold and nothing like the 334MB the threshold
   exists for. Same rule as recording both sides of CMVN.
+  The same rule puts **`prepare_lang.sh`'s dictionary in the capture**, under
+  `dict/` so an input cannot be mistaken for an output. That gap was found
+  by writing a Python `L.fst` and discovering the only lexicon available to
+  check it against was yesno's four words.
 - **The capture records both sides of CMVN.** `raw/` is `feats.scp` as the
   feature extractor wrote it; `features/` is `feats.cmvn.scp` after
   normalisation. The first captures held only the second, which was no use
