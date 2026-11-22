@@ -954,3 +954,96 @@ class TestDictionaryInputsAreCaptured:
             manifest, recipe, tmp_path / "out", topologies=[], printer=None
         )
         assert not any(k.startswith("dict/") for k in manifest.exact)
+
+
+class TestDisambiguationInputsAreCaptured:
+    """
+    The inputs and the one intermediate `L_disambig.fst` needs.
+
+    That FST is four stages -- disambiguate the lexicon, build the FST, add
+    the `#0` pass-through self-loops, arc-sort -- and only its end result
+    has a digest. A mismatch would say that something among four stages is
+    wrong and nothing about which, on a 34MB artefact whose bytes are not
+    committed.
+
+    Captured **before** writing the replacement rather than after being
+    caught out, which is what happened with CMVN's inputs, the symbol
+    tables, the dictionary and `utt2spk`.
+    """
+
+    def test_the_disambiguated_lexicon_is_captured(self):
+        assert "lexiconp_disambig.txt" in capture.TMP_TEXT
+
+    def test_the_symbol_count_is_captured(self):
+        """
+        `lex_ndisambig` is how many symbols add_lex_disambig.pl needed,
+        which decides the silence disambiguation symbol's number -- `#16`
+        for mini-librispeech. Derivable from disambig.txt's length, but
+        recording it means a replacement can be checked against the number
+        rather than against a count of something else.
+        """
+        assert "lex_ndisambig" in capture.TMP_TEXT
+
+    def test_the_pass_through_symbols_are_captured(self):
+        """
+        `fstaddselfloops`' two arguments. Two lines each, and without them
+        that stage has no recorded inputs at all.
+        """
+        for name in (
+            "phones/wdisambig_phones.int",
+            "phones/wdisambig_words.int",
+        ):
+            assert name in capture.LANG_TEXT, name
+
+    def test_the_disambiguated_lexicon_is_stored_however_large(self):
+        assert capture.is_input_artefact("tmp/lexiconp_disambig.txt")
+
+    def test_it_is_captured_under_its_own_prefix(self, tmp_path):
+        """
+        `tmp/`, so an intermediate is not mistaken for an input the recipe
+        was given or an output it produced.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        recipe = tmp_path / "recipe"
+        (recipe / "data" / "local" / "lang").mkdir(parents=True)
+        (recipe / "data" / "local" / "lang" / "lexiconp_disambig.txt").write_text(
+            "YES\t1.0\tY_B E_I S_E\n"
+        )
+        (recipe / "data" / "lang").mkdir(parents=True)
+
+        manifest = Manifest()
+        capture.capture_language(
+            manifest, recipe, tmp_path / "out", topologies=[], printer=None
+        )
+        assert "tmp/lexiconp_disambig.txt" in manifest.exact
+        assert (
+            tmp_path / "out" / "tmp" / "lexiconp_disambig.txt"
+        ).read_text() == "YES\t1.0\tY_B E_I S_E\n"
+
+    def test_a_missing_working_directory_is_not_an_error(self, tmp_path):
+        """
+        `prepare_lang.sh`'s tmpdir is a recipe argument and differs per
+        recipe, so the capture must not insist on finding it.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        recipe = tmp_path / "recipe"
+        (recipe / "data" / "lang").mkdir(parents=True)
+        manifest = Manifest()
+        capture.capture_language(
+            manifest, recipe, tmp_path / "out", topologies=[], printer=None
+        )
+        assert not any(k.startswith("tmp/") for k in manifest.exact)
+
+    def test_the_tmp_dir_is_configurable(self):
+        """
+        yesno's is data/local/lang and mini_librispeech's is
+        data/local/lang_tmp_nosp, so it cannot be a constant -- the same
+        reason --lang-dir and --dict-dir exist.
+        """
+        import inspect
+
+        signature = inspect.signature(capture.capture_language)
+        assert "tmp_dir" in signature.parameters
+        assert signature.parameters["tmp_dir"].default == "data/local/lang"

@@ -84,6 +84,12 @@ LANG_TEXT = (
     "oov.int",
     "phones/align_lexicon.int",
     "phones/disambig.int",
+    # The word-disambiguation symbols `fstaddselfloops` is given when
+    # L_disambig.fst is built -- the phone side and the word side of the
+    # `#0` pass-through that lets G's back-off arcs traverse L. Two lines
+    # each, and without them that stage has no recorded inputs at all.
+    "phones/wdisambig_phones.int",
+    "phones/wdisambig_words.int",
     "phones/silence.int",
     "phones/optional_silence.int",
 )
@@ -96,6 +102,23 @@ LANG_TEXT = (
 #: Learned by writing a Python `L.fst` and finding that mini-librispeech's
 #: lexicon was not in the reference, so the only thing the build could be
 #: checked against was yesno's four-word dictionary.
+#: `prepare_lang.sh`'s working directory, which holds the one intermediate
+#: a replacement needs: the lexicon after `add_lex_disambig.pl` has added
+#: disambiguation symbols. L_disambig.fst is four stages -- disambiguate the
+#: lexicon, build the FST, add the pass-through self-loops, arc-sort -- and
+#: only its end result has a digest. A mismatch would say that something
+#: among four stages is wrong and nothing about which, on a 34MB artefact
+#: whose bytes are not committed. This is the intermediate that splits that
+#: in two.
+#:
+#: Captured proactively rather than after being caught out, which the
+#: dictionary, the symbol tables, CMVN's inputs and `utt2spk` all were.
+TMP_TEXT = (
+    "lexiconp_disambig.txt",
+    "lexiconp.txt",
+    "lex_ndisambig",
+)
+
 DICT_TEXT = (
     "lexicon.txt",
     "lexiconp.txt",
@@ -269,6 +292,7 @@ ALWAYS_STORED = (
     "tokens.txt",
     "lexicon.txt",
     "lexiconp.txt",
+    "lexiconp_disambig.txt",
 )
 
 
@@ -408,6 +432,7 @@ def capture_language(
     lang_dir: str = "data/lang",
     graph_prefix: str = "data/lang_test_tg_",
     dict_dir: str = "data/local/dict",
+    tmp_dir: str = "data/local/lang",
 ) -> None:
     """
     Capture the language directories: the dictionary, symbol tables and FSTs.
@@ -438,7 +463,17 @@ def capture_language(
         The dictionary `prepare_lang.sh` reads, relative to the recipe. Its
         contents are the *input* to the stage, so a replacement has
         something to run on.
+    tmp_dir: str
+        `prepare_lang.sh`'s working directory, which holds the
+        disambiguated lexicon. yesno's is `data/local/lang`;
+        mini_librispeech's is `data/local/lang_tmp_nosp`.
     """
+    tmp_base = recipe / tmp_dir
+    for name in TMP_TEXT:
+        source = tmp_base / name
+        if source.is_file():
+            store(manifest, destination, f"tmp/{name}", source.read_bytes())
+
     dict_base = recipe / dict_dir
     for name in DICT_TEXT:
         source = dict_base / name
@@ -693,6 +728,15 @@ def main(argv=None) -> int:
         ),
     )
     parser.add_argument(
+        "--tmp-dir",
+        default="data/local/lang",
+        help=(
+            "prepare_lang.sh's working directory, which holds the "
+            "disambiguated lexicon; data/local/lang_tmp_nosp for "
+            "mini_librispeech"
+        ),
+    )
+    parser.add_argument(
         "--topos",
         nargs="+",
         default=None,
@@ -784,6 +828,7 @@ def main(argv=None) -> int:
         printer,
         lang_dir=args.lang_dir,
         dict_dir=args.dict_dir,
+        tmp_dir=args.tmp_dir,
         graph_prefix=args.graph_prefix,
     )
     capture_features(

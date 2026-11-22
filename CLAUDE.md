@@ -318,6 +318,36 @@ ended in `yesno`, so it skipped unconditionally — **a test that could not
 fail**. It now asserts that it compared something, which is the only way a
 skip-shaped bug announces itself.
 
+**The equivalence gates are scaffolding, and retiring them is a decision.**
+Everything that compares against `tests/golden/reference/` exists to answer
+one question — *does the Python do what Kaldi did?* — and that question
+stops being asked, per stage, the moment Kaldi no longer owns that stage.
+Keeping those gates past that point is not caution, it is harmful: they pin
+the Python to reproducing Kaldi's accidents. `format_weight` narrows to
+float32 **only** because Kaldi's `BaseFloat` is single precision; once
+nothing compares against Kaldi, computing in double is strictly better and
+the byte-exact test would forbid it. The same goes for `arpa2fst`'s state
+numbering and `fstprint`'s formatting.
+
+So retirement is per stage, deliberate, and recorded in the PR that does it
+— never by deleting a test that has become inconvenient, which is the same
+failure as raising `max_wer` to make a run pass. Three things survive the
+migration and must not be swept up with the rest:
+
+- **The WER ledger.** It is not an equivalence check against Kaldi's
+  *implementation*; it is a regression gate on the system's output. It stays
+  permanently, with `reference_wer` re-anchored to the Python baseline once
+  that is the baseline.
+- **Behaviour tests that happen to have been validated against Kaldi.** The
+  back-off rule, "the word rides only the first arc", "`</s>` is a final
+  weight and not an arc" — these say *correct*, not *same as Kaldi*, and
+  they keep their value when Kaldi is gone. The test to apply is whether a
+  test would still mean something if Kaldi had never existed.
+- **The captured reference data itself.** Deleting a test is cheap and
+  reversible; the capture is not reproducible once the image stops
+  building, and Kaldi is bit-rotting. It is the only record of what the
+  pre-migration system did, and it costs nothing to keep.
+
 **Kaldi's output is recorded, not re-derived.** `tests/golden/reference/`
 holds what Kaldi produced from a real `yesno` run inside the pinned image,
 captured by `tests/reference/capture.py` and described by a `manifest.json`
