@@ -653,12 +653,22 @@ workflow changes.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
-- **The remaining POSIX-only sites are deliberate.** `Lang.load_lexicon`
-  shells out to `fstprint | awk`, and needs the lexicon off Kaldi first,
-  which is a larger piece of goal 2. `run/predict.py`'s `cat | awk` merge and
-  `run/align.py`'s `gzip -c` pipe are portable in a few lines of Python each,
-  but the entry-point scripts have no test coverage, so they wait for tier 3
-  rather than being changed blind. `Lang.load_topo` keeps a `fstprint`
+- **The remaining POSIX-only sites.** `Lang.load_lexicon` shells out to
+  `fstprint | awk`; the `awk` half is now `BenNevis.decode.graph`'s
+  `load_openfst_text`, but the `fstprint` half needs the binary `L.fst`, and
+  getting off that means a language directory carrying `k2/L.fst.txt` the way
+  it already carries `k2/topo.yaml` — which needs the dictionary at
+  preparation time, so it is a larger piece of goal 2.
+  `run/predict.py`'s `cat | awk` merge **is now Python**
+  (`BenNevis.utils.merge`, fifteen tier 1 tests), and replacing it fixed a
+  latent bug rather than only porting one: a shell glob is lexicographic, so
+  eleven ranks merged as 1, 10, 11, 2, 3 ... Nothing downstream depended on
+  it, because both files are keyed by utterance, but it was wrong.
+  `bin/align.py`'s `gzip -c` pipe is **still shell**, and deliberately: a
+  tested replacement would need `kaldiio`, which tier 1 does not install
+  (it installs `pytest` and `pyyaml` only), so the check would be tier 3 —
+  and changing it lands in the *next* nightly rather than the one in
+  flight. `Lang.load_topo` keeps a `fstprint`
   *fallback* for a language directory prepared before `k2/topo.yaml` existed;
   it warns, and no new directory takes that path.
 - **Recipe configs rot against torch.** `ReduceLROnPlateau` lost `verbose`,

@@ -110,11 +110,27 @@ def main(args):
         dist.barrier()
         if gpu_id == 0:
             logging.info("Merging predictions from multiple GPUs")
-            os.system(
-                f"cat {args.output_dir}/split{world_size}/ref.wrd.*.trn | awk '!seen[$0]++' > {args.output_dir}/ref.wrd.trn"
+            # Was `cat <glob> | awk '!seen[$N]++'`. The deduplication is
+            # the same -- first occurrence wins -- but the order is not: a
+            # shell glob is lexicographic, so eleven ranks merged as
+            # 1, 10, 11, 2, 3 ... Nothing downstream depended on it,
+            # because both files are keyed by utterance, but it was wrong.
+            from pathlib import Path
+
+            from BenNevis.utils.merge import (
+                FIRST_FIELD,
+                merge_unique,
+                rank_sorted,
             )
-            os.system(
-                f"cat {args.output_dir}/split{world_size}/output.*.scp | awk '!seen[$1]++' > {args.output_dir}/output.scp"
+
+            split = Path(args.output_dir) / f"split{world_size}"
+            Path(f"{args.output_dir}/ref.wrd.trn").write_text(
+                merge_unique(rank_sorted(split.glob("ref.wrd.*.trn"))),
+                encoding="utf-8",
+            )
+            Path(f"{args.output_dir}/output.scp").write_text(
+                merge_unique(rank_sorted(split.glob("output.*.scp")), key=FIRST_FIELD),
+                encoding="utf-8",
             )
             with open(f"{args.output_dir}/ref.wrd.trn") as file:
                 num_ref = len(file.readlines())
