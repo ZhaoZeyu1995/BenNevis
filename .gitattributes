@@ -1,11 +1,3 @@
-# Reference and golden data are byte-exact artefacts. Their digests are
-# recorded in a manifest and compared as bytes, and the topology goldens are
-# compared character for character against generated output. Line-ending
-# translation on checkout changes those bytes, so a Windows checkout made
-# every recorded digest wrong -- measured, on a CI runner, which is how this
-# file came to exist. `-text` disables the translation entirely.
-tests/golden/** -text
-
 # Shell and Perl keep LF whatever the platform. A CRLF script does not run on
 # Linux, and the recipes are driven by them, so a commit from a Windows
 # checkout would otherwise break every recipe silently.
@@ -13,9 +5,18 @@ tests/golden/** -text
 *.pl text eol=lf
 
 # Kaldi config files likewise. Kaldi parses them as `--key=value` lines, so a
-# trailing carriage return becomes part of the value -- `--dither=0` is not
+# trailing carriage return becomes part of the value -- `--dither=0
+` is not
 # `--dither=0`. It also made the capture's copy of conf/fbank.conf disagree
 # with the recipe's on a Windows checkout, which is how this was noticed:
 # the configuration guard compares them by digest, and the reference side is
 # `-text` while the recipe side was being translated.
 *.conf text eol=lf
+
+# Reference and golden data are byte-exact artefacts. Their digests are
+# recorded in a manifest and compared as bytes, and the topology goldens are
+# compared character for character against generated output. Line-ending
+# translation on checkout changes those bytes, so a Windows checkout made
+# every recorded digest wrong -- measured, on a CI runner, which is how this
+# file came to exist. `-text` disables the translation entirely.
+tests/golden/** -text
