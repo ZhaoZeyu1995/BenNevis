@@ -15,12 +15,23 @@ against its function -- the standard in CLAUDE.md asks for functional
 equivalence because an FST's encoding is usually arbitrary, not because
 bytes are unwelcome where they are determined.
 
-**Optional silence is not handled yet.** `prepare_lang.sh --sil_prob 0.0`,
-which `egs/yesno/asr` uses, gives the plain construction above.
-A non-zero silence probability adds a start state, a silence state and
-weighted entry arcs, and the exact shape is `make_lexicon_fst.pl`'s rather
-than something to infer -- so a non-zero probability raises instead of
-producing a plausible lexicon that decodes differently.
+**Optional silence** adds a start state, a silence state, and a split on
+each word's *last* arc: one copy to the loop state paying for no silence,
+one to the silence state paying for it. Deliberately non-deterministic,
+which is how `make_lexicon_fst.py` avoids epsilon arcs. The shape here is
+that script's and was read from it rather than inferred -- and then checked,
+because the Perl script of the same name has a *different* shape (its start
+arcs carry the silence phone rather than `<eps>`, and it skips the split
+after a silence word). Kaldi's own output settles which: `<eps>:<eps>` to
+both states, and no special case.
+
+**Weights are float32.** Kaldi's `BaseFloat` is single precision and
+`fstprint` writes about nine significant figures, so `-log(0.5)` comes out
+as `0.693147182` rather than `0.6931471805599453`. Computing in double and
+writing the double would be a correct lexicon that is not byte-identical,
+so the weight is narrowed before it is formatted. This did not arise for
+`--sil_prob 0.0`, where every weight is zero and `fstprint` omits it
+entirely.
 
 Functions
 ---------
@@ -35,18 +46,26 @@ Authors:
 
 from __future__ import annotations
 
+import math
+import struct
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 __all__ = [
+    "Arc",
     "Lexicon",
     "read_lexicon",
     "build_lexicon_arcs",
     "build_lexicon_fst_text",
+    "format_weight",
+    "position_dependent",
 ]
 
 #: A word and the phones it is pronounced as.
 Lexicon = List[Tuple[str, Tuple[str, ...]]]
+
+#: One arc: source, destination, input (phone), output (word), weight.
+Arc = Tuple[int, int, int, int, float]
 
 
 def read_lexicon(path: Path) -> Lexicon:
@@ -87,14 +106,62 @@ def read_lexicon(path: Path) -> Lexicon:
     return entries
 
 
+def position_dependent(
+    pronunciation: Tuple[str, ...],
+) -> Tuple[str, ...]:
+    """
+    A pronunciation with Kaldi's word-position suffixes attached.
+
+    `prepare_lang.sh` does this unless `--position-dependent-phones false`,
+    and it is the default -- so mini-librispeech's lexicon is written in
+    `AH0` while its `phones.txt` only has `AH0_B`, `AH0_E`, `AH0_I` and
+    `AH0_S`. yesno turns it off, which is why a lexicon FST that ignored
+    this reproduced yesno's bytes exactly and could not build
+    mini-librispeech's at all.
+
+    The suffixes are `_S` for a word of one phone, otherwise `_B` for the
+    first, `_E` for the last and `_I` for the rest.
+
+    Note this applies to the **lexicon's** phones. The optional-silence
+    phone is used unsuffixed, which is visible in Kaldi's own output: the
+    silence word `!SIL` is pronounced `SIL_S` while the optional-silence
+    arc carries plain `SIL`.
+
+    Arguments
+    ---------
+    pronunciation: Tuple[str, ...]
+        The phones, as the lexicon writes them.
+
+    Returns
+    -------
+    Tuple[str, ...]
+        The phones with suffixes.
+    """
+    if not pronunciation:
+        return pronunciation
+    if len(pronunciation) == 1:
+        return (f"{pronunciation[0]}_S",)
+    return tuple(
+        (
+            f"{phone}_B"
+            if index == 0
+            else f"{phone}_E" if index == len(pronunciation) - 1 else f"{phone}_I"
+        )
+        for index, phone in enumerate(pronunciation)
+    )
+
+
 def build_lexicon_arcs(
     lexicon: Lexicon,
     words: Dict[str, int],
     phones: Dict[str, int],
     sil_prob: float = 0.0,
-) -> Tuple[List[Tuple[int, int, int, int]], int]:
+    sil_phone: str = "SIL",
+    sil_disambig: Optional[str] = None,
+    position_dependent_phones: bool = False,
+) -> Tuple[List[Arc], int]:
     """
-    The arcs of `L.fst`, and its single final state.
+    The arcs of `L.fst`, and its final state.
 
     Arguments
     ---------
@@ -105,59 +172,140 @@ def build_lexicon_arcs(
     phones: Dict[str, int]
         The phone symbol table.
     sil_prob: float
-        The optional-silence probability. Only 0.0 is supported.
+        The optional-silence probability. Zero gives the plain loop; a value
+        strictly between zero and one adds the silence structure.
+    sil_phone: str
+        The optional-silence phone, `optional_silence.txt`'s content.
+    sil_disambig: Optional[str]
+        A disambiguation symbol for the silence arc, which
+        `prepare_lang.sh` supplies for `L_disambig.fst` and not for `L.fst`.
+    position_dependent_phones: bool
+        Whether to suffix the lexicon's phones by word position, which
+        `prepare_lang.sh` does unless told not to. Defaults to False here
+        because that is what a caller who has not thought about it wants to
+        be told about by a KeyError, rather than silently getting phones
+        that are not in the table.
 
     Returns
     -------
-    Tuple[List[Tuple[int, int, int, int]], int]
-        The arcs as (source, destination, phone, word), and the loop state,
-        which is both the start and the only final state.
+    Tuple[List[Arc], int]
+        The arcs as (source, destination, phone, word, weight), and the
+        final state -- which is the loop state, and is **not** state 0 once
+        silence is in play.
 
     Raises
     ------
-    NotImplementedError
-        For a non-zero silence probability.
+    ValueError
+        If the silence probability is not in [0, 1). One is rejected
+        because its no-silence cost is infinite.
     KeyError
         If a word or phone is missing from its symbol table.
     """
-    if sil_prob != 0.0:
-        raise NotImplementedError(
-            f"sil_prob={sil_prob} is not supported yet; only 0.0, which is "
-            f"what prepare_lang.sh --sil_prob 0.0 produces. A non-zero "
-            f"probability adds a start state, a silence state and weighted "
-            f"entry arcs, and that shape is make_lexicon_fst.pl's rather "
-            f"than something to infer"
+    if not 0.0 <= sil_prob < 1.0:
+        raise ValueError(
+            f"sil_prob={sil_prob} is not in [0, 1); a probability of one "
+            f"would make the no-silence arc cost infinity"
         )
 
-    loop = 0
-    next_state = 1
-    arcs: List[Tuple[int, int, int, int]] = []
-
-    for word, pronunciation in lexicon:
+    def check(word: str, pronunciation: Tuple[str, ...]) -> None:
         if word not in words:
             raise KeyError(f"{word!r} is in the lexicon but not in words.txt")
         for phone in pronunciation:
             if phone not in phones:
                 raise KeyError(f"{phone!r} is in the lexicon but not in phones.txt")
 
-        # The word rides the first arc's output; the rest emit <eps>.
+    arcs: List[Arc] = []
+
+    if sil_prob == 0.0:
+        loop = 0
+        next_state = 1
+    else:
+        # start 0, loop 1, silence 2 -- the numbering make_lexicon_fst.py
+        # uses, and so the numbering Kaldi's bytes have.
+        loop = 1
+        silence = 2
+        next_state = 3
+        sil_cost = -math.log(sil_prob)
+        no_sil_cost = -math.log(1.0 - sil_prob)
+        if sil_phone not in phones:
+            raise KeyError(
+                f"the optional-silence phone {sil_phone!r} is not in " f"phones.txt"
+            )
+        arcs.append((0, loop, 0, 0, no_sil_cost))
+        arcs.append((0, silence, 0, 0, sil_cost))
+        if sil_disambig is None:
+            arcs.append((silence, loop, phones[sil_phone], 0, 0.0))
+        else:
+            if sil_disambig not in phones:
+                raise KeyError(
+                    f"the silence disambiguation symbol {sil_disambig!r} is "
+                    f"not in phones.txt"
+                )
+            disambig_state = next_state
+            next_state += 1
+            arcs.append((silence, disambig_state, phones[sil_phone], 0, 0.0))
+            arcs.append((disambig_state, loop, phones[sil_disambig], 0, 0.0))
+
+    for word, raw_pronunciation in lexicon:
+        pronunciation = (
+            position_dependent(raw_pronunciation)
+            if position_dependent_phones
+            else raw_pronunciation
+        )
+        check(word, pronunciation)
         source = loop
-        for index, phone in enumerate(pronunciation):
-            last = index == len(pronunciation) - 1
-            destination = loop if last else next_state
-            if not last:
-                next_state += 1
+        # Every phone but the last walks forward through fresh states.
+        for index in range(len(pronunciation) - 1):
             arcs.append(
                 (
                     source,
-                    destination,
-                    phones[phone],
+                    next_state,
+                    phones[pronunciation[index]],
                     words[word] if index == 0 else 0,
+                    0.0,
                 )
             )
-            source = destination
+            source = next_state
+            next_state += 1
+
+        last = len(pronunciation) - 1
+        phone = phones[pronunciation[last]] if last >= 0 else 0
+        # The word rides the final arc too when the pronunciation is one
+        # phone long, which is the `i <= 0` in Kaldi's script.
+        label = words[word] if last <= 0 else 0
+        if sil_prob == 0.0:
+            arcs.append((source, loop, phone, label, 0.0))
+        else:
+            # Split: one way out paying for no silence, one paying for it.
+            # Non-deterministic on purpose -- it is how the script avoids
+            # epsilon arcs, and it is why a fingerprint of this FST has to
+            # take a shortest path rather than walk it.
+            arcs.append((source, loop, phone, label, no_sil_cost))
+            arcs.append((source, silence, phone, label, sil_cost))
 
     return arcs, loop
+
+
+def format_weight(weight: float) -> str:
+    """
+    A weight as `fstprint` writes it.
+
+    Kaldi's `BaseFloat` is single precision and `fstprint` writes about nine
+    significant figures, so `-log(0.5)` is `0.693147182` and not
+    `0.6931471805599453`. Narrowing before formatting is the difference
+    between a correct lexicon and a byte-identical one.
+
+    Arguments
+    ---------
+    weight: float
+        The weight, computed in double.
+
+    Returns
+    -------
+    str
+        Its text form.
+    """
+    return f"{struct.unpack('f', struct.pack('f', weight))[0]:.9g}"
 
 
 def build_lexicon_fst_text(
@@ -165,12 +313,18 @@ def build_lexicon_fst_text(
     words: Dict[str, int],
     phones: Dict[str, int],
     sil_prob: float = 0.0,
+    sil_phone: str = "SIL",
+    sil_disambig: Optional[str] = None,
+    position_dependent_phones: bool = False,
 ) -> str:
     """
     `L.fst` as OpenFST text, with integer labels.
 
-    Sorted by output label, which is what `prepare_lang.sh`'s
-    `fstarcsort --sort_type=olabel` leaves -- so the bytes match Kaldi's.
+    Written as `fstprint` writes it: arcs grouped by source state in state
+    order, a final state's line after its own arcs rather than at the end,
+    arcs sorted by output label -- which is what `prepare_lang.sh`'s
+    `fstarcsort --sort_type=olabel` leaves -- and a zero weight omitted
+    rather than printed.
 
     Arguments
     ---------
@@ -181,25 +335,40 @@ def build_lexicon_fst_text(
     phones: Dict[str, int]
         The phone symbol table.
     sil_prob: float
-        The optional-silence probability. Only 0.0 is supported.
+        The optional-silence probability.
+    sil_phone: str
+        The optional-silence phone.
+    sil_disambig: Optional[str]
+        A disambiguation symbol for the silence arc.
+    position_dependent_phones: bool
+        Whether to suffix the lexicon's phones by word position.
 
     Returns
     -------
     str
         Text suitable for `fstcompile`, or for `k2.Fsa.from_openfst`.
     """
-    arcs, final = build_lexicon_arcs(lexicon, words, phones, sil_prob)
-    # By source, then output label, then input label: an arc-sorted FST as
-    # OpenFST writes one. The final state's line goes where Kaldi puts it,
-    # which is after the start state's arcs rather than at the end.
-    ordered = sorted(arcs, key=lambda a: (a[0], a[3], a[2]))
+    arcs, final = build_lexicon_arcs(
+        lexicon,
+        words,
+        phones,
+        sil_prob,
+        sil_phone,
+        sil_disambig,
+        position_dependent_phones,
+    )
+    ordered = sorted(arcs, key=lambda a: (a[0], a[3], a[2], a[1]))
+
     lines: List[str] = []
     emitted_final = False
     for arc in ordered:
         if arc[0] > final and not emitted_final:
             lines.append(f"{final}")
             emitted_final = True
-        lines.append(f"{arc[0]}\t{arc[1]}\t{arc[2]}\t{arc[3]}")
+        fields = [str(arc[0]), str(arc[1]), str(arc[2]), str(arc[3])]
+        if arc[4] != 0.0:
+            fields.append(format_weight(arc[4]))
+        lines.append("\t".join(fields))
     if not emitted_final:
         lines.append(f"{final}")
     return "\n".join(lines) + "\n"

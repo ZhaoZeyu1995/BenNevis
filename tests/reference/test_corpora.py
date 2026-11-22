@@ -196,3 +196,92 @@ class TestFingerprints:
         for relative, weights in manifest.functional.items():
             for key, weight in weights.items():
                 assert math.isfinite(weight), f"{name}: {relative}: {key}"
+
+
+class TestLexiconFstReproducesItsDigest:
+    """
+    A Python `L.fst` against the digest Kaldi's recorded.
+
+    This is the digest-only design paying for itself. mini-librispeech's
+    `L.fst` is 33MB and its bytes are not committed, but `L` -- unlike `G`
+    -- *is* byte-exact, so a 64-character digest and the inputs beside it
+    gate the whole thing in tier 1, with no Kaldi and no OpenFST anywhere.
+
+    It needs the dictionary that #40 added and the symbol tables that #38
+    kept, which is the "capture the input too" rule earning its keep three
+    times over.
+    """
+
+    #: How each recipe calls `prepare_lang.sh`. Not derivable from the
+    #: capture: the silence probability and whether phones are
+    #: position-dependent are arguments, and the reference records what
+    #: came out rather than what was asked for. Kept here so adding a
+    #: recipe is an explicit edit.
+    SETTINGS = {
+        "yesno": {"sil_prob": 0.0, "position_dependent_phones": False},
+        "mini_librispeech": {
+            "sil_prob": 0.5,
+            "position_dependent_phones": True,
+        },
+    }
+
+    def test_every_corpus_has_settings(self, corpus):
+        """
+        Otherwise a new capture would silently not be checked.
+        """
+        name, _directory, _manifest = corpus
+        assert name in self.SETTINGS, (
+            f"{name} has no prepare_lang.sh settings recorded, so its "
+            f"L.fst cannot be rebuilt and is not being checked"
+        )
+
+    def test_it_matches(self, corpus):
+        import hashlib
+
+        from BenNevis.lm.lexicon import build_lexicon_fst_text, read_lexicon
+
+        name, directory, manifest = corpus
+        recorded = manifest.exact.get("lang/L.fst.txt")
+        if recorded is None:
+            pytest.skip(f"{name} has no L.fst in this capture")
+
+        lexicon_path = directory / "dict" / "lexicon.txt"
+        words_path = directory / "lang" / "words.txt"
+        phones_path = directory / "lang" / "phones.txt"
+        silence_path = directory / "dict" / "optional_silence.txt"
+        for path in (words_path, phones_path):
+            if not path.is_file():
+                pytest.skip(f"{name} has no {path.name}")
+        if not lexicon_path.is_file():
+            pytest.skip(
+                f"{name} was captured before the dictionary was, so there "
+                f"is no input to rebuild L.fst from"
+            )
+
+        def table(path):
+            result = {}
+            for line in path.read_text(encoding="utf-8").splitlines():
+                fields = line.split()
+                if len(fields) == 2:
+                    result[fields[0]] = int(fields[1])
+            return result
+
+        settings = dict(self.SETTINGS[name])
+        if silence_path.is_file():
+            content = silence_path.read_text(encoding="utf-8").split()
+            if content:
+                settings["sil_phone"] = content[0]
+
+        built = build_lexicon_fst_text(
+            read_lexicon(lexicon_path),
+            table(words_path),
+            table(phones_path),
+            **settings,
+        )
+        digest = hashlib.sha256(built.encode("utf-8")).hexdigest()
+        assert digest == recorded, (
+            f"{name}: the Python L.fst hashes to {digest} and Kaldi's to "
+            f"{recorded}; {manifest.large.get('lang/L.fst.txt', 0) / 1e6:.1f}"
+            f"MB of bytes are not committed, so compare against the "
+            f"workflow artefact to see how they differ"
+        )

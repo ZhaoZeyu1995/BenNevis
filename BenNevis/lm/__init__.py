@@ -11,11 +11,7 @@ Authors:
 
 from BenNevis.lm.arpa import LOG10_TO_NAT, ArpaModel, NGram, read_arpa
 from BenNevis.lm.fst import build_arcs, build_fst_text, start_state, total_weight
-from BenNevis.lm.lexicon import (
-    build_lexicon_arcs,
-    build_lexicon_fst_text,
-    read_lexicon,
-)
+from BenNevis.lm.lexicon import build_lexicon_arcs, build_lexicon_fst_text, read_lexicon
 
 __all__ = [
     "LOG10_TO_NAT",
