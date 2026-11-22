@@ -71,18 +71,20 @@ jobs:
       # explicit edit in one place.
       - name: Work out the capture arguments
         run: |
+          # One line per value: $GITHUB_ENV takes KEY=value and nothing
+          # else, so a backslash continuation inside the quotes writes a
+          # second line and the whole step fails with "Unable to process
+          # file command 'env'". Long lines are the lesser evil.
           case "${RECIPE}" in
             egs/yesno/asr)
-              echo 'CAPTURE_ARGS=--corpus yesno --model rnnp \
-                --test-set test_yesno --datasets train_yesno test_yesno' \
-                >> "$GITHUB_ENV" ;;
+              args='--corpus yesno --model rnnp --test-set test_yesno --datasets train_yesno test_yesno' ;;
             egs/mini_librispeech/asr)
-              echo 'CAPTURE_ARGS=--corpus mini_librispeech --model rnnp \
-                --test-set dev_clean_2 --datasets train_clean_5 dev_clean_2' \
-                >> "$GITHUB_ENV" ;;
+              args='--corpus mini_librispeech --model rnnp --test-set dev_clean_2 --datasets train_clean_5 dev_clean_2' ;;
             *)
               echo "no capture arguments for ${RECIPE}" >&2; exit 1 ;;
           esac
+          echo "CAPTURE_ARGS=${args}" >> "$GITHUB_ENV"
+          echo "capture arguments: ${args}"
 
       - name: Work out the image name
         run: |
