@@ -285,3 +285,68 @@ class TestLexiconFstReproducesItsDigest:
             f"MB of bytes are not committed, so compare against the "
             f"workflow artefact to see how they differ"
         )
+
+
+class TestDisambiguationSymbolCount:
+    """
+    How many disambiguation symbols the lexicon needed, against what
+    `prepare_lang.sh` recorded.
+
+    This is a check available from committed data alone and it is a strong
+    one: getting the highest symbol number right across 206,510 entries
+    needs prefix detection, homophone counting and the empty-pronunciation
+    reservation rule all correct at once. One rule wrong and the number
+    moves.
+
+    `disambig.txt` is written as `#0 .. #ndisambig`, and `ndisambig` is
+    `add_lex_disambig.pl`'s answer plus the extra symbol reserved for
+    silence -- so the count of symbols pins the algorithm's return value.
+    """
+
+    #: Symbols `prepare_lang.sh` adds beyond what the lexicon needed: one,
+    #: for optional silence in the lexicon FST.
+    EXTRA = 1
+
+    def test_it_matches(self, corpus):
+        from BenNevis.lm.lexicon import (
+            add_disambiguation,
+            position_dependent,
+            read_lexicon,
+        )
+
+        name, directory, _manifest = corpus
+        lexicon_path = directory / "dict" / "lexicon.txt"
+        disambig_path = directory / "lang" / "phones" / "disambig.int"
+        if not lexicon_path.is_file():
+            pytest.skip(f"{name} was captured before the dictionary was")
+        if not disambig_path.is_file():
+            pytest.skip(f"{name} has no disambig.int")
+
+        settings = TestLexiconFstReproducesItsDigest.SETTINGS[name]
+        lexicon = read_lexicon(lexicon_path)
+        if settings["position_dependent_phones"]:
+            lexicon = [(word, position_dependent(pron)) for word, pron in lexicon]
+
+        _out, highest = add_disambiguation(lexicon)
+        symbols = len(disambig_path.read_text(encoding="utf-8").split())
+        # symbols == ndisambig + 1, and ndisambig == highest + EXTRA.
+        expected = highest + self.EXTRA + 1
+        assert symbols == expected, (
+            f"{name}: disambig.int holds {symbols} symbols, so "
+            f"add_lex_disambig returned {symbols - self.EXTRA - 1}; this "
+            f"implementation returned {highest}"
+        )
+
+    def test_the_silence_symbol_number_follows_from_it(self, corpus):
+        """
+        `prepare_lang.sh` passes `--sil-disambig='#'$ndisambig`, so being
+        one out here puts the wrong symbol on the silence arc of
+        L_disambig.fst -- and that is four stages away from where it would
+        be noticed.
+        """
+        name, directory, _manifest = corpus
+        disambig_path = directory / "lang" / "phones" / "disambig.int"
+        if not disambig_path.is_file():
+            pytest.skip(f"{name} has no disambig.int")
+        symbols = len(disambig_path.read_text(encoding="utf-8").split())
+        assert symbols >= 2, f"{name}: too few symbols to carry #0 and silence"

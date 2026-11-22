@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from BenNevis.lm.lexicon import (
+    add_disambiguation,
     build_lexicon_arcs,
     build_lexicon_fst_text,
     format_weight,
@@ -365,3 +366,134 @@ class TestWeightFormatting:
         )
         for line in text.splitlines():
             assert len(line.split("\t")) in (1, 4), line
+
+
+class TestDisambiguation:
+    """
+    `add_lex_disambig.pl`'s algorithm.
+
+    `L` composed with a grammar has to be determinisable, and two things
+    stop it being so: a pronunciation that is a proper prefix of another,
+    and a pronunciation shared by several words. Both are fixed by
+    appending `#1`, `#2`, ... until every ambiguous pronunciation is
+    distinct on the input side.
+
+    The headline check is in `tests/reference/test_corpora.py`, which is
+    where the committed data is. These pin the rules individually, so a
+    failure there says which rule broke.
+    """
+
+    def test_an_unambiguous_pronunciation_gets_nothing(self):
+        """
+        Which is why the symbols are few: mini-librispeech needs fifteen
+        for 206,510 entries.
+        """
+        out, highest = add_disambiguation([("A", ("x",)), ("B", ("y",))])
+        assert out == [("A", ("x",)), ("B", ("y",))]
+        assert highest == 0
+
+    def test_a_proper_prefix_is_disambiguated(self):
+        """
+        `x` cannot be told from the start of `x y` without one.
+        """
+        out, _highest = add_disambiguation([("A", ("x",)), ("AB", ("x", "y"))])
+        assert out[0] == ("A", ("x", "#1"))
+
+    def test_the_longer_pronunciation_is_not(self):
+        """
+        Only the prefix is ambiguous; the word it is a prefix *of* is not.
+        """
+        out, _highest = add_disambiguation([("A", ("x",)), ("AB", ("x", "y"))])
+        assert out[1] == ("AB", ("x", "y"))
+
+    def test_a_homophone_gets_a_distinct_symbol_per_word(self):
+        out, highest = add_disambiguation([("B", ("z",)), ("BEE", ("z",))])
+        assert out == [("B", ("z", "#1")), ("BEE", ("z", "#2"))]
+        assert highest == 2
+
+    def test_three_homophones_count_up(self):
+        lexicon = [("A", ("z",)), ("B", ("z",)), ("C", ("z",))]
+        out, highest = add_disambiguation(lexicon)
+        assert [p[-1] for _w, p in out] == ["#1", "#2", "#3"]
+        assert highest == 3
+
+    def test_symbols_restart_for_an_unrelated_pronunciation(self):
+        """
+        The counter is per pronunciation, not global -- otherwise a big
+        lexicon would need thousands of symbols rather than fifteen.
+        """
+        lexicon = [
+            ("A", ("z",)),
+            ("B", ("z",)),
+            ("C", ("w",)),
+            ("D", ("w",)),
+        ]
+        out, highest = add_disambiguation(lexicon)
+        assert [p[-1] for _w, p in out] == ["#1", "#2", "#1", "#2"]
+        assert highest == 2
+
+    def test_an_empty_pronunciation_gets_a_reserved_symbol(self):
+        """
+        It maps to nothing on the input side, so nothing else can
+        distinguish it -- a symbol another entry also used would not
+        separate them.
+        """
+        out, highest = add_disambiguation([("A", ()), ("B", ("x",))])
+        assert out[0] == ("A", ("#1",))
+        assert highest == 1
+
+    def test_a_reserved_symbol_is_skipped_by_everything_else(self):
+        """
+        The subtlest rule in the script, and the one a reimplementation
+        would most likely drop: once a number is reserved for the empty
+        pronunciation, the per-pronunciation counters step over it.
+        """
+        lexicon = [("E", ()), ("A", ("z",)), ("B", ("z",))]
+        out, _highest = add_disambiguation(lexicon)
+        assert out[0] == ("E", ("#1",))
+        # #1 is reserved, so the homophones take #2 and #3.
+        assert [p[-1] for _w, p in out[1:]] == ["#2", "#3"]
+
+    def test_two_empty_pronunciations_reserve_two_symbols(self):
+        out, highest = add_disambiguation([("A", ()), ("B", ())])
+        assert [p for _w, p in out] == [("#1",), ("#2",)]
+        assert highest == 2
+
+    def test_the_first_allowed_symbol_is_configurable(self):
+        out, highest = add_disambiguation(
+            [("A", ("z",)), ("B", ("z",))], first_allowed=5
+        )
+        assert [p[-1] for _w, p in out] == ["#5", "#6"]
+        assert highest == 6
+
+    def test_order_is_preserved(self):
+        """
+        The state numbering of the FST built from this depends on it.
+        """
+        lexicon = [("C", ("w",)), ("A", ("x",)), ("B", ("y",))]
+        out, _highest = add_disambiguation(lexicon)
+        assert [w for w, _p in out] == ["C", "A", "B"]
+
+    def test_the_highest_decides_the_silence_symbol(self):
+        """
+        `prepare_lang.sh` takes the next number after this for the
+        optional-silence disambiguation symbol, so being one out puts the
+        wrong symbol on the silence arc. mini-librispeech's `disambig.int`
+        holds `#0`..`#16`, which says this returned 15.
+        """
+        _out, highest = add_disambiguation([("A", ("z",)), ("B", ("z",))])
+        assert highest == 2  # so silence would be #3
+
+    def test_an_empty_lexicon_needs_nothing(self):
+        assert add_disambiguation([]) == ([], 0)
+
+    def test_it_runs_after_position_dependent_suffixing(self):
+        """
+        The order `prepare_lang.sh` uses, and it changes the answer: `x`
+        and `x y` are prefix-related, but `x_S` and `x_B y_E` are not.
+        """
+        lexicon = [("A", ("x",)), ("AB", ("x", "y"))]
+        suffixed = [(w, position_dependent(p)) for w, p in lexicon]
+        out, highest = add_disambiguation(suffixed)
+        assert highest == 0
+        assert out == suffixed
