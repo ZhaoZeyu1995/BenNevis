@@ -195,16 +195,37 @@ tolerances chosen per layer:
   **Removing dither cost one word error in total across all eight
   topologies**, and it moved downward, so the baseline survived the change
   intact.
-- **`torchaudio.compliance.kaldi.fbank` is not yet equivalent, and dither was
-  only most of the reason.** Against undithered Kaldi it agrees to 0.065 max
-  and 0.012 mean in the log-mel domain, down from 1.45 and 0.038 with dither
-  on — so dither accounted for about 95% of the gap but not the remainder.
-  0.012 in the log domain is roughly 1% in linear energy: small, systematic,
-  and far outside `rtol=1e-4`. The frame counts match exactly, so framing and
-  `snip-edges` are right; the difference is in the values. It wants its own
-  investigation before fbank is replaced, and the candidates are the mel
-  filterbank edges, the window normalisation and the flooring applied before
-  the log.
+- **`torchaudio.compliance.kaldi.fbank` is close but not equivalent, and the
+  cause is narrowed rather than found.** Against undithered Kaldi it agrees
+  to 0.065 max and 0.012 mean in the log-mel domain, down from 1.45 and 0.038
+  with dither on — so dither was about 95% of the gap. What is left is
+  **zero-mean scatter of about 1.2% in linear energy**, and these have been
+  ruled out:
+
+  | Hypothesis | Verdict |
+  | --- | --- |
+  | Configuration | every Kaldi and torchaudio default already agrees — `use_power`, `use_log_fbank`, `htk_compat`, `raw_energy`, `low_freq`, `high_freq`, `povey`, preemphasis, `remove_dc_offset`, `round_to_power_of_two`, `snip_edges`. `energy_floor` differs but only matters with `use_energy=true` |
+  | Framing offset | offset 0 agrees twice as well as ±1, so framing is right |
+  | The `povey` window | the two definitions agree to 1.3e-16 |
+  | Filterbank weights | a fixed weight error would bias each mel bin consistently; per-bin mean differences are ±0.0004 |
+  | A normalisation factor | the mean difference of logs is −0.00007, so there is no offset to find |
+  | Quiet-bin cancellation | the scatter is flat across frame energies |
+
+  What remains is the per-frame spectrum path. Pursuing it means reading
+  Kaldi's `srfft` and windowing code against torchaudio's, and it would be
+  better done on a 16 kHz corpus, for the reason in the next entry.
+- **The yesno filterbank is degenerate, and this is about the recipe rather
+  than the migration.** 80 mel bins are requested over 20–4000 Hz, but a
+  25 ms frame at 8 kHz is 200 samples, padded to a 256-point FFT, giving 128
+  usable bins of about 31 Hz each. So **14 of the 80 mel bins span a single
+  FFT bin** and 36 span two or fewer, with triangle weight sums as low as
+  0.33. Kaldi's own `feature-fbank.h` says the default of 23 suits 16 kHz and
+  that "for 8khz-sampled data, 15 may be better". The 16 kHz recipes are
+  fine — 80 bins over 20–8000 Hz against a 512-point FFT is about three FFT
+  bins per mel bin at worst. This is worth knowing before concluding anything
+  from yesno about features: many of its 80 dimensions carry nearly the same
+  information, and an ill-conditioned filterbank is exactly where two
+  implementations will disagree most.
 - **Losses**: agreement to ~1e-4 on a fixed batch. This is the fastest and
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
