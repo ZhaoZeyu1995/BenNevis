@@ -1047,3 +1047,111 @@ class TestDisambiguationInputsAreCaptured:
         signature = inspect.signature(capture.capture_language)
         assert "tmp_dir" in signature.parameters
         assert signature.parameters["tmp_dir"].default == "data/local/lang"
+
+
+class TestUnorderedArtefacts:
+    """
+    An artefact whose lines are reproducible but whose line order is not.
+
+    Found by comparing two captures from the same commit in the same image:
+    `extra_questions.txt` came out with the same five lines in a different
+    order. Kaldi's `prepare_dict.sh` builds it by iterating a Perl hash, and
+    Perl has randomised hash order per process since 5.18 -- so its bytes
+    cannot be compared and its digest means nothing unless the order is
+    pinned.
+
+    Nothing depended on it yet: it feeds the decision-tree questions in GMM
+    training, not the lexicon FSTs. Fixed anyway, because the failure it
+    would cause is a test that fails on a *re-capture* rather than on a
+    change, which is the hardest kind to read.
+    """
+
+    @staticmethod
+    def payload(*lines):
+        return ("\n".join(lines) + "\n").encode("utf-8")
+
+    def test_two_orders_normalise_alike(self):
+        first = self.payload("SIL SPN", "AA1 x", "AA2 y")
+        second = self.payload("AA2 y", "SIL SPN", "AA1 x")
+        assert capture.normalise_unordered(
+            "dict/extra_questions.txt", first
+        ) == capture.normalise_unordered("dict/extra_questions.txt", second)
+
+    def test_the_digest_is_then_stable(self, tmp_path):
+        """
+        The point of sorting at capture time rather than at comparison
+        time: the stored bytes and the recorded digest agree, so the
+        integrity check still works.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        first, second = Manifest(), Manifest()
+        capture.store(
+            first,
+            tmp_path / "a",
+            "dict/extra_questions.txt",
+            self.payload("b", "a"),
+        )
+        capture.store(
+            second,
+            tmp_path / "b",
+            "dict/extra_questions.txt",
+            self.payload("a", "b"),
+        )
+        assert (
+            first.exact["dict/extra_questions.txt"]
+            == second.exact["dict/extra_questions.txt"]
+        )
+
+    def test_the_stored_bytes_match_the_digest(self, tmp_path):
+        from BenNevis.utils.reference import Manifest, sha256_file
+
+        manifest = Manifest()
+        capture.store(
+            manifest,
+            tmp_path,
+            "dict/extra_questions.txt",
+            self.payload("b", "a"),
+        )
+        target = tmp_path / "dict" / "extra_questions.txt"
+        assert sha256_file(target) == manifest.exact["dict/extra_questions.txt"]
+
+    def test_the_stored_file_is_sorted(self, tmp_path):
+        from BenNevis.utils.reference import Manifest
+
+        capture.store(
+            Manifest(),
+            tmp_path,
+            "dict/extra_questions.txt",
+            self.payload("b", "a", "c"),
+        )
+        text = (tmp_path / "dict" / "extra_questions.txt").read_text()
+        assert text == "a\nb\nc\n"
+
+    def test_any_other_artefact_is_untouched(self):
+        """
+        Normalising broadly would hide a real ordering difference in a file
+        whose order *is* meaningful -- `lexicon.txt`'s order decides
+        `L.fst`'s state numbering, so sorting it would silently change the
+        FST.
+        """
+        payload = self.payload("b", "a")
+        assert capture.normalise_unordered("dict/lexicon.txt", payload) == payload
+
+    def test_only_the_named_files_qualify(self):
+        assert capture.UNORDERED_TEXT == ("extra_questions.txt",)
+
+    def test_it_matches_on_the_file_name(self):
+        """
+        So any dictionary directory's copy qualifies, however nested --
+        mini-librispeech's is `dict_nosp`.
+        """
+        payload = self.payload("b", "a")
+        for relative in (
+            "dict/extra_questions.txt",
+            "a/b/extra_questions.txt",
+        ):
+            assert capture.normalise_unordered(relative, payload) != payload
+
+    def test_an_empty_payload_is_left_alone(self):
+        assert capture.normalise_unordered("dict/extra_questions.txt", b"") == b""

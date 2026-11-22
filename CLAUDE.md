@@ -356,6 +356,26 @@ tolerances chosen per layer:
   all of which are canonical rather than arbitrary.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
 
+**One captured artefact is not byte-reproducible, and it was found by
+capturing twice.** Two runs of the same commit in the same image produced
+`extra_questions.txt` with the same five lines in a *different order* —
+Kaldi's `prepare_dict.sh` builds it by iterating a Perl hash, and Perl has
+randomised hash order per process since 5.18. Its lines are reproducible
+and its bytes are not, so `capture.py` **sorts them before storing and
+digesting**, which keeps the stored bytes and the recorded digest in
+agreement. That is a normalisation of how the reference is read, like
+having Kaldi rewrite the feature archives uncompressed — not an edit to
+make a test pass, and the recipe is untouched.
+Nothing depended on it: it feeds the decision-tree questions in GMM
+training, not the lexicon FSTs. It was fixed anyway because the failure it
+causes is a test that fails on a **re-capture** rather than on a change,
+which is the hardest kind to read. **Comparing two captures is worth doing
+deliberately** — it is the only check that finds this class of thing, and
+everything else agreed: 20 of 21 exact digests, all 87 array statistics,
+and the `G.fst` fingerprint.
+Normalise narrowly. `lexicon.txt`'s order decides `L.fst`'s state
+numbering, so sorting *that* would silently change the FST.
+
 **A committed reference that nothing reads is not a test.**
 `tests/reference/test_corpora.py` discovers every corpus under
 `tests/golden/reference/` by its manifest and runs the corpus-agnostic
