@@ -390,6 +390,21 @@ and the `G.fst` fingerprint.
 Normalise narrowly. `lexicon.txt`'s order decides `L.fst`'s state
 numbering, so sorting *that* would silently change the FST.
 
+**Capture a pipeline's intermediates, not only its ends.**
+`L_disambig.fst`'s digest covers four stages, so a mismatch says something
+is wrong and nothing about which. With `tmp/lexiconp.txt` and
+`tmp/lexiconp_disambig.txt` captured, the two stages that have inputs are
+checked **separately and each on Kaldi's own input to it** — so an error in
+position-dependent suffixing cannot make the disambiguation look wrong, or
+hide a second error that cancels it. Both match entry for entry across
+206,510 entries.
+Note `tmp/lexiconp.txt` is *not* a copy of `dict/lexiconp.txt`: it is the
+position-suffixed version, which is what makes it the boundary between the
+two stages.
+**yesno's reference predates all of this** and so skips nine checks the
+mini-librispeech one runs. Re-capturing it is the cheap way to close that,
+and worth doing before relying on either corpus alone.
+
 **A committed reference that nothing reads is not a test.**
 `tests/reference/test_corpora.py` discovers every corpus under
 `tests/golden/reference/` by its manifest and runs the corpus-agnostic
