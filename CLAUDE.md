@@ -163,6 +163,15 @@ by faking the availability probes instead -- those tests run on every runner.
 Treat the real-device tests as something only a developer on an Apple machine
 executes.
 
+**Compare a relative path with `as_posix()`, never `str()`.**
+`Path.relative_to(...)` yields the platform separator, so a literal like
+`"yesno/asr"` matches nothing on Windows and a manifest keyed on forward
+slashes matches nothing either. This has broken tier 1 on Windows three
+times: the reference manifest's file list, the recipe-name lookup in the
+stage tests, and the parametrise ids that made the first two hard to read.
+The same applies to anything written into a committed artefact — a captured
+path must be POSIX or it is not portable.
+
 **`bash` exists on a Windows runner and does not work.**
 `shutil.which("bash")` finds `C:\Windows\System32\bash.exe`, the WSL
 launcher, which is present whether or not a distribution is installed and

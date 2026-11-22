@@ -116,7 +116,7 @@ def select(stage, stop_stage):
 
 
 @pytest.mark.parametrize(
-    "run", STAGED, ids=[str(p.relative_to(EGS).parent) for p in STAGED]
+    "run", STAGED, ids=[p.relative_to(EGS).parent.as_posix() for p in STAGED]
 )
 class TestEveryStagedRecipe:
     """
@@ -136,7 +136,7 @@ class TestEveryStagedRecipe:
         assert numbers == list(range(numbers[0], numbers[0] + len(numbers))), numbers
 
     def test_every_stage_announces_itself_where_converted(self, run):
-        name = str(run.relative_to(EGS).parent)
+        name = run.relative_to(EGS).parent.as_posix()
         text = run.read_text()
         labelled = {int(m.group("number")) for m in LABEL_RE.finditer(text)}
         numbers = {number for number, _ in guards(run)}
@@ -159,7 +159,7 @@ class TestEveryStagedRecipe:
         """
         Only the converted recipes do this; see CONVERTED.
         """
-        name = str(run.relative_to(EGS).parent)
+        name = run.relative_to(EGS).parent.as_posix()
         if name not in CONVERTED:
             pytest.skip(f"{name} has not been converted")
         text = run.read_text()
@@ -175,7 +175,7 @@ class TestEveryStagedRecipe:
         that set is itself checked below -- so a recipe cannot be quietly
         added to the exemption.
         """
-        name = str(run.relative_to(EGS).parent)
+        name = run.relative_to(EGS).parent.as_posix()
         text = run.read_text()
         stops = "set -eo pipefail" in text or "set -euo pipefail" in text
         if name in CONVERTED:
