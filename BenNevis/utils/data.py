@@ -4,7 +4,7 @@ Authors:
     Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-from typing import List, Optional, Callable, Dict, Any, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 def read_dict(

@@ -285,6 +285,19 @@ tolerances chosen per layer:
   weighted entry arcs whose exact shape is `make_lexicon_fst.pl`'s, and the
   builder **raises** rather than guessing at it, since a plausible-looking
   lexicon that decodes differently is the worst outcome available.
+  **A large FST needs a functional fingerprint, because its digest cannot
+  serve.** The two decisions above conflict: an exact artefact over a
+  megabyte is recorded by digest alone, and a digest answers only the byte
+  question — but `G.fst` is *known* not to be byte-equal, so its digest can
+  only ever mismatch and says nothing. On mini-librispeech, the one corpus
+  where a graph replacement matters, that left no usable check at all. So
+  the capture also records what weights the FST gives a fixed set of word
+  sequences, sampled with a fixed seed from `words.txt` so both
+  implementations are asked the same questions, and
+  `BenNevis.utils.fingerprint` is a few kilobytes against 61MB. This works
+  for `G` because a back-off LM FST accepts every sequence of in-vocabulary
+  words; `L` and `TLG` accept only what their lexicon permits, so they need
+  sequences drawn from the lexicon and do not have fingerprints yet.
   This is a different standard from CMVN's deliberately. There, the object is
   an array and any difference is a real difference, so byte-exactness was
   both achievable and the right test. Byte-exactness is still expected where

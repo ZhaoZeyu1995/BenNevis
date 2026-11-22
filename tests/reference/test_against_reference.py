@@ -281,3 +281,72 @@ class TestTheConfigurationStillMatches:
             "the capture was taken with dither enabled, so its features "
             "cannot be reproduced by any implementation but Kaldi's"
         )
+
+
+class TestFunctionalEquivalenceOfG:
+    """
+    A Python `G.fst` against the fingerprint Kaldi's recorded.
+
+    This is the check that `G`'s digest cannot provide. `arpa2fst` numbers
+    its states in whatever order it meets histories, so a Python build is
+    not byte-equal and never will be -- its digest can only ever mismatch.
+    The fingerprint asks both FSTs the same fixed questions instead, which
+    is the standard CLAUDE.md sets for an FST.
+
+    It also works where the bytes are not kept at all: mini-librispeech's
+    `G.fst` is 61MB and recorded by digest alone, and this still gates it.
+    """
+
+    def test_the_manifest_records_a_fingerprint(self, manifest):
+        """
+        Skipped rather than failed where the reference predates the
+        fingerprint: the yesno capture committed before it has no
+        `functional` field, and re-capturing is how it gains one.
+        """
+        if not manifest.functional:
+            pytest.skip("this reference was captured before fingerprints")
+        assert any("G.fst" in name for name in manifest.functional)
+
+    def test_a_python_build_matches_it(self, manifest):
+        if not manifest.functional:
+            pytest.skip("this reference was captured before fingerprints")
+
+        arpa = REPO_ROOT / "egs" / "yesno" / "asr" / "input" / "task.arpabo"
+        words_path = REFERENCE_DIR / "yesno" / "lang" / "words.txt"
+        if not arpa.is_file() or not words_path.is_file():
+            pytest.skip("no ARPA model and symbol table to build from")
+
+        from BenNevis.lm import build_arcs, read_arpa, start_state
+        from BenNevis.utils.fingerprint import fingerprint
+
+        words = {}
+        for line in words_path.read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if len(fields) == 2:
+                words[fields[0]] = int(fields[1])
+
+        arcs, finals, state_of = build_arcs(read_arpa(arpa), words)
+        by_source: dict = {}
+        for arc in arcs:
+            by_source.setdefault(arc[0], []).append((arc[1], arc[2], arc[4]))
+
+        checked = 0
+        for name, recorded in manifest.functional.items():
+            if "G.fst" not in name or "yesno" not in str(REFERENCE_DIR / name):
+                continue
+            built = fingerprint(
+                by_source,
+                finals,
+                words,
+                start_state(state_of),
+                [tuple(key.split()) for key in recorded],
+            )
+            for key, weight in recorded.items():
+                assert key in built, f"{name}: this build rejects {key!r}"
+                assert built[key] == pytest.approx(weight, rel=1e-6, abs=1e-6), (
+                    f"{name}: {key!r} is {built[key]:.6f} here and "
+                    f"{weight:.6f} in Kaldi's"
+                )
+                checked += 1
+        if not checked:
+            pytest.skip("no yesno G.fst fingerprint in this reference")
