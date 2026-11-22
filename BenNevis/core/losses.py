@@ -241,10 +241,28 @@ class GraphLoss(torch.nn.Module):
         Returns
         -------
         den_decoding_graph: k2.Fsa
-            The denominator graph for the loss computation.
+            The denominator graph for the loss computation, arc-sorted.
+
+        Notes
+        -----
+        **The topology FSA is not arc-sorted and `k2.intersect_dense`
+        documents that its graphs must be.** `prepare_topo.sh` runs
+        `fstarcsort --sort_type=olabel`, which sorts by *output* label and
+        does not make a k2 FSA `ARC_SORTED` -- measured False for all eight
+        topologies, before and after the spec rewrite. The numerator path
+        is unaffected because `k2.compose` arc-sorts its first argument
+        itself; this was the one site where the precondition was violated.
+
+        On the CPU the denominator scores are identical either way, which
+        is why it had not been biting, and the test alongside this asserts
+        that so the baseline cannot move. **On CUDA it is still unchecked**
+        -- an unsorted graph there is undefined rather than merely slow.
         """
+        # Sorted once on whatever device the topology is on, then moved,
+        # rather than sorted per copy on the target device.
+        topo = k2.arc_sort(self.lang.topo)
         den_decoding_graph = k2.create_fsa_vec(
-            [self.lang.topo.to(device) for _ in range(batch_size)]
+            [topo.to(device) for _ in range(batch_size)]
         )
 
         assert den_decoding_graph.requires_grad is False
