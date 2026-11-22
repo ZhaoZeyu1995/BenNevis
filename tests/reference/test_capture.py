@@ -651,3 +651,103 @@ class TestReadArchiveThroughCopyFeats:
 
         with pytest.raises(subprocess.CalledProcessError):
             capture.read_archive(tmp_path / "in.scp", copy_feats=str(tool))
+
+
+class TestOtherRecipeLayouts:
+    """
+    Capturing a recipe whose language directories are not named yesno's way.
+
+    The first mini_librispeech capture produced nothing useful because both
+    paths were hardcoded: the lexicon was looked for in `data/lang` when
+    Kaldi's preparation had written `data/lang_nosp`, and the topologies were
+    discovered by globbing `data/lang_test_tg_*` when the graphs were in
+    `data/lang_test_tgsmall_<topo>`. The recipe had run correctly; the
+    capture simply looked in the wrong places and said so.
+    """
+
+    @pytest.fixture
+    def nosp_recipe(self, recipe):
+        """The same fixture, renamed the way mini_librispeech names things."""
+        data = recipe / "data"
+        (data / "lang").rename(data / "lang_nosp")
+        for topology in TOPOLOGIES:
+            (data / f"lang_test_tg_{topology}").rename(
+                data / f"lang_test_tgsmall_{topology}"
+            )
+        return recipe
+
+    def test_the_lexicon_is_found_under_a_different_name(self, nosp_recipe, tmp_path):
+        destination = tmp_path / "out"
+        assert (
+            capture.main(
+                [
+                    str(nosp_recipe),
+                    str(destination),
+                    "--corpus",
+                    "mini_librispeech",
+                    "--datasets",
+                    "train_yesno",
+                    "test_yesno",
+                    "--allow-no-fstprint",
+                    "--lang-dir",
+                    "data/lang_nosp",
+                    "--graph-prefix",
+                    "data/lang_test_tgsmall_",
+                ]
+            )
+            == 0
+        )
+        manifest = Manifest.read(destination / "mini_librispeech" / MANIFEST_NAME)
+        assert "lang/phones.txt" in manifest.exact
+        assert "lang/words.txt" in manifest.exact
+
+    def test_the_topologies_are_discovered_under_a_different_prefix(
+        self, nosp_recipe, tmp_path
+    ):
+        destination = tmp_path / "out"
+        assert (
+            capture.main(
+                [
+                    str(nosp_recipe),
+                    str(destination),
+                    "--corpus",
+                    "mini_librispeech",
+                    "--datasets",
+                    "train_yesno",
+                    "test_yesno",
+                    "--allow-no-fstprint",
+                    "--lang-dir",
+                    "data/lang_nosp",
+                    "--graph-prefix",
+                    "data/lang_test_tgsmall_",
+                ]
+            )
+            == 0
+        )
+        manifest = Manifest.read(destination / "mini_librispeech" / MANIFEST_NAME)
+        for topology in TOPOLOGIES:
+            assert f"transcriptions/{topology}/hyp.wrd.trn" in manifest.exact
+
+    def test_the_old_defaults_find_nothing_there(self, nosp_recipe, tmp_path):
+        """
+        The failure mode that prompted this, kept so the fix cannot be
+        reverted silently: with yesno's paths against a mini_librispeech
+        layout, the capture must come up empty rather than appear to work.
+        """
+        destination = tmp_path / "out"
+        status = capture.main(
+            [
+                str(nosp_recipe),
+                str(destination),
+                "--corpus",
+                "mini_librispeech",
+                "--datasets",
+                "train_yesno",
+                "test_yesno",
+                "--allow-no-fstprint",
+            ]
+        )
+        manifest = Manifest.read(destination / "mini_librispeech" / MANIFEST_NAME)
+        assert "lang/phones.txt" not in manifest.exact
+        assert not any(name.startswith("transcriptions/") for name in manifest.exact)
+        assert status == 0  # features were still captured, so not empty

@@ -246,6 +246,8 @@ def capture_language(
     destination: Path,
     topologies: List[str],
     printer: Optional[str],
+    lang_dir: str = "data/lang",
+    graph_prefix: str = "data/lang_test_tg_",
 ) -> None:
     """
     Capture the language directories: symbol tables and lexicon FSTs.
@@ -262,8 +264,18 @@ def capture_language(
         The topologies the recipe built.
     printer: Optional[str]
         The fstprint executable, or None to skip the compiled FSTs.
+    lang_dir: str
+        The language directory `prepare_lang.sh` produced, relative to the
+        recipe. yesno's is `data/lang`; mini_librispeech's is
+        `data/lang_nosp`, Kaldi's own name for a lexicon without
+        position-dependent silence modelling.
+    graph_prefix: str
+        What a per-topology graph directory is called, minus the topology.
+        yesno's are `data/lang_test_tg_<topo>`, mini_librispeech's
+        `data/lang_test_tgsmall_<topo>` after the small 3-gram model Kaldi's
+        format_lms.sh builds.
     """
-    base = recipe / "data" / "lang"
+    base = recipe / lang_dir
     for name in LANG_TEXT:
         source = base / name
         if source.is_file():
@@ -281,7 +293,7 @@ def capture_language(
             store(manifest, destination, f"lang/{name}.txt", text)
 
     for topology in topologies:
-        graph = recipe / "data" / f"lang_test_tg_{topology}"
+        graph = recipe / f"{graph_prefix}{topology}"
         for name in GRAPH_FSTS:
             source = graph / name
             if not source.is_file():
@@ -471,6 +483,22 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--decode-dir", default="aw_1.0-ma_5000-bm_32")
     parser.add_argument(
+        "--lang-dir",
+        default="data/lang",
+        help=(
+            "the language directory prepare_lang.sh produced, relative to "
+            "the recipe; data/lang_nosp for mini_librispeech"
+        ),
+    )
+    parser.add_argument(
+        "--graph-prefix",
+        default="data/lang_test_tg_",
+        help=(
+            "what a per-topology graph directory is called, minus the "
+            "topology; data/lang_test_tgsmall_ for mini_librispeech"
+        ),
+    )
+    parser.add_argument(
         "--topos",
         nargs="+",
         default=None,
@@ -494,10 +522,11 @@ def main(argv=None) -> int:
 
     topologies = args.topos
     if topologies is None:
+        prefix = Path(args.graph_prefix)
+        parent = recipe / prefix.parent
+        stem = prefix.name
         topologies = sorted(
-            path.name[len("lang_test_tg_") :]
-            for path in (recipe / "data").glob("lang_test_tg_*")
-            if path.is_dir()
+            path.name[len(stem) :] for path in parent.glob(f"{stem}*") if path.is_dir()
         )
     if not topologies:
         sys.stderr.write("capture: no prepared graphs found\n")
@@ -553,7 +582,15 @@ def main(argv=None) -> int:
         else:
             sys.stderr.write(f"capture: no {source}\n")
 
-    capture_language(manifest, recipe, out, topologies, printer)
+    capture_language(
+        manifest,
+        recipe,
+        out,
+        topologies,
+        printer,
+        lang_dir=args.lang_dir,
+        graph_prefix=args.graph_prefix,
+    )
     capture_features(
         manifest, recipe, out, args.datasets, copy_feats=find_kaldi_tool("copy-feats")
     )
