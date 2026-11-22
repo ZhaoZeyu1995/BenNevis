@@ -350,3 +350,70 @@ class TestDisambiguationSymbolCount:
             pytest.skip(f"{name} has no disambig.int")
         symbols = len(disambig_path.read_text(encoding="utf-8").split())
         assert symbols >= 2, f"{name}: too few symbols to carry #0 and silence"
+
+
+class TestDisambigLexiconFstReproducesItsDigest:
+    """
+    A Python `L_disambig.fst` against the digest Kaldi's recorded.
+
+    Four stages -- position suffixes, `add_lex_disambig.pl`,
+    `make_lexicon_fst.py` with the silence disambiguation symbol, and
+    `fstaddselfloops` -- and the last of those is Kaldi C++ rather than a
+    script. mini-librispeech's is 34.5MB and its bytes are not committed,
+    so this is a 64-character digest standing in for all of it.
+
+    A cross-check that made the result believable before the digest was
+    computed: `L_disambig` has 1,589,729 lines against `L`'s 1,539,598, and
+    the difference of 50,131 is the 50,129 entries this implementation
+    gives a disambiguation symbol, plus one self-loop, plus the one bridge
+    arc the silence symbol adds.
+    """
+
+    def test_it_matches(self, corpus):
+        import hashlib
+
+        from BenNevis.lm.lexicon import build_disambig_fst_text, read_lexicon
+
+        name, directory, manifest = corpus
+        recorded = manifest.exact.get("lang/L_disambig.fst.txt")
+        if recorded is None:
+            pytest.skip(f"{name} has no L_disambig.fst in this capture")
+
+        lexicon_path = directory / "dict" / "lexicon.txt"
+        words_path = directory / "lang" / "words.txt"
+        phones_path = directory / "lang" / "phones.txt"
+        if not lexicon_path.is_file():
+            pytest.skip(f"{name} was captured before the dictionary was")
+        for path in (words_path, phones_path):
+            if not path.is_file():
+                pytest.skip(f"{name} has no {path.name}")
+
+        def table(path):
+            result = {}
+            for line in path.read_text(encoding="utf-8").splitlines():
+                fields = line.split()
+                if len(fields) == 2:
+                    result[fields[0]] = int(fields[1])
+            return result
+
+        settings = dict(TestLexiconFstReproducesItsDigest.SETTINGS[name])
+        silence_path = directory / "dict" / "optional_silence.txt"
+        if silence_path.is_file():
+            content = silence_path.read_text(encoding="utf-8").split()
+            if content:
+                settings["sil_phone"] = content[0]
+
+        built = build_disambig_fst_text(
+            read_lexicon(lexicon_path),
+            table(words_path),
+            table(phones_path),
+            **settings,
+        )
+        digest = hashlib.sha256(built.encode("utf-8")).hexdigest()
+        assert digest == recorded, (
+            f"{name}: the Python L_disambig.fst hashes to {digest} and "
+            f"Kaldi's to {recorded}; "
+            f"{manifest.large.get('lang/L_disambig.fst.txt', 0) / 1e6:.1f}MB "
+            f"of bytes are not committed, so compare against the workflow "
+            f"artefact to see how they differ"
+        )
