@@ -11,3 +11,11 @@ tests/golden/** -text
 # checkout would otherwise break every recipe silently.
 *.sh text eol=lf
 *.pl text eol=lf
+
+# Kaldi config files likewise. Kaldi parses them as `--key=value` lines, so a
+# trailing carriage return becomes part of the value -- `--dither=0` is not
+# `--dither=0`. It also made the capture's copy of conf/fbank.conf disagree
+# with the recipe's on a Windows checkout, which is how this was noticed:
+# the configuration guard compares them by digest, and the reference side is
+# `-text` while the recipe side was being translated.
+*.conf text eol=lf
