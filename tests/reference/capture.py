@@ -60,7 +60,7 @@ from BenNevis.utils.reference import (  # noqa: E402
     MANIFEST_NAME,
     Manifest,
     array_stats,
-    sha256_file,
+    sha256_bytes,
 )
 
 #: How many feature matrices to keep whole. Enough for a genuine elementwise
@@ -219,9 +219,28 @@ def read_archive(scp: Path, copy_feats: Optional[str] = None) -> Dict[str, "obje
         return {key: value for key, value in kaldiio.load_ark(str(plain))}
 
 
-def store(manifest: Manifest, destination: Path, relative: str, payload: bytes) -> None:
+#: Above this, an exact artefact's digest is recorded but its bytes are not
+#: stored. An exact artefact is compared *by digest*, so the content is not
+#: needed to tell whether a replacement reproduces it -- only to see how it
+#: differs when it does not. mini-librispeech's TLG.fst is 334MB as text,
+#: against yesno's 20KB, because it carries a 200k-word lexicon and a real
+#: 3-gram model; storing it would put 600MB of generated data in the
+#: repository to answer a question a 64-character digest answers.
+#:
+#: The cost is that a mismatch cannot be diffed from the committed reference.
+#: The uploaded workflow artefact holds the bytes for ninety days.
+MAX_EXACT_BYTES = 1 << 20
+
+
+def store(
+    manifest: Manifest,
+    destination: Path,
+    relative: str,
+    payload: bytes,
+    max_bytes: int = MAX_EXACT_BYTES,
+) -> None:
     """
-    Write one exact artefact and record its digest.
+    Record one exact artefact's digest, and its bytes if they are small.
 
     Arguments
     ---------
@@ -233,11 +252,17 @@ def store(manifest: Manifest, destination: Path, relative: str, payload: bytes) 
         Its path within that directory, which is also its manifest key.
     payload: bytes
         The content.
+    max_bytes: int
+        Above this the digest is recorded without the bytes; see
+        MAX_EXACT_BYTES.
     """
+    manifest.exact[relative] = sha256_bytes(payload)
+    if len(payload) > max_bytes:
+        manifest.large[relative] = len(payload)
+        return
     target = destination / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(payload)
-    manifest.exact[relative] = sha256_file(target)
 
 
 def capture_language(

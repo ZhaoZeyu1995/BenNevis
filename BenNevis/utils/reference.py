@@ -377,6 +377,12 @@ class Manifest:
         stored whole.
     stats: Dict[str, Dict[str, float]]
         Name to statistics, for arrays not stored whole.
+    large: Dict[str, int]
+        Relative path to size in bytes, for exact artefacts whose digest was
+        recorded without their content. An exact artefact is compared by
+        digest, so the comparison still works; what is lost is the ability to
+        diff a mismatch against the committed reference. Listed separately so
+        a missing file can be told apart from a forgotten one.
     """
 
     corpus: str = ""
@@ -387,6 +393,7 @@ class Manifest:
     exact: Dict[str, str] = field(default_factory=dict)
     arrays: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    large: Dict[str, int] = field(default_factory=dict)
 
     def write(self, path: Path) -> None:
         """

@@ -83,18 +83,38 @@ class TestIntegrity:
         for name, digest in manifest.exact.items():
             path = REFERENCE_DIR / name
             if not path.is_file():
-                missing.append(name)
+                # Deliberately absent if the capture judged it too large to
+                # store; its digest is still the comparison. Anything else
+                # is a file that went missing.
+                if name not in manifest.large:
+                    missing.append(name)
             elif sha256_file(path) != digest:
                 changed.append(name)
         assert not missing, f"recorded but absent: {missing}"
         assert not changed, f"present but altered since capture: {changed}"
+
+    def test_every_large_artefact_is_also_recorded_as_exact(self, manifest):
+        """
+        The `large` list says which digests have no bytes beside them. An
+        entry there with no digest would be a file nobody can check.
+        """
+        orphans = sorted(set(manifest.large) - set(manifest.exact))
+        assert not orphans, orphans
+
+    def test_a_large_artefact_is_not_also_stored(self, manifest):
+        """
+        If the bytes are there, the entry should not claim they are not --
+        otherwise the integrity check above skips a file it could verify.
+        """
+        stored = [name for name in manifest.large if (REFERENCE_DIR / name).is_file()]
+        assert not stored, stored
 
     def test_no_captured_file_is_unrecorded(self, manifest):
         """
         The other direction: a file in the capture that the manifest does
         not mention is either a stray or a manifest that was not rewritten.
         """
-        recorded = set(manifest.exact)
+        recorded = set(manifest.exact) | set(manifest.large)
         recorded |= {
             record["path"] for record in manifest.arrays.values() if "path" in record
         }

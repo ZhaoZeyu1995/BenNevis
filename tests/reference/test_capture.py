@@ -751,3 +751,61 @@ class TestOtherRecipeLayouts:
         assert "lang/phones.txt" not in manifest.exact
         assert not any(name.startswith("transcriptions/") for name in manifest.exact)
         assert status == 0  # features were still captured, so not empty
+
+
+class TestLargeArtefacts:
+    """
+    An exact artefact too big to commit records its digest and not its bytes.
+
+    mini-librispeech's TLG.fst is 334MB as text against yesno's 20KB, because
+    it carries a 200k-word lexicon and a real 3-gram model. The first capture
+    of it came to 606MB, almost all FSTs. Since an exact artefact is compared
+    by digest, the bytes are not needed to answer whether a replacement
+    reproduces it.
+    """
+
+    def test_a_small_artefact_is_stored(self, tmp_path):
+        from BenNevis.utils.reference import Manifest, sha256_bytes
+
+        manifest = Manifest()
+        capture.store(manifest, tmp_path, "small.txt", b"hello")
+        assert (tmp_path / "small.txt").read_bytes() == b"hello"
+        assert manifest.exact["small.txt"] == sha256_bytes(b"hello")
+        assert "small.txt" not in manifest.large
+
+    def test_a_large_artefact_records_its_digest_only(self, tmp_path):
+        from BenNevis.utils.reference import Manifest, sha256_bytes
+
+        payload = b"x" * 64
+        manifest = Manifest()
+        capture.store(manifest, tmp_path, "big.txt", payload, max_bytes=16)
+        assert not (tmp_path / "big.txt").exists()
+        assert manifest.exact["big.txt"] == sha256_bytes(payload)
+        assert manifest.large["big.txt"] == len(payload)
+
+    def test_the_digest_is_the_same_either_way(self, tmp_path):
+        """
+        So a reference captured under one threshold can be compared with a
+        run captured under another.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        payload = b"y" * 100
+        small, big = Manifest(), Manifest()
+        capture.store(small, tmp_path / "a", "f.txt", payload, max_bytes=1000)
+        capture.store(big, tmp_path / "b", "f.txt", payload, max_bytes=10)
+        assert small.exact["f.txt"] == big.exact["f.txt"]
+
+    def test_the_threshold_is_a_megabyte(self):
+        """
+        Chosen so yesno's FSTs are stored whole and a real corpus's are not.
+        """
+        assert capture.MAX_EXACT_BYTES == 1 << 20
+
+    def test_exactly_at_the_threshold_is_stored(self, tmp_path):
+        from BenNevis.utils.reference import Manifest
+
+        manifest = Manifest()
+        capture.store(manifest, tmp_path, "edge.txt", b"z" * 16, max_bytes=16)
+        assert (tmp_path / "edge.txt").is_file()
+        assert "edge.txt" not in manifest.large

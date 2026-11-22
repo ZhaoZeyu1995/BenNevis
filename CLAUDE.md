@@ -515,6 +515,17 @@ workflow changes.
   `(x - mean) / sqrt(var)` in float64 instead agrees only to about 4e-6.
   Following the original costs nothing and removes a needless source of
   divergence, so there is no reason not to.
+- **An exact artefact over a megabyte records its digest and not its bytes.**
+  mini-librispeech's `TLG.fst` is **334MB** as text against yesno's 20KB,
+  because it carries a 200k-word lexicon and a real 3-gram model; the first
+  capture of it came to 606MB, almost all FSTs. Since an exact artefact is
+  compared *by digest*, the content is not needed to answer whether a
+  replacement reproduces it — only to see how it differs when it does not.
+  Those entries are listed in the manifest's `large`, so a deliberately
+  absent file can be told from a lost one, and the uploaded workflow artefact
+  keeps the bytes for ninety days. Content is only ever needed for a
+  *tolerance* comparison, which is why the feature matrices are stored whole
+  and the FSTs are not.
 - **The capture records both sides of CMVN.** `raw/` is `feats.scp` as the
   feature extractor wrote it; `features/` is `feats.cmvn.scp` after
   normalisation. The first captures held only the second, which was no use
