@@ -19,6 +19,7 @@ import pytest
 from BenNevis.decode.pipeline import (
     format_trn,
     read_symbol_table,
+    read_symbol_table_or_list,
     read_utt2spk,
     write_trn,
 )
@@ -120,12 +121,58 @@ class TestEndToEnd:
     """
 
     @pytest.fixture(scope="class")
-    def graph(self):
+    def lang(self, tmp_path_factory):
+        """
+        A language directory shaped like the one the recipe passes:
+        `prepare_topo.sh` copies the base directory and adds `k2/`.
+
+        The base reference directory has no `k2/`, and using it is what hid
+        the bug this class now guards -- the test derived its token table
+        the same way `build_graph` did, so both were wrong together and the
+        test passed.
+        """
+        import shutil
+        import subprocess
+        import sys
+
+        target = tmp_path_factory.mktemp("lang_ctc")
+        for item in LANG.iterdir():
+            if item.is_dir():
+                shutil.copytree(item, target / item.name)
+            else:
+                shutil.copy(item, target / item.name)
+        (target / "k2").mkdir()
+
+        def topos(*args):
+            return subprocess.run(
+                [sys.executable, "-m", "BenNevis.topos", *args],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=str(REPO_ROOT),
+            ).stdout
+
+        (target / "k2" / "tokens.txt").write_text(
+            topos(
+                "tokens",
+                "ctc",
+                str(target / "phones.txt"),
+                "--no-eps",
+                "--no-disambig",
+            )
+        )
+        (target / "k2" / "phones.txt").write_text(
+            topos("phones", str(target / "phones.txt"), "--no-disambig")
+        )
+        return target
+
+    @pytest.fixture(scope="class")
+    def graph(self, lang):
         pytest.importorskip("k2")
         from BenNevis.decode.pipeline import build_graph
 
         return build_graph(
-            LANG,
+            lang,
             YESNO / "lexicon.txt",
             YESNO / "task.arpabo",
             "ctc",
@@ -134,16 +181,13 @@ class TestEndToEnd:
         )
 
     @pytest.fixture(scope="class")
-    def tokens(self):
-        from BenNevis.topos import build as topo_build
-        from BenNevis.topos import spec as topo_spec
-
-        loaded = topo_spec.load("ctc")
-        phones = topo_build.read_phone_table(LANG / "phones.txt")
-        return {
-            token: index
-            for index, token in enumerate(topo_build.build_tokens(loaded, phones))
-        }
+    def tokens(self, lang):
+        """
+        Read from `k2/tokens.txt`, which is what fixes the network's output
+        indices -- deliberately *not* recomputed, so this fixture is an
+        independent source rather than a copy of what is under test.
+        """
+        return read_symbol_table_or_list(lang / "k2" / "tokens.txt")
 
     @pytest.mark.k2
     def test_the_graph_is_not_trivial(self, graph):
@@ -192,6 +236,40 @@ class TestEndToEnd:
         never emits.
         """
         assert int(graph.labels.max()) < len(tokens)
+
+    @pytest.mark.k2
+    def test_the_graph_fits_the_networks_output_size(self, graph, tokens):
+        """
+        The invariant that would have caught the first real decoding
+        failure. `k2/tokens.txt` fixes the number of output units, so the
+        graph's largest input label must be the last of them -- the build
+        had ten labels where the network emits seven, every one shifted by
+        one, so the decoder read `<blk>` as `<eps>` and `Y` as `<UNK>`.
+        """
+        assert int(graph.labels.max()) == len(tokens) - 1
+
+    @pytest.mark.k2
+    def test_the_token_table_is_read_and_not_derived(self, lang):
+        """
+        Pins the rule in CLAUDE.md rather than the symptom: the table comes
+        from the directory. A derived one carries `<eps>` and the
+        disambiguation symbols, which the network does not emit.
+        """
+        from BenNevis.topos import build as topo_build
+        from BenNevis.topos import spec as topo_spec
+
+        on_disc = read_symbol_table_or_list(lang / "k2" / "tokens.txt")
+        assert "<eps>" not in on_disc
+        assert not any(token.startswith("#") for token in on_disc)
+
+        derived_wrongly = topo_build.build_tokens(
+            topo_spec.load("ctc"),
+            topo_build.read_phone_table(lang / "phones.txt"),
+        )
+        assert len(derived_wrongly) != len(on_disc), (
+            "the default derivation should differ from what prepare_topo.sh "
+            "writes, or this test is not testing anything"
+        )
 
     @pytest.mark.k2
     def test_a_lang_dir_without_disambiguation_symbols_is_refused(self, tmp_path):
@@ -267,3 +345,44 @@ class TestTierOneStaysTierOne:
 
         for name in package.__all__:
             assert name in package._SOURCES, name
+
+
+class TestSymbolTableOrList:
+    """
+    `k2/tokens.txt` is written as `symbol id` pairs and read by `Lang` with
+    `read_keys`, which takes the *line order* as the id. Both readings must
+    give the same answer, so this handles either shape and refuses a file
+    where they would disagree.
+    """
+
+    def test_two_columns_are_trusted(self, tmp_path):
+        path = tmp_path / "tokens.txt"
+        path.write_text("<blk> 0\nY 1\nE 2\n")
+        assert read_symbol_table_or_list(path) == {"<blk>": 0, "Y": 1, "E": 2}
+
+    def test_one_column_is_numbered_by_position(self, tmp_path):
+        path = tmp_path / "tokens.txt"
+        path.write_text("<blk>\nY\nE\n")
+        assert read_symbol_table_or_list(path) == {"<blk>": 0, "Y": 1, "E": 2}
+
+    def test_the_two_shapes_agree(self, tmp_path):
+        """
+        The point of it: `Lang` and this must not disagree about which
+        output unit a symbol is, or a checkpoint decodes as nonsense.
+        """
+        pairs = tmp_path / "a.txt"
+        pairs.write_text("<blk> 0\nY 1\n")
+        bare = tmp_path / "b.txt"
+        bare.write_text("<blk>\nY\n")
+        assert read_symbol_table_or_list(pairs) == read_symbol_table_or_list(bare)
+
+    def test_ids_out_of_order_are_refused(self, tmp_path):
+        path = tmp_path / "tokens.txt"
+        path.write_text("<blk> 0\nY 5\n")
+        with pytest.raises(ValueError, match="line order"):
+            read_symbol_table_or_list(path)
+
+    def test_blank_lines_are_skipped(self, tmp_path):
+        path = tmp_path / "tokens.txt"
+        path.write_text("<blk>\n\nY\n")
+        assert read_symbol_table_or_list(path) == {"<blk>": 0, "Y": 1}

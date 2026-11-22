@@ -60,6 +60,55 @@ def read_symbol_table(path: Path) -> Dict[str, int]:
     return table
 
 
+def read_symbol_table_or_list(path: Path) -> Dict[str, int]:
+    """
+    A symbol table that may be two columns or one.
+
+    `prepare_topo.sh` writes `k2/tokens.txt` and `k2/phones.txt` through
+    `BenNevis.topos`, which emits `symbol id` pairs, while `Lang` reads the
+    same files with `read_keys` and takes the *line order* as the id. Both
+    readings have to give the same answer, so a one-column file is numbered
+    by position and a two-column one is trusted as written -- and a
+    two-column file whose ids are not 0..n-1 in order would mean the two
+    disagree, which is worth an error rather than a silent difference.
+
+    Arguments
+    ---------
+    path: Path
+        The table.
+
+    Returns
+    -------
+    Dict[str, int]
+        Symbol to integer id.
+
+    Raises
+    ------
+    ValueError
+        If the ids are not consecutive from zero in file order, since
+        `Lang` assumes they are.
+    """
+    table: Dict[str, int] = {}
+    for position, line in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines()
+    ):
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) == 1:
+            table[fields[0]] = len(table)
+            continue
+        index = int(fields[1])
+        if index != position:
+            raise ValueError(
+                f"{path}:{position + 1}: {fields[0]!r} has id {index} but is "
+                f"on line {position + 1}; Lang reads this file by line order, "
+                f"so the two would disagree about the network's outputs"
+            )
+        table[fields[0]] = index
+    return table
+
+
 def read_utt2spk(path: Path) -> Dict[str, str]:
     """
     Kaldi's `utt2spk`.
@@ -228,18 +277,56 @@ def build_graph(
     logging.info("expanding the %s topology", topology)
     loaded = topo_spec.load(topology)
     phone_list = topo_build.read_phone_table(lang_dir / "phones.txt")
-    tokens = {
-        token: index
-        for index, token in enumerate(topo_build.build_tokens(loaded, phone_list))
-    }
+
+    # **Read, never recompute.** `k2/tokens.txt` fixes the network's output
+    # indices and a checkpoint is only valid while they stay put -- the rule
+    # is in CLAUDE.md and breaking it is what made the first real decoding
+    # run fail. `prepare_topo.sh` writes that table with neither `<eps>` nor
+    # the disambiguation symbols, so recomputing it with the defaults gave
+    # ten labels where the network emits seven, every one shifted by one:
+    # the decoder read `<blk>` as `<eps>` and `Y` as `<UNK>`.
+    tokens_path = lang_dir / "k2" / "tokens.txt"
+    if tokens_path.is_file():
+        tokens = read_symbol_table_or_list(tokens_path)
+    else:
+        logging.warning(
+            "%s has no k2/tokens.txt; deriving the table instead, which is "
+            "only safe if the network was built from the same spec",
+            lang_dir,
+        )
+        tokens = {
+            token: index
+            for index, token in enumerate(
+                topo_build.build_tokens(
+                    loaded, phone_list, with_eps=False, with_disambig=False
+                )
+            )
+        }
+
+    # Likewise the output side: the k2 variant maps tokens to phones without
+    # the disambiguation symbols, because `compose_lg` has already stripped
+    # them from LG by this point.
+    k2_phones_path = lang_dir / "k2" / "phones.txt"
+    if k2_phones_path.is_file():
+        osymbols = read_symbol_table_or_list(k2_phones_path)
+        out_phone_list = topo_build.read_phone_table(k2_phones_path)
+    else:
+        osymbols = phones
+        out_phone_list = phone_list
+
     topology_fsa = load_openfst_text(
         topo_build.build_openfst_int_text(
             loaded,
             variant,
-            phone_list,
+            out_phone_list,
             isymbols=tokens,
-            osymbols=phones,
+            osymbols=osymbols,
         )
+    )
+    logging.info(
+        "topology: %d tokens on the input side, %d arcs",
+        len(tokens),
+        topology_fsa.num_arcs,
     )
 
     return build_decoding_graph(

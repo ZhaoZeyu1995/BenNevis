@@ -615,6 +615,26 @@ workflow changes.
   **device index** is `LOCAL_RANK`, the rank within the node. They coincide on
   one node and diverge across several, so never select a device by global
   rank.
+- **The decoding graph's token table is read, never recomputed — and
+  getting that wrong is what the first real k2 decoding run failed on.**
+  `prepare_topo.sh` writes `k2/tokens.txt` with **neither `<eps>` nor the
+  disambiguation symbols**, and `Lang` takes the network's output size and
+  indices from it. Deriving the table instead with `build_tokens`' defaults
+  gave ten labels for yesno's CTC topology where the network emits seven,
+  **every one shifted by one**: the decoder read `<blk>` as `<eps>` and `Y`
+  as `<UNK>`. k2 then failed inside `intersect_dense_pruned` with
+  `num_states_final_t <= 1 (2 vs. 1)`, which says nothing about labels.
+  The k2 variant's *output* side is `k2/phones.txt`, phones without the
+  disambiguation symbols, which is right because `compose_lg` strips them
+  from LG before the topology is composed on.
+  **The test could not have caught it**: it generated its own log
+  probabilities from the same derived table, so the graph and the acoustics
+  were wrong together and agreed. A test that derives its inputs from the
+  code under test proves only that the code is self-consistent. The fixture
+  now builds a language directory the way `prepare_topo.sh` does and reads
+  the table off disc, and one test asserts
+  `graph.labels.max() == len(tokens) - 1`, which is the invariant that
+  would have failed immediately.
 - Topology FSTs and `tokens.txt` must stay consistent — the topology
   determines the neural network's output vocabulary. Both now come from the
   same spec, and `TopologySpec.validate` rejects a spec whose arcs use a token
