@@ -69,6 +69,16 @@ run the cheap ones everywhere and the expensive ones rarely.
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
 | 4 | `gpu` | CUDA, multi-GPU | manual |
 
+`egs/mini_librispeech/asr` exists for the measurements yesno cannot make:
+yesno sits at nought to two word errors, so nothing that improves a model can
+be shown to improve it, and yesno's filterbank is degenerate so nothing about
+features can be judged on it either. Its stages 0–4 need no training and take
+minutes, which is the path for feature and graph comparison; stage 5 onward is
+about ten minutes an epoch for five hours of audio, so twenty epochs of one
+topology is three hours and all eight would be a day. It is therefore **not**
+part of the nightly, and has no WER ledger entry until a training run has been
+recorded.
+
 Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
 `.github/workflows/nightly.yml`. It is the **only** coverage the entry points
 have — `run/train.py`, `run/predict.py`, `bin/align.py` and the shell
@@ -427,6 +437,14 @@ workflow changes.
   run, whose undertrained model decoded nothing at all.
   `tests/recipes/test_decode_faster.py` extracts the awk from the script and
   runs it, so the test is about the code that ships.
+- **The stage-guard convention predates this work.** `egs/timit/*` and
+  `egs/librispeech/asr3` already used `stage`/`stop_stage` with the same
+  `if [ ${stage} -le N ] && [ ${stop_stage} -ge N ]` form, and asr3 uses
+  **stage -1** for an optional download, so a recipe's first stage is not
+  necessarily zero. What yesno and mini_librispeech add on top is announcing
+  each stage, refusing an inverted range and stopping on a failing one;
+  `tests/recipes/test_run_stages.py` holds the list of converted recipes and
+  asserts its own membership, so the gap is visible rather than unasserted.
 - **Recipes have `--stage` and `--stop_stage`**, numbered 0 to 9 in
   `egs/yesno/asr/run.sh` and announced as they run. Each stage reads what the
   ones before it wrote, so resuming is only safe where the earlier output

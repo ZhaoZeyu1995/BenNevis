@@ -1,0 +1,8 @@
+exp_dir: ${hydra:run.dir}
+save_every_n_epochs: 1.0
+save_top_k: 2
+# Five hours of audio at the throughput a CPU runner manages is about ten
+# minutes an epoch, so twenty epochs is a little over three hours for one
+# topology. Eighty, as yesno uses, would exceed the six-hour job ceiling.
+max_epochs: 20
+log_every_n_steps: 100

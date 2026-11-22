@@ -26,7 +26,17 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-RECIPE = REPO_ROOT / "egs" / "yesno" / "asr"
+EGS = REPO_ROOT / "egs"
+
+#: Every recipe that has been given stage guards. A recipe without them is
+#: not a failure here -- the librispeech and timit recipes still lack them --
+#: but one that has them must have them consistently.
+STAGED = [
+    path for path in sorted(EGS.glob("*/*/run.sh")) if "${stage}" in path.read_text()
+]
+assert STAGED, "no recipe has stage guards; has run.sh been restructured?"
+
+RECIPE = EGS / "yesno" / "asr"
 RUN = RECIPE / "run.sh"
 
 # Executing the guards needs a working bash, which Windows does not have for
@@ -43,19 +53,36 @@ needs_bash = pytest.mark.skipif(
     "bash on PATH is the WSL launcher, and the recipes are not Windows",
 )
 
+# Negative stage numbers are part of the convention, not a mistake:
+# egs/librispeech/asr3 uses stage -1 for an optional data download.
 GUARD_RE = re.compile(
-    r"^if \[ \$\{stage\} -le (?P<number>\d+) \] "
-    r"&& \[ \$\{stop_stage\} -ge (?P<same>\d+) \]; then$",
+    r"^if \[ \$\{stage\} -le (?P<number>-?\d+) \] "
+    r"&& \[ \$\{stop_stage\} -ge (?P<same>-?\d+) \]; then$",
     re.MULTILINE,
 )
 LABEL_RE = re.compile(
-    r'^\s*echo "\$0: stage (?P<number>\d+): (?P<label>[^"]+)"$', re.MULTILINE
+    r'^\s*echo "\$0: stage (?P<number>-?\d+): (?P<label>[^"]+)"',
+    re.MULTILINE | re.IGNORECASE,
 )
 
+#: Recipes brought up to the fuller convention: they announce each stage,
+#: refuse an inverted range, and stop on a failing stage. yesno gained all
+#: three after a stage failed silently and Kaldi's warning about two
+#: unreadable files went unnoticed; mini_librispeech was written with them.
+#:
+#: The stage guards themselves predate this work -- egs/timit and
+#: egs/librispeech/asr3 already used them, and asr3 uses stage -1 for an
+#: optional download. What those recipes lack is the announcing and the
+#: stopping: timit has nine guards and no announcements at all. They are
+#: listed here rather than exempted silently, and the membership is itself
+#: asserted, so a recipe cannot drift in or out unnoticed. Converting them is
+#: its own piece of work on recipes that cannot currently be run to check.
+CONVERTED = {"yesno/asr", "mini_librispeech/asr"}
 
-def guards():
+
+def guards(run=None):
     """The stage guards in the script, in order, as (number, condition)."""
-    text = RUN.read_text()
+    text = (run or RUN).read_text()
     found = []
     for match in GUARD_RE.finditer(text):
         assert match.group("number") == match.group("same"), (
@@ -86,6 +113,75 @@ def select(stage, stop_stage):
         text=True,
     )
     return [int(line) for line in completed.stdout.split()]
+
+
+@pytest.mark.parametrize(
+    "run", STAGED, ids=[str(p.relative_to(EGS).parent) for p in STAGED]
+)
+class TestEveryStagedRecipe:
+    """
+    The structural rules, applied to every recipe that has stage guards.
+
+    Written as a parametrised class so a new recipe is covered by adding the
+    guards rather than by remembering to add tests.
+    """
+
+    def test_the_stages_are_contiguous(self, run):
+        """
+        A gap is a stage nobody can select by number and a repeat is two
+        stages that cannot be run apart. The first number is not required to
+        be zero: asr3 starts at -1 for an optional download.
+        """
+        numbers = [number for number, _ in guards(run)]
+        assert numbers == list(range(numbers[0], numbers[0] + len(numbers))), numbers
+
+    def test_every_stage_announces_itself_where_converted(self, run):
+        name = str(run.relative_to(EGS).parent)
+        text = run.read_text()
+        labelled = {int(m.group("number")) for m in LABEL_RE.finditer(text)}
+        numbers = {number for number, _ in guards(run)}
+        if name in CONVERTED:
+            assert labelled == numbers, (
+                f"{name} is listed as converted but labels {sorted(labelled)} "
+                f"for stages {sorted(numbers)}"
+            )
+        else:
+            assert (
+                labelled != numbers
+            ), f"{name} now announces every stage; add it to CONVERTED"
+
+    def test_the_options_are_declared_before_parse_options(self, run):
+        text = run.read_text()
+        assert text.index("\nstage=") < text.index("parse_options.sh")
+        assert text.index("\nstop_stage=") < text.index("parse_options.sh")
+
+    def test_an_inverted_range_is_refused_where_the_recipe_does_so(self, run):
+        """
+        Only the converted recipes do this; see CONVERTED.
+        """
+        name = str(run.relative_to(EGS).parent)
+        if name not in CONVERTED:
+            pytest.skip(f"{name} has not been converted")
+        text = run.read_text()
+        assert "-gt ${stop_stage}" in text
+
+    def test_it_stops_on_a_failing_stage_where_converted(self, run):
+        """
+        `set -e` plus `pipefail`. Without them a stage can fail and the recipe
+        carries on with partial inputs, which is how Kaldi warning about two
+        unreadable files went unnoticed on yesno.
+
+        Asserted only for the recipes converted so far, and the membership of
+        that set is itself checked below -- so a recipe cannot be quietly
+        added to the exemption.
+        """
+        name = str(run.relative_to(EGS).parent)
+        text = run.read_text()
+        stops = "set -eo pipefail" in text or "set -euo pipefail" in text
+        if name in CONVERTED:
+            assert stops, f"{name} is listed as converted but does not stop"
+        else:
+            assert not stops, f"{name} now stops on failure; add it to CONVERTED"
 
 
 class TestStageNumbering:
