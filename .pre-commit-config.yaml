@@ -27,7 +27,16 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=1024]
-        exclude: ^egs/
+        # The guard is against a binary landing in the source tree by
+        # accident. Two places hold large files on purpose:
+        #   egs/ -- corpora and language models a recipe downloads.
+        #   tests/golden/reference/ -- captured Kaldi output, which is the
+        #     whole point of it. mini-librispeech's feature arrays, 200k-word
+        #     symbol table and 200k-entry lexicon are all over a megabyte,
+        #     and the alternative to committing them is a reference that
+        #     exists only as a 90-day workflow artefact while Kaldi rots.
+        #     The FSTs, which would be 590MB, are digests rather than bytes.
+        exclude: ^(egs/|tests/golden/reference/)
 
   - repo: https://github.com/psf/black
     rev: 24.10.0

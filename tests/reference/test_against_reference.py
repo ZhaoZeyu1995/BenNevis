@@ -312,7 +312,7 @@ class TestFunctionalEquivalenceOfG:
             pytest.skip("this reference was captured before fingerprints")
 
         arpa = REPO_ROOT / "egs" / "yesno" / "asr" / "input" / "task.arpabo"
-        words_path = REFERENCE_DIR / "yesno" / "lang" / "words.txt"
+        words_path = REFERENCE_DIR / "lang" / "words.txt"
         if not arpa.is_file() or not words_path.is_file():
             pytest.skip("no ARPA model and symbol table to build from")
 
@@ -332,7 +332,7 @@ class TestFunctionalEquivalenceOfG:
 
         checked = 0
         for name, recorded in manifest.functional.items():
-            if "G.fst" not in name or "yesno" not in str(REFERENCE_DIR / name):
+            if "G.fst" not in name:
                 continue
             built = fingerprint(
                 by_source,
@@ -348,5 +348,8 @@ class TestFunctionalEquivalenceOfG:
                     f"{weight:.6f} in Kaldi's"
                 )
                 checked += 1
-        if not checked:
-            pytest.skip("no yesno G.fst fingerprint in this reference")
+        assert checked, (
+            "a fingerprint was recorded but nothing was compared against it; "
+            "this test skipped unconditionally once because REFERENCE_DIR "
+            "already ends in the corpus name and the path had it twice"
+        )
