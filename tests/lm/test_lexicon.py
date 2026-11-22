@@ -16,11 +16,18 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import math
 from pathlib import Path
 
 import pytest
 
-from BenNevis.lm.lexicon import build_lexicon_arcs, build_lexicon_fst_text, read_lexicon
+from BenNevis.lm.lexicon import (
+    build_lexicon_arcs,
+    build_lexicon_fst_text,
+    format_weight,
+    position_dependent,
+    read_lexicon,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REFERENCE = REPO_ROOT / "tests" / "golden" / "reference" / "yesno" / "lang"
@@ -86,14 +93,14 @@ class TestReadLexicon:
 class TestStructure:
     def test_a_single_phone_word_is_a_loop(self):
         arcs, loop = build_lexicon_arcs([("A", ("x",))], WORDS, PHONES)
-        assert arcs == [(loop, loop, PHONES["x"], WORDS["A"])]
+        assert arcs == [(loop, loop, PHONES["x"], WORDS["A"], 0.0)]
 
     def test_a_multi_phone_word_is_a_chain_back_to_the_loop(self):
         arcs, loop = build_lexicon_arcs([("CCC", ("x", "y", "z"))], WORDS, PHONES)
         assert arcs == [
-            (loop, 1, PHONES["x"], WORDS["CCC"]),
-            (1, 2, PHONES["y"], 0),
-            (2, loop, PHONES["z"], 0),
+            (loop, 1, PHONES["x"], WORDS["CCC"], 0.0),
+            (1, 2, PHONES["y"], 0, 0.0),
+            (2, loop, PHONES["z"], 0, 0.0),
         ]
 
     def test_the_word_rides_only_the_first_arc(self):
@@ -133,14 +140,16 @@ class TestStructure:
         with pytest.raises(KeyError, match="not in phones.txt"):
             build_lexicon_arcs([("A", ("q",))], WORDS, PHONES)
 
-    def test_a_non_zero_silence_probability_raises(self):
+    def test_a_silence_probability_of_one_raises(self):
         """
-        Rather than producing a plausible lexicon that decodes differently.
-        The shape with optional silence is make_lexicon_fst.pl's, and
-        guessing it would be a lexicon that looks right and is not.
+        Its no-silence arc would cost infinity.
         """
-        with pytest.raises(NotImplementedError, match="sil_prob"):
-            build_lexicon_arcs([("A", ("x",))], WORDS, PHONES, sil_prob=0.5)
+        with pytest.raises(ValueError, match=r"not in \[0, 1\)"):
+            build_lexicon_arcs([("A", ("x",))], WORDS, PHONES, sil_prob=1.0)
+
+    def test_a_negative_silence_probability_raises(self):
+        with pytest.raises(ValueError, match=r"not in \[0, 1\)"):
+            build_lexicon_arcs([("A", ("x",))], WORDS, PHONES, sil_prob=-0.1)
 
 
 class TestByteExactnessWithKaldi:
@@ -180,3 +189,179 @@ class TestByteExactnessWithKaldi:
             symbol_table(REFERENCE / "phones.txt"),
         )
         assert built.endswith("\n")
+
+
+class TestPositionDependentPhones:
+    """
+    `prepare_lang.sh` suffixes a lexicon's phones by word position unless
+    told not to, and not being told is the default.
+
+    This is why a builder that ignored it reproduced yesno's bytes exactly
+    -- yesno passes `--position-dependent-phones false` -- and could not
+    build mini-librispeech's at all: its lexicon says `AH0` while its
+    `phones.txt` holds only `AH0_B`, `AH0_E`, `AH0_I` and `AH0_S`.
+    """
+
+    def test_a_single_phone_word_takes_s(self):
+        assert position_dependent(("x",)) == ("x_S",)
+
+    def test_a_two_phone_word_takes_b_and_e(self):
+        assert position_dependent(("x", "y")) == ("x_B", "y_E")
+
+    def test_the_middle_takes_i(self):
+        assert position_dependent(("x", "y", "z", "w")) == (
+            "x_B",
+            "y_I",
+            "z_I",
+            "w_E",
+        )
+
+    def test_an_empty_pronunciation_is_unchanged(self):
+        assert position_dependent(()) == ()
+
+    def test_it_is_off_unless_asked_for(self):
+        """
+        So a caller who has not thought about it gets a KeyError naming the
+        phone, rather than silently building against phones that are not in
+        the table.
+        """
+        arcs, _loop = build_lexicon_arcs([("A", ("x",))], WORDS, PHONES)
+        assert arcs[0][2] == PHONES["x"]
+
+    def test_the_optional_silence_phone_is_not_suffixed(self):
+        """
+        Visible in Kaldi's own output: the silence *word* `!SIL` is
+        pronounced `SIL_S` while the optional-silence arc carries plain
+        `SIL`. Suffixing both would put a phone on the silence arc that
+        Kaldi does not.
+        """
+        phones = dict(PHONES, SIL=9, SIL_S=10, x_S=11)
+        arcs, loop = build_lexicon_arcs(
+            [("A", ("x",))],
+            WORDS,
+            phones,
+            sil_prob=0.5,
+            sil_phone="SIL",
+            position_dependent_phones=True,
+        )
+        silence_arcs = [a for a in arcs if a[0] == 2]
+        assert silence_arcs == [(2, loop, phones["SIL"], 0, 0.0)]
+
+
+class TestOptionalSilence:
+    @pytest.fixture
+    def phones(self):
+        return dict(PHONES, SIL=9)
+
+    def test_the_states_are_kaldis(self, phones):
+        """
+        start 0, loop 1, silence 2. The numbering matters because it is what
+        Kaldi's bytes have, and because the final state is then **not** 0.
+        """
+        arcs, loop = build_lexicon_arcs([("A", ("x",))], WORDS, phones, sil_prob=0.5)
+        assert loop == 1
+        assert {a[0] for a in arcs} >= {0, 1, 2}
+
+    def test_the_start_arcs_are_epsilon_on_both_sides(self, phones):
+        """
+        Not the silence phone. The Perl script of the same name puts
+        `silphone:<eps>` here and the Python one puts `<eps>:<eps>`; Kaldi's
+        own output settles it, and the capture shows `0 2 0 0`.
+        """
+        arcs, _loop = build_lexicon_arcs([("A", ("x",))], WORDS, phones, sil_prob=0.5)
+        start = sorted(a for a in arcs if a[0] == 0)
+        assert [(a[2], a[3]) for a in start] == [(0, 0), (0, 0)]
+
+    def test_the_start_arcs_pay_for_the_choice(self, phones):
+        arcs, _loop = build_lexicon_arcs([("A", ("x",))], WORDS, phones, sil_prob=0.25)
+        weights = sorted(a[4] for a in arcs if a[0] == 0)
+        assert weights == [
+            pytest.approx(-math.log(0.75)),
+            pytest.approx(-math.log(0.25)),
+        ]
+
+    def test_the_last_arc_of_a_word_is_split(self, phones):
+        """
+        One copy to the loop state paying for no silence, one to the
+        silence state paying for it. Non-deterministic on purpose: it is
+        how the script avoids epsilon arcs.
+        """
+        arcs, loop = build_lexicon_arcs(
+            [("CCC", ("x", "y", "z"))], WORDS, phones, sil_prob=0.5
+        )
+        last = [a for a in arcs if a[2] == phones["z"]]
+        assert len(last) == 2
+        assert {a[1] for a in last} == {loop, 2}
+
+    def test_the_silence_word_is_split_too(self, phones):
+        """
+        The Perl script skips the split when the last phone is the silence
+        phone; the Python one does not. Kaldi's output follows the Python,
+        so this pins the one that matches.
+        """
+        words = dict(WORDS, SIL_WORD=7)
+        arcs, _loop = build_lexicon_arcs(
+            [("SIL_WORD", ("SIL",))], words, phones, sil_prob=0.5
+        )
+        word_arcs = [a for a in arcs if a[3] == words["SIL_WORD"]]
+        assert len(word_arcs) == 2
+
+    def test_the_silence_state_returns_on_the_silence_phone(self, phones):
+        arcs, loop = build_lexicon_arcs([("A", ("x",))], WORDS, phones, sil_prob=0.5)
+        assert [a for a in arcs if a[0] == 2] == [(2, loop, phones["SIL"], 0, 0.0)]
+
+    def test_a_disambiguation_symbol_adds_a_state(self, phones):
+        """
+        `prepare_lang.sh` supplies one for `L_disambig.fst` and not for
+        `L.fst`, so both paths have to exist.
+        """
+        phones = dict(phones, **{"#1": 11})
+        arcs, loop = build_lexicon_arcs(
+            [("A", ("x",))],
+            WORDS,
+            phones,
+            sil_prob=0.5,
+            sil_disambig="#1",
+        )
+        from_silence = [a for a in arcs if a[0] == 2]
+        assert from_silence[0][1] != loop
+        bridge = [a for a in arcs if a[2] == phones["#1"]]
+        assert bridge and bridge[0][1] == loop
+
+    def test_a_missing_silence_phone_raises(self):
+        with pytest.raises(KeyError, match="optional-silence phone"):
+            build_lexicon_arcs([("A", ("x",))], WORDS, PHONES, sil_prob=0.5)
+
+
+class TestWeightFormatting:
+    """
+    Kaldi's `BaseFloat` is single precision and `fstprint` writes about nine
+    significant figures. Writing the double instead gives a correct lexicon
+    that is not byte-identical, and this did not arise while every weight
+    was zero.
+    """
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (math.log(2), "0.693147182"),
+            (math.log(10), "2.30258512"),
+            (0.0, "0"),
+        ],
+    )
+    def test_it_matches_what_kaldi_writes(self, value, expected):
+        assert format_weight(value) == expected
+
+    def test_a_zero_weight_is_omitted_from_the_text(self):
+        """
+        `fstprint` leaves out the semiring One, which is why yesno's L.fst
+        has four fields per arc and its G.fst has five.
+        """
+        text = build_lexicon_fst_text(
+            [("A", ("x",))],
+            WORDS,
+            PHONES,
+            sil_prob=0.0,
+        )
+        for line in text.splitlines():
+            assert len(line.split("\t")) in (1, 4), line
