@@ -230,9 +230,22 @@ tolerances chosen per layer:
   | A normalisation factor | the mean difference of logs is −0.00007, so there is no offset to find |
   | Quiet-bin cancellation | the scatter is flat across frame energies |
 
-  What remains is the per-frame spectrum path. Pursuing it means reading
-  Kaldi's `srfft` and windowing code against torchaudio's, and it would be
-  better done on a 16 kHz corpus, for the reason in the next entry.
+  | The filterbank's conditioning | **tested and refuted**, see below |
+
+  **It is not the degenerate filterbank.** That was the natural suspicion and
+  it is wrong: measured against mini-librispeech at 16 kHz, where the
+  filterbank is well conditioned, the gap is **7.7e-02 max and 1.4e-02
+  mean** — the same size as yesno's 6.5e-02 and 1.2e-02 at 8 kHz. So the
+  residual is independent of the sample rate and of how many FFT bins a mel
+  bin spans, which rules out the one explanation that had looked likely
+  enough to justify building a second corpus for.
+
+  What remains is the per-frame spectrum path, and localising it needs one of
+  Kaldi's intermediates rather than more guessing from outside.
+  `compute-spectrogram-feats` would give the power spectrum before the
+  filterbank, and capturing that for a few utterances would say in a single
+  run whether the difference is upstream or downstream of the mel
+  projection. That is the next cheap step if this is worth pursuing.
 - **The yesno filterbank is degenerate, and this is about the recipe rather
   than the migration.** 80 mel bins are requested over 20–4000 Hz, but a
   25 ms frame at 8 kHz is 200 samples, padded to a 256-point FFT, giving 128
@@ -241,10 +254,13 @@ tolerances chosen per layer:
   0.33. Kaldi's own `feature-fbank.h` says the default of 23 suits 16 kHz and
   that "for 8khz-sampled data, 15 may be better". The 16 kHz recipes are
   fine — 80 bins over 20–8000 Hz against a 512-point FFT is about three FFT
-  bins per mel bin at worst. This is worth knowing before concluding anything
-  from yesno about features: many of its 80 dimensions carry nearly the same
-  information, and an ill-conditioned filterbank is exactly where two
-  implementations will disagree most.
+  bins per mel bin at worst. This still matters for what yesno's
+  features *are* — many of its 80 dimensions carry nearly the same
+  information — but **not** for the fbank comparison: the entry above shows
+  16 kHz disagrees by the same amount, so the conditioning is not what the
+  implementations differ over. The earlier claim that yesno was therefore the
+  worst corpus on which to judge a feature reimplementation was reasonable
+  and turned out to be false.
 - **Losses**: agreement to ~1e-4 on a fixed batch. This is the fastest and
   most localising signal — prefer it over WER when validating a migration.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
