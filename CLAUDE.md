@@ -627,6 +627,13 @@ workflow changes.
   fixes the network's output indices, and a checkpoint is only valid while
   those indices stay put. `k2/T.fst` is still compiled, but nothing in
   training reads it.
+- **The topology FSA is not arc-sorted, and `get_den_graph` now sorts it.**
+  Fixed, with the premise and the consequence both pinned: one test asserts
+  the topology is *not* `ARC_SORTED` on its own, so the fix cannot become
+  silently redundant, and one asserts the denominator scores are **exactly**
+  unchanged by sorting, so the WER ledger cannot move. **CUDA is still
+  unchecked** — there an unsorted graph is undefined rather than merely
+  slow, and these tests run on the CPU. The original note follows.
 - **The topology FSA is not arc-sorted, and `k2.intersect_dense` documents
   that its graphs must be.** `fstarcsort --sort_type=olabel` in
   `prepare_topo.sh` sorted by *output* label, which does not make a k2 FSA

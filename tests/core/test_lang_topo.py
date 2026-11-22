@@ -254,3 +254,78 @@ class TestFallbackToTheCompiledFst:
         (lang_dir / "k2" / "T.fst").write_bytes(b"not really an fst")
         obj = Lang(str(lang_dir), load_topo=True, load_lexicon=False)
         assert obj.topo.num_arcs > 0
+
+
+class TestTheDenominatorGraphIsArcSorted:
+    """
+    `k2.intersect_dense` documents that its graphs must be arc-sorted, and
+    `get_den_graph` was handing it the topology unsorted.
+
+    `prepare_topo.sh` runs `fstarcsort --sort_type=olabel`, which sorts by
+    *output* label and does not make a k2 FSA `ARC_SORTED` -- it measured
+    False for all eight topologies, before and after the spec rewrite. The
+    numerator path is unaffected because `k2.compose` arc-sorts its first
+    argument itself, so this was the only site violating the precondition.
+
+    It had not been biting because the CPU scores come out the same either
+    way, which the second test here pins so the baseline cannot move. On
+    CUDA an unsorted graph is undefined rather than merely slow, and that
+    remains unchecked -- these tests run on the CPU.
+    """
+
+    def test_the_topology_itself_is_not_arc_sorted(self, lang_dir, no_shell):
+        """
+        The premise. If a topology ever came out sorted on its own this
+        test would start failing, which is the right way to find out --
+        the fix would then be unnecessary rather than silently redundant.
+        """
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=False)
+        assert not (obj.topo.properties & k2.fsa_properties.ARC_SORTED)
+
+    def test_the_denominator_graph_is(self, lang_dir, no_shell):
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=True)
+        loss = GraphLoss(obj, use_den=True)
+        graph = loss.get_den_graph(2, torch.device("cpu"))
+        assert graph.properties & k2.fsa_properties.ARC_SORTED
+
+    def test_the_scores_are_unchanged_by_sorting(self, lang_dir, no_shell):
+        """
+        The test that protects the WER ledger: sorting must not move the
+        denominator, or every recorded error rate would need re-measuring.
+        Computed both ways on the same batch and compared exactly, not to a
+        tolerance -- a difference here would be a real difference.
+        """
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=True)
+        torch.manual_seed(7)
+        log_probs = torch.randn(3, 18, NUM_TOKENS).log_softmax(-1)
+        lens = torch.tensor([18, 16, 12], dtype=torch.int32)
+        loss = GraphLoss(obj, use_den=True)
+        dense = loss.get_dense_fsa(log_probs, lens)
+
+        def scores(graph):
+            lattice = k2.intersect_dense(graph, dense, 10.0)
+            return lattice.get_tot_scores(
+                log_semiring=True, use_double_scores=True
+            ).tolist()
+
+        sorted_graph = loss.get_den_graph(3, torch.device("cpu"))
+        unsorted = k2.create_fsa_vec([obj.topo for _ in range(3)])
+        assert not (unsorted.properties & k2.fsa_properties.ARC_SORTED)
+
+        assert scores(sorted_graph) == scores(unsorted)
+
+    def test_the_graph_still_carries_no_gradient(self, lang_dir, no_shell):
+        """
+        The denominator is a constant. A graph that required grad would
+        have the loss backpropagate into the topology, which is not a
+        parameter.
+        """
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=True)
+        loss = GraphLoss(obj, use_den=True)
+        assert loss.get_den_graph(2, torch.device("cpu")).requires_grad is False
+
+    def test_one_graph_per_utterance(self, lang_dir, no_shell):
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=True)
+        loss = GraphLoss(obj, use_den=True)
+        for size in (1, 2, 5):
+            assert loss.get_den_graph(size, torch.device("cpu")).shape[0] == size
