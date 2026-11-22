@@ -41,13 +41,13 @@
     },
     "mmictc": {
       "reference_wer": 0.4,
-      "max_wer": 2.15,
-      "measured_wer": 0.86,
-      "measured_errors": 2
+      "max_wer": 1.72,
+      "measured_wer": 0.43,
+      "measured_errors": 1
     },
     "mmictc-1": {
       "reference_wer": 0.9,
-      "max_wer": 2.15,
+      "max_wer": 2.16,
       "measured_wer": 0.86,
       "measured_errors": 2
     },
@@ -83,9 +83,9 @@
     }
   },
   "measured": {
-    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/44939092537",
-    "date": "2026-11-21",
+    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/44962562909",
+    "date": "2026-11-22",
     "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:8e57ab123343df7f57908cee5cb6f1251f4e8aed8d110d69ce6ffb5f80994779",
-    "note": "CPU, torch 2.15. reference_wer is the author's pre-refactor CUDA run at torch 2.1, kept as the historical record; every topology landed within two word errors of it."
+    "note": "CPU, torch 2.15, with --dither=0 in conf/fbank.conf. reference_wer is the author's pre-refactor CUDA run at torch 2.1, kept as the historical record. Removing dither moved one word error in total across all eight topologies, downward."
   }
 }
