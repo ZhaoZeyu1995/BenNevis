@@ -59,6 +59,7 @@ __all__ = [
     "build_lexicon_fst_text",
     "format_weight",
     "position_dependent",
+    "add_disambiguation",
 ]
 
 #: A word and the phones it is pronounced as.
@@ -372,3 +373,85 @@ def build_lexicon_fst_text(
     if not emitted_final:
         lines.append(f"{final}")
     return "\n".join(lines) + "\n"
+
+
+def add_disambiguation(
+    lexicon: Lexicon,
+    first_allowed: int = 1,
+) -> Tuple[Lexicon, int]:
+    """
+    Append disambiguation symbols where a lexicon needs them, as
+    `add_lex_disambig.pl` does.
+
+    `L.fst` composed with a grammar has to be determinisable, and two
+    things stop it being so. A pronunciation that is a **proper prefix** of
+    another cannot be told from the start of that other one. And a
+    pronunciation shared by **several words** -- a homophone -- cannot say
+    which word it was. Both are fixed by appending `#1`, `#2`, ... so that
+    every ambiguous pronunciation becomes distinct on the input side.
+
+    A pronunciation that is neither a prefix nor shared gets nothing, which
+    is why the symbols are few: mini-librispeech needs fifteen for 206,510
+    entries.
+
+    This runs on the phones **as the FST will see them**, so after any
+    position-dependent suffixing -- `prepare_lang.sh` applies the suffixes
+    first and disambiguates the result, which its own documented example of
+    `lexiconp_disambig.txt` shows.
+
+    The empty pronunciation is a special case with a symbol **reserved** to
+    it alone: it maps to nothing on the input side, so it cannot be
+    distinguished by anything else, and a symbol another entry also used
+    would not separate them.
+
+    Arguments
+    ---------
+    lexicon: Lexicon
+        The entries, in order.
+    first_allowed: int
+        The lowest symbol number this may use. `prepare_lang.sh` leaves it
+        at one.
+
+    Returns
+    -------
+    Tuple[Lexicon, int]
+        The entries with symbols appended, and the highest symbol number
+        used -- which decides the *silence* disambiguation symbol's number,
+        since `prepare_lang.sh` takes the next one after this.
+    """
+    counts: Dict[Tuple[str, ...], int] = {}
+    for _word, pronunciation in lexicon:
+        counts[pronunciation] = counts.get(pronunciation, 0) + 1
+
+    # Every proper prefix of every pronunciation, including the empty one.
+    prefixes: set = set()
+    for _word, pronunciation in lexicon:
+        for cut in range(len(pronunciation)):
+            prefixes.add(pronunciation[:cut])
+
+    highest = first_allowed - 1
+    reserved: set = set()
+    last_used: Dict[Tuple[str, ...], int] = {}
+    result: Lexicon = []
+
+    for word, pronunciation in lexicon:
+        if pronunciation not in prefixes and counts[pronunciation] == 1:
+            result.append((word, pronunciation))
+            continue
+
+        if not pronunciation:
+            # Reserved to the empty pronunciation alone; see above.
+            highest += 1
+            reserved.add(highest)
+            result.append((word, (f"#{highest}",)))
+            continue
+
+        previous = last_used.get(pronunciation)
+        current = first_allowed if previous is None else previous + 1
+        while current in reserved:
+            current += 1
+        highest = max(highest, current)
+        last_used[pronunciation] = current
+        result.append((word, pronunciation + (f"#{current}",)))
+
+    return result, highest
