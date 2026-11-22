@@ -211,3 +211,59 @@ class TestEndToEnd:
                 YESNO / "task.arpabo",
                 "ctc",
             )
+
+
+class TestTierOneStaysTierOne:
+    """
+    `pipeline`'s `.trn` handling must import without k2.
+
+    This file's tests are tier 1, and they failed on every platform
+    because `BenNevis/decode/__init__.py` imported the k2-dependent
+    submodules eagerly -- so importing `BenNevis.decode.pipeline` to format
+    a transcription pulled in k2. A machine with k2 installed cannot see
+    that, which is exactly why it needs a test rather than care.
+    """
+
+    def test_importing_pipeline_does_not_import_k2(self):
+        """
+        Run in a subprocess with k2 made unimportable, which is the only
+        way to check this where k2 is installed.
+        """
+        import subprocess
+        import sys
+
+        program = (
+            "import sys\n"
+            "class Block:\n"
+            "    def find_module(self, name, path=None):\n"
+            "        if name == 'k2' or name.startswith('k2.'):\n"
+            "            return self\n"
+            "    def load_module(self, name):\n"
+            "        raise ImportError('k2 is blocked for this test')\n"
+            "sys.meta_path.insert(0, Block())\n"
+            "from BenNevis.decode.pipeline import format_trn\n"
+            "assert format_trn([('u', ['A'])], {'u': 's'}) == 'A (s-u)\\n'\n"
+            "assert 'k2' not in sys.modules\n"
+            "print('ok')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+        )
+        assert result.returncode == 0, (
+            f"importing BenNevis.decode.pipeline without k2 failed:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        assert "ok" in result.stdout
+
+    def test_the_package_exports_without_importing(self):
+        """
+        `__getattr__` has to cover everything `__all__` promises, or a name
+        resolves on one import path and not another.
+        """
+        import BenNevis.decode as package
+
+        for name in package.__all__:
+            assert name in package._SOURCES, name
