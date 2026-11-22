@@ -273,6 +273,18 @@ tolerances chosen per layer:
   standard for `G.fst`, `L.fst` and `TLG.fst` is: the same weight for every
   word sequence, checked on sampled strings and against the real decoding
   output, with the WER ledger as the backstop.
+  **`L.fst` turns out to be byte-exact anyway, and is checked that way.**
+  Both choices `G` leaves arbitrary are determined for the lexicon: states
+  are allocated in the order `lexicon.txt` lists its words, and
+  `prepare_lang.sh` leaves the arcs sorted by output label. So the Python
+  build reproduces Kaldi's bytes for yesno exactly. The functional standard
+  is there because an FST's encoding is *usually* arbitrary, not because
+  bytes are unwelcome where they are not — take them when they are free.
+  This holds for `--sil_prob 0.0`, which is what `egs/yesno/asr` uses; a
+  non-zero silence probability adds a start state, a silence state and
+  weighted entry arcs whose exact shape is `make_lexicon_fst.pl`'s, and the
+  builder **raises** rather than guessing at it, since a plausible-looking
+  lexicon that decodes differently is the worst outcome available.
   This is a different standard from CMVN's deliberately. There, the object is
   an array and any difference is a real difference, so byte-exactness was
   both achievable and the right test. Byte-exactness is still expected where
