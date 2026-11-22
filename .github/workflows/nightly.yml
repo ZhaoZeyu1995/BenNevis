@@ -79,7 +79,7 @@ jobs:
             egs/yesno/asr)
               args='--corpus yesno --model rnnp --test-set test_yesno --datasets train_yesno test_yesno' ;;
             egs/mini_librispeech/asr)
-              args='--corpus mini_librispeech --model rnnp --test-set dev_clean_2 --datasets train_clean_5 dev_clean_2 --lang-dir data/lang_nosp --graph-prefix data/lang_test_tgsmall_' ;;
+              args='--corpus mini_librispeech --model rnnp --test-set dev_clean_2 --datasets train_clean_5 dev_clean_2 --lang-dir data/lang_nosp --graph-prefix data/lang_test_tgsmall_ --dict-dir data/local/dict_nosp' ;;
             *)
               echo "no capture arguments for ${RECIPE}" >&2; exit 1 ;;
           esac

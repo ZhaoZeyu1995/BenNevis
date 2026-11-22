@@ -870,3 +870,87 @@ class TestInputArtefactsAreAlwaysStored:
         must be too -- this has broken tier 1 on Windows three times.
         """
         assert capture.is_input_artefact("a/b/c/words.txt")
+
+
+class TestDictionaryInputsAreCaptured:
+    """
+    `prepare_lang.sh`'s inputs, not only its outputs.
+
+    The rule the capture already follows for CMVN's two sides and for the
+    symbol tables: whatever stage is being replaced needs its input
+    captured, because otherwise there is nothing to drive the replacement
+    with. Learned again the hard way -- the Python `L.fst` in #39 could only
+    be checked against yesno's four-word dictionary, because
+    mini-librispeech's lexicon was not in the reference.
+    """
+
+    def test_the_lexicon_is_among_the_captured_inputs(self):
+        assert "lexicon.txt" in capture.DICT_TEXT
+
+    def test_the_phone_lists_are_too(self):
+        """
+        `prepare_lang.sh` needs all of them, so a replacement does too.
+        """
+        for name in (
+            "silence_phones.txt",
+            "nonsilence_phones.txt",
+            "optional_silence.txt",
+        ):
+            assert name in capture.DICT_TEXT, name
+
+    def test_the_lexicon_is_stored_however_large(self):
+        """
+        mini-librispeech's dictionary has 200k words, so the lexicon is
+        several megabytes -- over the digest-only threshold, and an input
+        rather than an output.
+        """
+        assert capture.is_input_artefact("dict/lexicon.txt")
+
+    def test_lexiconp_is_stored_too(self):
+        """
+        The variant carrying pronunciation probabilities, which is what
+        `prepare_lang.sh` actually passes on when it exists.
+        """
+        assert capture.is_input_artefact("dict/lexiconp.txt")
+
+    def test_a_dictionary_is_captured_under_its_own_prefix(self, tmp_path):
+        """
+        `dict/` rather than `lang/`, so an input cannot be mistaken for an
+        output of the stage being replaced.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        recipe = tmp_path / "recipe"
+        (recipe / "data" / "local" / "dict").mkdir(parents=True)
+        (recipe / "data" / "local" / "dict" / "lexicon.txt").write_text(
+            "YES Y E S\nNO N O\n"
+        )
+        (recipe / "data" / "lang").mkdir(parents=True)
+
+        manifest = Manifest()
+        capture.capture_language(
+            manifest,
+            recipe,
+            tmp_path / "out",
+            topologies=[],
+            printer=None,
+        )
+        assert "dict/lexicon.txt" in manifest.exact
+        assert (
+            tmp_path / "out" / "dict" / "lexicon.txt"
+        ).read_text() == "YES Y E S\nNO N O\n"
+
+    def test_a_missing_dictionary_is_not_an_error(self, tmp_path):
+        """
+        A recipe may not have one where the capture runs, and the FST
+        failure mode is already covered by --allow-no-fstprint.
+        """
+        from BenNevis.utils.reference import Manifest
+
+        recipe = tmp_path / "recipe"
+        (recipe / "data" / "lang").mkdir(parents=True)
+        manifest = Manifest()
+        capture.capture_language(
+            manifest, recipe, tmp_path / "out", topologies=[], printer=None
+        )
+        assert not any(k.startswith("dict/") for k in manifest.exact)
