@@ -263,6 +263,21 @@ tolerances chosen per layer:
   and turned out to be false.
 - **Losses**: agreement to ~1e-4 on a fixed batch. This is the fastest and
   most localising signal — prefer it over WER when validating a migration.
+- **FSTs are compared as functions, not as bytes.** An LM or lexicon FST is a
+  map from word sequences to weights, and two encodings of the same map are
+  equally correct — byte equality would additionally require reproducing
+  `arpa2fst`'s state numbering, which it assigns in whatever order it meets
+  histories while reading the ARPA file, plus the arc order within each of
+  249,532 states for mini-librispeech's 3-gram. None of that is meaningful,
+  and mimicking it would make the Python harder to read for no gain. So the
+  standard for `G.fst`, `L.fst` and `TLG.fst` is: the same weight for every
+  word sequence, checked on sampled strings and against the real decoding
+  output, with the WER ledger as the backstop.
+  This is a different standard from CMVN's deliberately. There, the object is
+  an array and any difference is a real difference, so byte-exactness was
+  both achievable and the right test. Byte-exactness is still expected where
+  it already holds — the symbol tables, `disambig.int` and the topology FSTs,
+  all of which are canonical rather than arbitrary.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
 
 **Kaldi's output is recorded, not re-derived.** `tests/golden/reference/`
