@@ -296,7 +296,12 @@ def read_arpa(path: Path) -> ArpaModel:
                 # lines, which carry nothing this needs.
                 continue
 
-            fields = line.split("\t") if "\t" in line else line.split()
+            # Any whitespace, not tabs-or-spaces-but-not-both. The real
+            # LibriSpeech 3-gram writes a tab after the probability and
+            # *spaces* between the words, so splitting on tab alone sees
+            # `-1.486134` and `<UNK> </s>` and calls it a malformed bigram.
+            # ARPA words cannot contain whitespace, so this is unambiguous.
+            fields = line.split()
             if len(fields) not in (order + 1, order + 2):
                 raise ValueError(
                     f"{path}:{number}: a {order}-gram needs {order + 1} or "
