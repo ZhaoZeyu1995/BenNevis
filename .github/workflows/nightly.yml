@@ -230,16 +230,28 @@ jobs:
             tar czf artefacts/yesno-scores.tar.gz \
                 -C "${RECIPE}" -T "${RUNNER_TEMP}/scores.list"
           fi
+          # Two decoders now, so the table says which produced each row.
+          # The Kaldi path writes sclite's table and the k2 path writes one
+          # line from BenNevis.utils.scoring, so both formats are read --
+          # a row saying "unknown" means the file was there and
+          # unparseable, which is worth telling apart from no row at all.
           {
             echo "## ${RECIPE} error rates"
             echo
-            echo '| topology | sclite WER |'
-            echo '| --- | --- |'
+            echo '| topology | decoder | WER |'
+            echo '| --- | --- | --- |'
             for d in "${RECIPE}"/exp/*/dec_*/aw_*/results.wrd.txt; do
               [ -f "$d" ] || continue
               topo=$(echo "$d" | sed -E 's|.*/exp/rnnp-([^/]*)/.*|\1|')
+              case "$d" in
+                *dec_k2_*) who=k2 ;;
+                *)         who=kaldi ;;
+              esac
               wer=$(grep -E '\| *Sum/Avg' "$d" | awk '{print $(NF-2)}')
-              echo "| $topo | ${wer:-unknown} |"
+              if [ -z "$wer" ]; then
+                wer=$(sed -nE 's/^WER ([0-9.]+)%.*/\1/p' "$d" | head -1)
+              fi
+              echo "| $topo | $who | ${wer:-unknown} |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 

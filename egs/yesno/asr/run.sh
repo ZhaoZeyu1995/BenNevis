@@ -42,6 +42,7 @@ hydra_opts=""
 #   2  features and CMVN            7  decode
 #   3  topologies                   8  align against the reference
 #   4  decoding graphs              9  align against the decoding output
+#                                  10  decode again with k2, for comparison
 stage=0
 stop_stage=100
 
@@ -164,6 +165,30 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
     for topo in ${topos}; do
         for x in ${recog_sets}; do
             run/align.sh --nj ${nj} data/${x} data/lang_test_tg_${topo} exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+        done
+    done
+fi
+
+# Beside stage 7 rather than in place of it, so one run decodes the same
+# models both ways and the two WERs can be compared directly. Two pruned
+# searches cannot be compared any other way: decode-faster prunes on the
+# arc-cost difference and a token cap, k2 on two beams and a state floor and
+# cap, and each returns the best path it found.
+#
+# The graph is built from the dictionary and the ARPA model by BenNevis.lm,
+# not from the language directory's compiled FSTs, so this stage uses no
+# OpenFST and no Kaldi binary at all.
+if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
+    echo "$0: stage 10: decode again with k2, for comparison"
+    for topo in ${topos}; do
+        for x in ${recog_sets}; do
+            python3 run/decode_k2.py \
+                data/${x} data/lang_test_tg_${topo} \
+                exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_k2_${x} \
+                --lexicon input/lexicon.txt \
+                --arpa input/task.arpabo \
+                --topo ${topo} \
+                || { echo "$0: decode_k2.py failed for ${topo}/${x}" >&2; exit 1; }
         done
     done
 fi

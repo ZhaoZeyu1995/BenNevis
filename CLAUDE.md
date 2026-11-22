@@ -95,6 +95,20 @@ pytest tests/ -m "torch"                                            # tier 1b
 pytest tests/ -m "k2"                                               # tier 2
 ```
 
+**A package `__init__` that imports a heavy dependency makes every
+submodule as expensive as the heaviest one.** `BenNevis/decode/__init__.py`
+imported its k2-dependent submodules eagerly, so importing
+`BenNevis.decode.pipeline` to format a `.trn` line pulled in k2 and broke
+tier 1 and tier 1b on **every platform at once** — nine jobs red for a
+module that needs nothing but the standard library. The names now resolve
+through a module-level `__getattr__`.
+A machine with k2 installed cannot see this, which is why
+`tests/decode/test_pipeline.py` runs the import in a subprocess with k2
+made unimportable. The same trick checks a tier selection:
+`pytest -m "not torch and not k2 and not kaldi and not gpu"` with k2
+blocked is the only local test of what tier 1 actually does, and it is
+worth running before pushing anything that adds a module.
+
 Tier 1's rule is that it must stay **instant**, not that it must have no
 dependencies: a test that needs torch belongs in tier 1b with the `torch`
 marker, so the cheap tests are never held up by a 200MB wheel download.
