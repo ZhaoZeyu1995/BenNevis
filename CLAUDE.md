@@ -305,6 +305,19 @@ tolerances chosen per layer:
   all of which are canonical rather than arbitrary.
 - **WER**: the backstop, not the primary tool. Gate on a delta, not equality.
 
+**A committed reference that nothing reads is not a test.**
+`tests/reference/test_corpora.py` discovers every corpus under
+`tests/golden/reference/` by its manifest and runs the corpus-agnostic
+checks over all of them, because `test_against_reference.py` has yesno's
+path as a module constant — so committing mini-librispeech's 9.9MB would
+otherwise have added data no test looked at. Discovery rather than a list,
+so committing a capture is enough to put it under test.
+A related trap, and one that shipped: the `G.fst` gate added in #41 built
+its path as `REFERENCE_DIR / "yesno" / ...` while `REFERENCE_DIR` already
+ended in `yesno`, so it skipped unconditionally — **a test that could not
+fail**. It now asserts that it compared something, which is the only way a
+skip-shaped bug announces itself.
+
 **Kaldi's output is recorded, not re-derived.** `tests/golden/reference/`
 holds what Kaldi produced from a real `yesno` run inside the pinned image,
 captured by `tests/reference/capture.py` and described by a `manifest.json`
@@ -588,6 +601,16 @@ workflow changes.
   Python `arpa2fst` cannot be driven at all without it. mini-librispeech's
   is 3.0MB — over the threshold and nothing like the 334MB the threshold
   exists for. Same rule as recording both sides of CMVN.
+  **`utt2spk` is still missing, which is the fourth time.** Comparing CMVN
+  *values* on a corpus needs to know which speaker's statistics apply to
+  which utterance, and the capture records the statistics without the
+  mapping. mini-librispeech's speaker happens to be the utterance id minus
+  its last hyphen-separated field, but that is a LibriSpeech convention
+  rather than a guarantee — yesno's is `global` for all sixty. So the
+  committed mini-librispeech reference gates its *structure* and its
+  digests, not its CMVN arithmetic; that arithmetic is already bit-exact on
+  yesno and is independent of the sample rate, so the gap is a confirmation
+  deferred rather than a question open. Add `utt2spk` to the next capture.
   The same rule puts **`prepare_lang.sh`'s dictionary in the capture**, under
   `dict/` so an input cannot be mistaken for an output. That gap was found
   by writing a Python `L.fst` and discovering the only lexicon available to
