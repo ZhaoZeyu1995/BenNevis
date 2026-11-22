@@ -23,6 +23,8 @@ import pytest
 
 from BenNevis.lm.lexicon import (
     add_disambiguation,
+    add_self_loops,
+    build_disambig_fst_text,
     build_lexicon_arcs,
     build_lexicon_fst_text,
     format_weight,
@@ -497,3 +499,129 @@ class TestDisambiguation:
         out, highest = add_disambiguation(suffixed)
         assert highest == 0
         assert out == suffixed
+
+
+class TestSelfLoops:
+    """
+    `fstaddselfloops`, which is Kaldi C++ rather than a script.
+
+    Its own usage text states the rule -- self-loops go "on each final
+    state and each state with non-epsilon output symbols on at least one
+    arc out of the state" -- and `AddSelfLoops` in
+    `fstext/pre-determinize-inl.h` confirms it: weight One, one loop per
+    label pair, the destination being the state itself.
+    """
+
+    def test_a_final_state_gets_a_loop(self):
+        arcs = add_self_loops([], [3], [(7, 8)])
+        assert arcs == [(3, 3, 7, 8, 0.0)]
+
+    def test_a_state_with_a_word_on_an_arc_gets_one(self):
+        arcs = add_self_loops([(5, 6, 1, 2, 0.0)], [], [(7, 8)])
+        assert (5, 5, 7, 8, 0.0) in arcs
+
+    def test_a_state_whose_arcs_are_all_epsilon_does_not(self):
+        """
+        The output side is what counts, not the input side: an arc emitting
+        a phone but no word cannot end a word, so nothing has to pass
+        through there.
+        """
+        arcs = add_self_loops([(5, 6, 1, 0, 0.0)], [], [(7, 8)])
+        assert not [a for a in arcs if a[0] == a[1]]
+
+    def test_the_loop_carries_weight_zero(self):
+        """
+        Weight::One in the tropical semiring, which `fstprint` then omits.
+        """
+        arcs = add_self_loops([], [3], [(7, 8)])
+        assert arcs[0][4] == 0.0
+
+    def test_several_pairs_give_several_loops(self):
+        arcs = add_self_loops([], [3], [(7, 8), (9, 10)])
+        assert len(arcs) == 2
+        assert {(a[2], a[3]) for a in arcs} == {(7, 8), (9, 10)}
+
+    def test_no_pairs_means_no_change(self):
+        original = [(5, 6, 1, 2, 0.0)]
+        assert add_self_loops(original, [5], []) == original
+
+    def test_the_original_list_is_not_mutated(self):
+        original = [(5, 6, 1, 2, 0.0)]
+        add_self_loops(original, [5], [(7, 8)])
+        assert original == [(5, 6, 1, 2, 0.0)]
+
+    def test_a_lexicon_fst_gets_exactly_one(self):
+        """
+        Worth pinning as a count rather than a structure. Every arc
+        carrying a word leaves the loop state, and the loop state is the
+        only final one, so a lexicon FST has exactly one qualifying state
+        however big the lexicon is -- mini-librispeech's 206,510 entries
+        gain a single arc, `1 1 347 200004`.
+        """
+        phones = dict(PHONES, SIL=9)
+        arcs, loop = build_lexicon_arcs(
+            [("A", ("x",)), ("CCC", ("x", "y", "z"))],
+            WORDS,
+            phones,
+            sil_prob=0.5,
+        )
+        with_loops = add_self_loops(arcs, [loop], [(4, 5)])
+        added = [a for a in with_loops if a[0] == a[1] and a[2] == 4]
+        assert len(added) == 1
+        assert added[0] == (loop, loop, 4, 5, 0.0)
+
+
+class TestTheWholeDisambigChain:
+    """
+    `build_disambig_fst_text`, which is all four of `prepare_lang.sh`'s
+    steps in one call.
+
+    They are not separable: step three needs the silence disambiguation
+    symbol's *number*, and that comes out of step two. Calling the pieces
+    by hand with the wrong number puts the wrong symbol on the silence arc,
+    four stages from where it shows.
+    """
+
+    @pytest.fixture
+    def phones(self):
+        return dict(PHONES, SIL=9, **{"#0": 20, "#1": 21, "#2": 22, "#3": 23})
+
+    @pytest.fixture
+    def words(self):
+        return dict(WORDS, **{"#0": 30})
+
+    def test_it_adds_the_pass_through_loop(self, words, phones):
+        text = build_disambig_fst_text([("A", ("x",))], words, phones, sil_prob=0.5)
+        assert f"1\t1\t{phones['#0']}\t{words['#0']}" in text
+
+    def test_the_silence_symbol_follows_the_lexicon_ones(self, words, phones):
+        """
+        Two homophones need `#1` and `#2`, so silence takes `#3`.
+        """
+        text = build_disambig_fst_text(
+            [("A", ("z",)), ("BB", ("z",))], words, phones, sil_prob=0.5
+        )
+        assert f"\t{phones['#3']}\t0" in text
+
+    def test_without_silence_there_is_no_silence_symbol(self, words, phones):
+        text = build_disambig_fst_text([("A", ("x",))], words, phones, sil_prob=0.0)
+        assert f"\t{phones['#3']}\t" not in text
+
+    def test_it_still_adds_the_pass_through_without_silence(self, words, phones):
+        text = build_disambig_fst_text([("A", ("x",))], words, phones, sil_prob=0.0)
+        assert f"{phones['#0']}\t{words['#0']}" in text
+
+    def test_the_lexicon_passed_in_is_unsuffixed(self, words, phones):
+        """
+        The caller gives what `read_lexicon` returns; this applies the
+        suffixes and the symbols. Doing it the other way round would
+        double-apply them.
+        """
+        phones = dict(phones, x_S=40)
+        text = build_disambig_fst_text(
+            [("A", ("x",))],
+            words,
+            phones,
+            position_dependent_phones=True,
+        )
+        assert f"\t{phones['x_S']}\t" in text

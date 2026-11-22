@@ -320,6 +320,22 @@ tolerances chosen per layer:
   `#0 .. #ndisambig` and `ndisambig` is the algorithm's answer plus one for
   silence — so the symbol *count* pins the return value. mini-librispeech's
   `disambig.int` holds 17, so the answer must be 15.
+- **`fstaddselfloops` is C++ but its rule is small**, and
+  `L_disambig.fst` is byte-exact too. `AddSelfLoops` in
+  `fstext/pre-determinize-inl.h` loops **every final state and every state
+  with a non-epsilon *output* label on at least one outgoing arc**, with
+  weight One. For a lexicon FST that is a single state: every arc carrying
+  a word leaves the loop state, and the loop state is the only final one,
+  so mini-librispeech's 206,510 entries gain exactly one arc,
+  `1 1 347 200004`. Checking that as a *count of one* is far easier than
+  checking it as a structure.
+  The whole chain is one call, `build_disambig_fst_text`, because the four
+  steps are not separable: `make_lexicon_fst.py` needs the silence
+  disambiguation symbol's number and that comes out of `add_lex_disambig`.
+  A cross-check worth repeating when something here changes:
+  `L_disambig` has 1,589,729 lines against `L`'s 1,539,598, and the
+  difference of 50,131 is 50,129 disambiguated entries plus one self-loop
+  plus the one bridge arc the silence symbol adds.
   **A large FST needs a functional fingerprint, because its digest cannot
   serve.** The two decisions above conflict: an exact artefact over a
   megabyte is recorded by digest alone, and a digest answers only the byte

@@ -49,7 +49,7 @@ from __future__ import annotations
 import math
 import struct
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 __all__ = [
     "Arc",
@@ -60,6 +60,9 @@ __all__ = [
     "format_weight",
     "position_dependent",
     "add_disambiguation",
+    "add_self_loops",
+    "render_fst_text",
+    "build_disambig_fst_text",
 ]
 
 #: A word and the phones it is pronounced as.
@@ -358,8 +361,31 @@ def build_lexicon_fst_text(
         sil_disambig,
         position_dependent_phones,
     )
-    ordered = sorted(arcs, key=lambda a: (a[0], a[3], a[2], a[1]))
+    return render_fst_text(arcs, final)
 
+
+def render_fst_text(arcs: Sequence[Arc], final: int) -> str:
+    """
+    Arcs as `fstprint` writes them.
+
+    Grouped by source state in state order, a final state's line after its
+    own arcs rather than at the end, arcs sorted by output label -- which
+    is what `prepare_lang.sh`'s `fstarcsort --sort_type=olabel` leaves --
+    and a zero weight omitted rather than printed.
+
+    Arguments
+    ---------
+    arcs: Sequence[Arc]
+        The arcs.
+    final: int
+        The single final state.
+
+    Returns
+    -------
+    str
+        The text form.
+    """
+    ordered = sorted(arcs, key=lambda a: (a[0], a[3], a[2], a[1]))
     lines: List[str] = []
     emitted_final = False
     for arc in ordered:
@@ -455,3 +481,131 @@ def add_disambiguation(
         result.append((word, pronunciation + (f"#{current}",)))
 
     return result, highest
+
+
+def add_self_loops(
+    arcs: List[Arc],
+    finals: Iterable[int],
+    pairs: Sequence[Tuple[int, int]],
+) -> List[Arc]:
+    """
+    Add the self-loops that let a grammar's disambiguation symbols through,
+    as `fstaddselfloops` does.
+
+    `G.fst`'s back-off arcs are labelled `#0`, so composing it with `L`
+    needs `L` to accept `#0` wherever a word could end. Kaldi's
+    `AddSelfLoops` puts a loop on **every final state, and every state with
+    a non-epsilon output label on at least one outgoing arc** -- its own
+    usage text says exactly that, and the implementation in
+    `fstext/pre-determinize-inl.h` confirms it.
+
+    For a lexicon FST that works out to a single state. Every arc carrying
+    a word leaves the loop state, and the loop state is also the only final
+    one, so `L_disambig.fst` for mini-librispeech gains exactly one arc:
+    `1 1 347 200004`. That is worth knowing before writing a general
+    implementation, because it means the rule can be checked against a
+    count of one rather than against a structure.
+
+    Arguments
+    ---------
+    arcs: List[Arc]
+        The arcs, as `build_lexicon_arcs` returns them.
+    finals: Iterable[int]
+        The final states.
+    pairs: Sequence[Tuple[int, int]]
+        The (input, output) label pairs to loop with -- the contents of
+        `wdisambig_phones.int` and `wdisambig_words.int`, zipped.
+
+    Returns
+    -------
+    List[Arc]
+        The arcs with the self-loops appended.
+    """
+    if not pairs:
+        return list(arcs)
+
+    needs = set(finals)
+    for arc in arcs:
+        if arc[3] != 0:
+            needs.add(arc[0])
+
+    result = list(arcs)
+    for state in sorted(needs):
+        for ilabel, olabel in pairs:
+            result.append((state, state, ilabel, olabel, 0.0))
+    return result
+
+
+def build_disambig_fst_text(
+    lexicon: Lexicon,
+    words: Dict[str, int],
+    phones: Dict[str, int],
+    sil_prob: float = 0.0,
+    sil_phone: str = "SIL",
+    position_dependent_phones: bool = False,
+    disambig_symbol: str = "#0",
+) -> str:
+    """
+    `L_disambig.fst` as OpenFST text, the whole chain in one call.
+
+    `prepare_lang.sh` builds this in four steps, and all four are here:
+
+    1. position-dependent suffixes, if the recipe asks for them;
+    2. `add_lex_disambig.pl`, which appends `#1`, `#2`, ... where a
+       pronunciation is a prefix of another or shared by several words;
+    3. `make_lexicon_fst.py`, with the *next* symbol after the ones the
+       lexicon needed as the optional-silence disambiguation symbol --
+       `#16` for mini-librispeech, because its lexicon needed up to `#15`;
+    4. `fstaddselfloops`, which adds the `#0` pass-through so `G.fst`'s
+       back-off arcs can traverse this one.
+
+    Step three's symbol number comes out of step two, which is why they are
+    not separable: calling this with the wrong number puts the wrong symbol
+    on the silence arc, and that is four stages from where it shows.
+
+    Arguments
+    ---------
+    lexicon: Lexicon
+        The entries, as `read_lexicon` returns them -- *without* position
+        suffixes or disambiguation symbols, which this adds.
+    words: Dict[str, int]
+        The word symbol table.
+    phones: Dict[str, int]
+        The phone symbol table, which must hold the disambiguation symbols.
+    sil_prob: float
+        The optional-silence probability.
+    sil_phone: str
+        The optional-silence phone.
+    position_dependent_phones: bool
+        Whether to suffix the lexicon's phones by word position.
+    disambig_symbol: str
+        The grammar's back-off symbol, `#0`, which the self-loop carries on
+        both sides -- the phone side from `wdisambig_phones.int` and the
+        word side from `wdisambig_words.int`, which are this symbol's ids
+        in the two tables.
+
+    Returns
+    -------
+    str
+        Text suitable for `fstcompile`, or for `k2.Fsa.from_openfst`.
+    """
+    if position_dependent_phones:
+        lexicon = [
+            (word, position_dependent(pronunciation)) for word, pronunciation in lexicon
+        ]
+    disambiguated, highest = add_disambiguation(lexicon)
+    # The silence symbol is the next one after whatever the lexicon needed.
+    sil_disambig = f"#{highest + 1}" if sil_prob else None
+
+    arcs, final = build_lexicon_arcs(
+        disambiguated,
+        words,
+        phones,
+        sil_prob,
+        sil_phone,
+        sil_disambig,
+    )
+    arcs = add_self_loops(
+        arcs, [final], [(phones[disambig_symbol], words[disambig_symbol])]
+    )
+    return render_fst_text(arcs, final)
