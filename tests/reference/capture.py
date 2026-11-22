@@ -50,11 +50,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from BenNevis.utils.fingerprint import fingerprint, sample_word_sequences  # noqa: E402
 from BenNevis.utils.reference import (  # noqa: E402
     FEATURE_TOLERANCE,
     MANIFEST_NAME,
@@ -296,6 +297,82 @@ def store(
     target.write_bytes(payload)
 
 
+def parse_fst_text(text: bytes) -> Tuple[dict, dict, Optional[int]]:
+    """
+    An fstprint dump as arcs by source, final weights, and the start state.
+
+    OpenFST's text format takes the start state from the **first line's
+    source**, which is not necessarily 0: Kaldi's `G.fst` for
+    mini-librispeech begins at state 2, and reading it as though it began
+    at 0 adds that state's back-off weight to every sentence.
+
+    Arguments
+    ---------
+    text: bytes
+        The dump.
+
+    Returns
+    -------
+    Tuple[dict, dict, Optional[int]]
+        Arcs by source as (destination, input label, weight), final weights
+        by state, and the start state or None for an empty FST.
+    """
+    arcs: dict = {}
+    finals: dict = {}
+    start: Optional[int] = None
+    for line in text.decode("utf-8", errors="replace").splitlines():
+        fields = line.split()
+        if len(fields) >= 4:
+            source = int(fields[0])
+            if start is None:
+                start = source
+            arcs.setdefault(source, []).append(
+                (
+                    int(fields[1]),
+                    int(fields[2]),
+                    float(fields[4]) if len(fields) > 4 else 0.0,
+                )
+            )
+        elif fields:
+            finals[int(fields[0])] = float(fields[1]) if len(fields) > 1 else 0.0
+    return arcs, finals, start
+
+
+def record_fingerprint(
+    manifest: Manifest,
+    relative: str,
+    text: bytes,
+    words: Dict[str, int],
+) -> None:
+    """
+    Record what weights an FST gives a fixed set of word sequences.
+
+    The standard for an FST is functional equivalence, but a large one is
+    kept as a digest alone and a digest answers only the byte question --
+    and `G.fst` is already known not to be byte-equal to a Python build, so
+    its digest can never match and says nothing. This is what makes the
+    right comparison possible without storing 61MB.
+
+    Arguments
+    ---------
+    manifest: Manifest
+        The manifest to record into.
+    relative: str
+        The FST's path within the capture directory.
+    text: bytes
+        Its fstprint dump.
+    words: Dict[str, int]
+        The word symbol table its output labels index.
+    """
+    arcs, finals, start = parse_fst_text(text)
+    if start is None or not words:
+        return
+    sequences = sample_word_sequences(words.keys())
+    recorded = fingerprint(arcs, finals, words, start, sequences)
+    if recorded:
+        manifest.functional[relative] = recorded
+
+
 def capture_language(
     manifest: Manifest,
     recipe: Path,
@@ -348,6 +425,18 @@ def capture_language(
         if text is not None:
             store(manifest, destination, f"lang/{name}.txt", text)
 
+    # The word symbol table the graph FSTs' output labels index. Read from
+    # the language directory rather than recomputed, for the same reason
+    # training reads it: these indices are what everything else is written
+    # against.
+    words: Dict[str, int] = {}
+    words_path = base / "words.txt"
+    if words_path.is_file():
+        for line in words_path.read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                words[parts[0]] = int(parts[1])
+
     for topology in topologies:
         graph = recipe / f"{graph_prefix}{topology}"
         for name in GRAPH_FSTS:
@@ -356,12 +445,16 @@ def capture_language(
                 continue
             text = fstprint(printer, source)
             if text is not None:
-                store(
-                    manifest,
-                    destination,
-                    f"graph/{topology}/{name}.txt",
-                    text,
-                )
+                relative = f"graph/{topology}/{name}.txt"
+                store(manifest, destination, relative, text)
+                if name == "G.fst":
+                    # G accepts any sequence of in-vocabulary words, because
+                    # its back-off arcs reach the unigram state. L and TLG
+                    # accept only what their lexicon permits, so a random
+                    # word sequence says nothing about them -- they need
+                    # sequences drawn from the lexicon, which is not done
+                    # yet.
+                    record_fingerprint(manifest, relative, text, words)
 
 
 def capture_features(

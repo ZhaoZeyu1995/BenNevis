@@ -383,6 +383,16 @@ class Manifest:
         digest, so the comparison still works; what is lost is the ability to
         diff a mismatch against the committed reference. Listed separately so
         a missing file can be told apart from a forgotten one.
+    functional: Dict[str, Dict[str, float]]
+        Relative path to a map from a word sequence to the weight the FST
+        gives it. The standard for an FST is functional equivalence rather
+        than byte equality, but a digest supports only the latter -- so a
+        large FST, whose bytes are not kept, would be checkable by exactly
+        the test its standard rejects. `G.fst` is already known not to be
+        byte-equal, because `arpa2fst` numbers its states in whatever order
+        it meets histories, so its digest can never match and would say
+        nothing. This is the fingerprint that makes the right comparison
+        possible on a corpus too large to store whole.
     """
 
     corpus: str = ""
@@ -394,6 +404,7 @@ class Manifest:
     arrays: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
     large: Dict[str, int] = field(default_factory=dict)
+    functional: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def write(self, path: Path) -> None:
         """
