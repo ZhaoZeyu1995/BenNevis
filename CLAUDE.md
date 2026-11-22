@@ -280,11 +280,46 @@ tolerances chosen per layer:
   build reproduces Kaldi's bytes for yesno exactly. The functional standard
   is there because an FST's encoding is *usually* arbitrary, not because
   bytes are unwelcome where they are not — take them when they are free.
-  This holds for `--sil_prob 0.0`, which is what `egs/yesno/asr` uses; a
-  non-zero silence probability adds a start state, a silence state and
-  weighted entry arcs whose exact shape is `make_lexicon_fst.pl`'s, and the
-  builder **raises** rather than guessing at it, since a plausible-looking
-  lexicon that decodes differently is the worst outcome available.
+  That holds for **mini-librispeech's 33MB `L.fst` too** — 1,539,598 lines
+  from a 206,510-entry lexicon, with optional silence and position-dependent
+  phones, byte for byte. Four things had to be right and three were not
+  guessable:
+  **the script is the Python one, not the Perl.**
+  `utils/lang/make_lexicon_fst.py` and `make_lexicon_fst.pl` build
+  *different* FSTs: the Perl puts `silphone:<eps>` on the start arcs and
+  skips the silence split after a silence word, the Python puts
+  `<eps>:<eps>` and always splits. Reading the Perl first would have shipped
+  the wrong shape; Kaldi's captured output is what settled it, showing
+  `0 2 0 0`.
+  **Weights are float32.** `BaseFloat` is single precision and `fstprint`
+  writes nine significant figures, so `-log(0.5)` is `0.693147182` and not
+  `0.6931471805599453`. Computing in double and writing the double is a
+  correct lexicon that is not byte-identical. This could not have come up
+  earlier: with `--sil_prob 0.0` every weight is zero and `fstprint` omits
+  it.
+  **Phones are position-dependent unless told otherwise**, and not being
+  told is the default — mini-librispeech's lexicon says `AH0` while its
+  `phones.txt` holds only `AH0_B`, `AH0_E`, `AH0_I`, `AH0_S`. yesno passes
+  `--position-dependent-phones false`, which is exactly why a builder that
+  ignored this reproduced yesno's bytes and could not build
+  mini-librispeech's at all — a result that looked like success while
+  covering one of two cases. The **optional-silence phone stays unsuffixed**
+  while the silence *word* takes `SIL_S`.
+  The payoff is that a 33MB artefact whose bytes are not committed is gated
+  in tier 1 by its digest plus the inputs beside it, which is what the
+  digest-only rule and the capture-the-input rule were both for.
+  **`add_lex_disambig.pl` has one rule a reimplementation will drop.** The
+  empty pronunciation gets a symbol **reserved to it alone**, and every
+  per-pronunciation counter then steps *over* that number. Without the
+  reservation the symbols still look plausible and the highest comes out too
+  low, which puts the wrong symbol on `L_disambig.fst`'s silence arc — four
+  stages from where it would be noticed. The algorithm also runs **after**
+  position-dependent suffixing, which changes the answer: `x` and `x y` are
+  prefix-related while `x_S` and `x_B y_E` are not. It is checkable from
+  committed data without rebuilding any FST, because `disambig.txt` is
+  `#0 .. #ndisambig` and `ndisambig` is the algorithm's answer plus one for
+  silence — so the symbol *count* pins the return value. mini-librispeech's
+  `disambig.int` holds 17, so the answer must be 15.
   **A large FST needs a functional fingerprint, because its digest cannot
   serve.** The two decisions above conflict: an exact artefact over a
   megabyte is recorded by digest alone, and a digest answers only the byte
