@@ -584,6 +584,41 @@ workflow changes.
   WERs in the recipe's README no longer comparable. `tests/golden/wer/yesno.json`
   records the counts and tier 3 asserts them, so the split cannot drift
   unnoticed.
+- **A back-off FST's shortest path can be cheaper than the ARPA back-off
+  score, and `arpa2fst`'s output does this too.** Backing off early can cost
+  less than the correct higher-order arc plus the price of leaving the state
+  it leads to. Measured on mini-librispeech's own 3-gram: Kaldi's committed
+  `G.fst` scores *OR APPEARED MONGS* at 37.7573 against the back-off rule's
+  39.8078, and the Python construction reproduces that same 37.7573. So the
+  rule in `BenNevis.lm.arpa` is the oracle for **arc weights**, not for
+  **path totals**, and `G.fst` is checked against Kaldi's FST rather than
+  against the rule. The one-sided bound does hold unconditionally — the rule
+  describes a real path, so the cheapest path cannot cost more. Where the
+  two agree is *not* characterisable: on a small model `A B` agrees while
+  `A B C` does not, and it turns on the whole path's arithmetic rather than
+  on which n-grams are present. Two hypotheses were wrong before this was
+  understood: that it needed unrealistic back-off weights (it happens on the
+  real pruned 3-gram), and that proper discounting prevents it (it does not).
+- **Give an n-gram history a state only if something extends it.** The
+  obvious rule — a state per entry below the highest order — gives
+  **1,162,307** states for mini-librispeech's 3-gram against `arpa2fst`'s
+  249,532. The FST is functionally the same, since the extra states carry
+  nothing but a back-off arc, but it is 4.7 times the size and gets composed
+  and determinised into a `TLG` that is already 334MB. With the pruning the
+  Python build comes to 249,863 states and the same 68,639 final states.
+- **OpenFST's text format takes the start state from the first line's
+  source.** Kaldi's `G.fst` for mini-librispeech begins at state **2**, not
+  0, so reading it as though it began at 0 adds that state's back-off weight
+  — 2.2265 nats — to every sentence and makes a correct FST look wrong.
+  The same trap in reverse: the *lowest numbered* state is the unigram
+  state, so inferring a start state from the arcs silently scores every
+  sentence as though it had no beginning. A unigram model cannot tell the
+  difference, so yesno agrees either way and every higher order does not.
+- **ARPA files mix tabs and spaces within a line.** LibriSpeech's 3-gram
+  writes a tab after the log probability and *spaces* between the words, so
+  splitting on tab when a tab is present reads `-1.486134\t<UNK> </s>` as a
+  malformed two-field bigram. Split on any whitespace: ARPA words cannot
+  contain it. Found by the real 13MB model and by nothing smaller.
 - **Shell text processing is dialect-dependent, and was relied on.**
   `prepare_topo.sh` selected disambiguation symbols with `grep "#[^\d]"`,
   which picks out `#0` only where `\d` inside a bracket expression means the

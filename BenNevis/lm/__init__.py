@@ -9,11 +9,16 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
-from BenNevis.lm.arpa import (
-    LOG10_TO_NAT,
-    ArpaModel,
-    NGram,
-    read_arpa,
-)
+from BenNevis.lm.arpa import LOG10_TO_NAT, ArpaModel, NGram, read_arpa
+from BenNevis.lm.fst import build_arcs, build_fst_text, start_state, total_weight
 
-__all__ = ["LOG10_TO_NAT", "ArpaModel", "NGram", "read_arpa"]
+__all__ = [
+    "LOG10_TO_NAT",
+    "ArpaModel",
+    "NGram",
+    "read_arpa",
+    "build_arcs",
+    "build_fst_text",
+    "start_state",
+    "total_weight",
+]
