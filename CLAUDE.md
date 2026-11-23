@@ -556,6 +556,24 @@ cause. The image's dependency list is derived from `pyproject.toml` by
 reason. The image is built only when `docker/`, `pyproject.toml` or its
 workflow changes.
 
+**The build keeps no layer cache, and the arithmetic is why.** Measured on
+the 21 November build: the layers a cache could save are apt at 16.4s, the
+venv at 2.6s, torch and k2 at 27.6s and the remaining dependencies at
+11.1s — 58 seconds in total — while `cache-to: type=gha,mode=max` spent
+**209.9s** exporting and held **5.22GiB**, which was 88% of everything
+cached for this repository against a 10GB budget the nightly's corpus
+caches now want. The Dockerfile is single stage, so `mode=max` bought
+nothing over `mode=min` and the export covered the whole image including
+the 2.1GiB Kaldi base — a base pinned by digest that comes from Docker Hub
+in 67.6s with or without a cache. The Actions cache is **scoped per
+branch** as well, so a pull request touching `docker/` exported its own
+2.61GiB copy that master could never read; that is how two identical
+copies came to exist. Dropping it took the build from 6m09s to about
+2m39s. `tests/docker/test_build_cache.py` pins it, because an eviction
+caused by this would show up as a nightly quietly re-downloading 1.2GiB
+rather than as a failure. A registry cache is not forbidden — it does not
+touch the Actions budget — but 58 seconds is the number to beat.
+
 ## Gotchas
 
 - **The dynamic batch samplers had three bugs and no tests.** The first real

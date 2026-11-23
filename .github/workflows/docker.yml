@@ -70,10 +70,31 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ github.sha }}
-          # The torch and k2 wheels are the bulk of the build, and they
-          # change only when their pins do.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No build cache, which is a change from `type=gha,mode=max`
+          # and was decided on measurement rather than principle. From the
+          # 21 November build, layer by layer:
+          #
+          #   #6   67.6s   pulling the Kaldi base image
+          #   #8   16.4s   apt-get
+          #   #9    2.6s   python3 -m venv
+          #   #10  27.6s   pip install torch, torchaudio, k2
+          #   #13  11.1s   pip install the pyproject dependencies
+          #   #17  56.5s   exporting and pushing the image
+          #   #19 209.9s   exporting to the GitHub Actions cache
+          #
+          # Everything a cache could save is #8 to #13, which is 58
+          # seconds. The export cost 209.9 -- three and a half minutes of
+          # every build to avoid one -- and the Actions cache is scoped per
+          # branch, so a pull request touching docker/ paid that again for
+          # a copy master could never read. The two copies held 5.22GiB,
+          # 88% of everything cached for this repository, against a 10GB
+          # budget the nightly's corpus caches now want. A warm export on
+          # the same branch would be cheaper than 209.9s; the 5.22GiB is
+          # unconditional.
+          #
+          # Dropping it makes the build about 2m39s rather than 6m09s. The
+          # base image still comes from Docker Hub by digest, which is the
+          # #6 above and is not something a cache was shortening.
 
       - name: Check the image has what the recipes need
         run: |
