@@ -117,20 +117,44 @@ jobs:
           echo "IMAGE_DIGEST=${digest}" >> "$GITHUB_ENV"
           echo "pulled ${digest}"
 
-      # 4.7MB from openslr. Cached so that a nightly job does not fetch it
-      #365 times a year; run.sh skips the download when the directory is
-      # already there.
-      # yesno's corpus is 4.7MB and worth caching. mini-librispeech's is
-      # 500MB and would not fit the cache budget usefully, so it is
-      # downloaded each time; `download_and_untar.sh` skips the work when
-      # the directory is already there, which matters for a resumed run on
-      # the same runner rather than across runs.
+      # Both recipes fetch their corpus from openslr, and both skip the
+      # fetch when the data is already in the tree, so a cache turns a
+      # download into a restore. The keys carry a hand-written version
+      # because a cache hit is never re-saved: a corpus that changes
+      # upstream needs a new key, not a new run.
       - name: Restore the yesno corpus
         if: env.RECIPE == 'egs/yesno/asr'
         uses: actions/cache@v4
         with:
           path: egs/yesno/asr/waves_yesno
           key: waves-yesno-v1
+
+      # mini-librispeech fetches 1.2GiB: 120MiB of dev-clean-2, 318MiB of
+      # train-clean-5, and 777MiB of language models of which 724MiB is the
+      # unpruned 3-gram that `download_lm.sh` insists on and this recipe
+      # never decodes with. That is eight minutes on a good day, and all of
+      # it again on a retry -- which is what cost run 45202289714 its whole
+      # two and a half hours when the runner was lost at 56% of the 3-gram.
+      # An earlier comment here put the corpus at 500MB and called it too
+      # big for the cache budget; it is 1.2GiB against a 10GB budget, so
+      # that was wrong on both halves.
+      #
+      # The archives are excluded deliberately. `download_and_untar.sh`
+      # returns on `LibriSpeech/<part>/.complete` before it so much as
+      # looks for the tarball, so the extracted audio suffices by itself
+      # and caching the archives beside it would store the same FLAC twice.
+      # The language models are cached as the gzipped files they arrive as,
+      # because `download_lm.sh` compares each one against an expected byte
+      # count and re-downloads anything that does not match.
+      - name: Restore the mini-librispeech corpus and language models
+        id: mini-librispeech-corpus
+        if: env.RECIPE == 'egs/mini_librispeech/asr'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            egs/mini_librispeech/asr/corpus
+            !egs/mini_librispeech/asr/corpus/*.tar.gz
+          key: mini-librispeech-corpus-v1
 
       - name: Run the recipe
         env:
@@ -166,6 +190,37 @@ jobs:
             -e OMP_NUM_THREADS=1 \
             "$IMAGE" \
             ./run.sh "${opts[@]}"
+
+      # Saved by hand, and on failure too. `actions/cache` is
+      # `post-if: success()`, so a job that dies after the download has
+      # finished saves nothing and the next attempt fetches the 1.2GiB
+      # again -- which is the case the cache exists for, since a recipe
+      # that breaks in training has already paid for the corpus. Placed
+      # after the recipe rather than at the end of the job so that a
+      # failing recipe still gets here; nothing can be saved when the
+      # runner itself is lost, which is a limit of the mechanism rather
+      # than of where this sits. yesno keeps the combined action because
+      # re-fetching 4.7MB is not worth a second step.
+      #
+      # The recipe runs in Docker and so writes `corpus/` as root. This
+      # step only reads it, so it is not the permission trap the artefact
+      # directory was.
+      - name: Save the mini-librispeech corpus and language models
+        if: >-
+          always() && env.RECIPE == 'egs/mini_librispeech/asr'
+          && steps.mini-librispeech-corpus.outputs.cache-hit != 'true'
+        # A cache is an optimisation and must never be why a job is red.
+        # With `always()` this step also runs when an earlier one failed,
+        # and `cache/save` rejects a path that does not exist -- so a job
+        # that died before the download would otherwise report a second,
+        # unrelated failure on the way out.
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            egs/mini_librispeech/asr/corpus
+            !egs/mini_librispeech/asr/corpus/*.tar.gz
+          key: mini-librispeech-corpus-v1
 
       # PYTHONPATH, because the image deliberately does not install
       # BenNevis: the point is to test the mounted tree. The recipe gets this
