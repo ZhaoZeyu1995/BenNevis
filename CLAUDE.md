@@ -740,6 +740,25 @@ workflow changes.
   serious error"* went unnoticed — the recipe simply continued. `pipefail`
   matters as much as `errexit`, because nearly everything in a Kaldi recipe
   is a pipeline.
+- **`grep` in a `pipefail` step fails the step when it matches nothing.**
+  The nightly's summary ran `grep -E '\| *Sum/Avg' "$f" | awk ...`, which
+  was fine while every results file was sclite's. The k2 decoder's are not —
+  they come from `BenNevis.utils.scoring` — so the grep matched nothing, the
+  pipeline failed, `bash -e` aborted, and **a successful recipe reported
+  failure twice, including a scheduled run**. `awk '/pattern/ {...}'` treats
+  no-match as empty output rather than as an error, which is what a
+  best-effort parser wants. The step now also says how many files it
+  summarised and how many it could not parse, for the same reason the file
+  count exists.
+  `tests/recipes/test_nightly_scores.py` lifts both parsers out of the YAML
+  and runs them under `set -eo pipefail`, the way
+  `tests/recipes/test_decode_faster.py` does with `decode_faster.sh`'s awk —
+  a parser reimplemented in the test would have passed while the shipped one
+  failed.
+  **sclite's last three fields are Err, S.Err and a bar**, so `NF-2` is the
+  word error rate and `NF-1` is the *sentence* error rate. Reading the wrong
+  one gives 3.4 where the answer is 0.4 — a plausible-looking number, and a
+  mistake made once while comparing the two decoders by hand.
 - **A container writing into the workspace writes as root.** The nightly's
   capture step runs in Docker, and anything it creates is root-owned, after
   which a later host-side step cannot write there. That is how the scores
