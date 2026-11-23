@@ -1,16 +1,19 @@
 """
 Tests for the nightly job's log volume.
 
-A job log is capped at about 2MB. `wget`'s default dot progress writes one
-line per 50KB, so mini-librispeech's 1.2GiB of corpus and language models
-produces some 25,000 lines of dots and spends the whole budget before the
-recipe has begun -- twice, in run 45202289714, whose two attempts were cut
-off 59 bytes apart at 2,117,576 and 2,117,517 bytes, both mid-download.
+The log a job serves *while it runs* holds about 2MB, and `wget`'s default
+dot progress writes one line per 50KiB -- so mini-librispeech's 1.2GiB of
+corpus and language models produces some 25,000 lines of dots and spends
+that before the recipe has begun. Run 45202289714 showed it twice, its two
+attempts cut off 59 bytes apart at 2,117,576 and 2,117,517 bytes, both
+mid-download. Its finished log was 3,009,128 bytes and complete, so the
+limit is on the live view and on a job whose runner dies before uploading.
 
 That is worse than noise. A log that stops mid-step looks exactly like a
 job that stopped mid-step, and the silence was read here as a symptom of
-the lost runner it had nothing to do with. So the volume is a correctness
-concern about the project's own diagnosis, not housekeeping.
+the lost runner it had nothing to do with -- and for three hours after
+that, "still training" could not be told from "hung". So the volume is a
+correctness concern about the project's own diagnosis, not housekeeping.
 
 Two things keep it readable. `.github/wgetrc`, passed to the container as
 `WGETRC` so that Kaldi's download scripts -- reached through the `local/`

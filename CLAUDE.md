@@ -1001,28 +1001,40 @@ touch the Actions budget — but 58 seconds is the number to beat.
   carries the same story in its shape: a lost runner leaves `Run the
   recipe` with `completed_at: null`, every later step never started, and a
   `conclusion` the steps themselves do not account for.
-- **A job log is capped at about 2MB, and `wget`'s progress dots will spend
-  the whole budget.** Two attempts of run 45202289714 were cut off 59 bytes
-  apart — 2,117,576 and 2,117,517 — both mid-download at around 55% of the
-  724MB 3-gram, and two fetches of a live job's log 45 seconds apart came
-  back byte-identical. So **a log that stops mid-step says nothing about
-  when the job stopped**, and reading that silence as evidence of a hang is
-  a mistake this project has already made once: it was offered as a symptom
-  of the lost runner above, when the real and sufficient evidence was the
-  annotation. It cost more than that too — three hours of a recipe were
-  unreadable, and "still training" could not be told from "hung" while the
-  run was in flight.
-  So two things now keep the step readable. The `docker run` sets `WGETRC`
-  to `.github/wgetrc`, which coarsens the meter to `dot:giga` — a line per
-  50MiB rather than per 50KiB, about 25 lines for 1.2GiB, with the
-  transfer rate kept because openslr is sometimes slow enough for it to
-  matter. **And the whole recipe output is tee'd to `artefacts/recipe.log`
-  and uploaded**, which is the part that generalises: the cap applies to
-  everything a recipe prints, not only to `wget`, and Kaldi's
-  `tar -xvzf` chatter and a long training run are not ours to quieten.
-  `tee` rather than a redirect, so the job log still streams. Neither
-  `quiet = on` nor `verbose = off` belongs in that file — the first drops
-  the errors, the second drops the rate — and
+- **It is the *live* job log that is limited to about 2MB, not the finished
+  one — and `wget`'s progress dots will spend that limit before a recipe
+  starts.** This was recorded wrongly here twice before it was measured
+  properly, so the measurements are the entry:
+
+  | Log | Bytes | Lines | Ends at |
+  | --- | --- | --- | --- |
+  | run 45202289714 attempt 1, runner lost | 2,117,576 | 20,397 | mid-download, 56% |
+  | attempt 2 while in progress | 2,117,517 | 20,293 | mid-download, 55% |
+  | attempt 2 once completed (cancelled) | 3,009,128 | 28,812 | the end of the job |
+
+  The first two agree to 59 bytes because both are the live buffer: an
+  in-progress job serves only what has been streamed, and a job whose
+  runner is lost never uploads anything more, so the buffer is all that
+  survives. A **completed** job — cancelled at its timeout included —
+  serves the whole log: that 3MB one holds every stage, all twelve epoch
+  lines and 24,879 dot lines.
+
+  Two consequences, and the second is the one that was got wrong.
+  **A log that stops mid-step says nothing about when the job stopped**, so
+  reading that silence as a hang is a mistake — it was offered here as a
+  symptom of the lost runner when the sufficient evidence was always the
+  annotation, and it also meant that for three hours "still training" could
+  not be told from "hung" while a run was in flight. And **the fix for that
+  is the meter, not the tee**: `WGETRC` pointing at `.github/wgetrc`
+  coarsens the dots to `dot:giga`, a line per 50MiB rather than per 50KiB,
+  which turns 24,879 lines into about 25 and so fits a whole recipe inside
+  the live buffer, keeping the transfer rate that showed openslr taking 25
+  minutes over what usually takes 4. The tee to `artefacts/recipe.log` is
+  worth its two lines but was oversold when it landed: a completed log
+  already has everything, and a lost runner takes the tee'd file with it.
+  What it actually buys is a searchable 90-day artefact that outlives log
+  retention.
+  Neither `quiet = on` nor `verbose = off` belongs in that file — the first
+  drops the errors, the second drops the rate — and
   `tests/recipes/test_nightly_logging.py` forbids both, checks the tee
-  lands under `artefacts/`, and checks an `always()` upload collects it,
-  since a kept log nothing uploads dies with the runner.
+  lands under `artefacts/`, and checks an `always()` upload collects it.

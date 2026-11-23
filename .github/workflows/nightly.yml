@@ -160,13 +160,14 @@ jobs:
       # is capped at about 2MB and a recipe can print far more than that.
       #
       # WGETRC coarsens wget's progress meter from a line per 50KiB to a
-      # line per 50MiB; see .github/wgetrc. And the whole output is tee'd
-      # to a file that is uploaded as an artefact, so the cap can never
-      # again hide what the recipe did -- which is exactly what it did on
-      # run 45202289714, where three hours of recipe were unreadable and
-      # "still training" could not be told from "hung". The job log keeps
-      # the live view; the artefact keeps everything, Kaldi's per-file
-      # `tar -xvzf` chatter included.
+      # line per 50MiB; see .github/wgetrc. That is what keeps a recipe
+      # visible while it runs, since the live log holds about 2MB and run
+      # 45202289714 spent all of it on dots -- after which three hours of
+      # recipe were unreadable and "still training" could not be told from
+      # "hung". The tee is the smaller half: a finished job serves its
+      # whole log anyway, so what the artefact adds is a searchable copy
+      # that outlives log retention, Kaldi's per-file `tar -xvzf` chatter
+      # included. It cannot help when the runner itself is lost.
       #
       # `tee` and not a redirect, so the log still streams while the
       # recipe runs. `pipefail` is set above, so a failing recipe still
