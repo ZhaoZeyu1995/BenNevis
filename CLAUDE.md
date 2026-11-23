@@ -456,6 +456,25 @@ both stay. The graph and the decoder have to go together, and doing so drops
 `decode-faster` at once, along with the 334MB artefact. `int2sym.pl` and
 `sclite` fall out too, because `BenNevis.utils.scoring` is already Python.
 
+**What that chain does is written down in `docs/kaldi-graph-chain.md`, read
+off the Kaldi and OpenFST sources rather than inferred.** Read it before
+touching `BenNevis/decode/graph.py`. Four things in it are not guessable
+from the shell, and the Python currently differs on all four:
+`fstdeterminizestar --use-log=true` determinizes **in the log semiring**, so
+merged paths are log-added where k2's tropical `determinize` keeps the
+cheapest; the *star* is epsilon removal folded into the subset
+construction, which k2's has no equivalent for; `fstminimizeencoded`
+minimises *and* is where the 1/1024 quantisation enters, and we do not
+minimise at all; and the **disambiguation symbols are carried through the
+T composition and dropped afterwards**, because they are what makes T∘LG
+determinisable — `compose_lg` strips them from LG first, which forecloses
+Kaldi's second determinization rather than merely skipping it. Also worth
+knowing: `fstrmepslocal` removes *some* epsilons under a guarantee never to
+grow the graph, while `k2.remove_epsilon` removes all and can.
+`fsttablecompose` is the one stage that is only an optimisation, so
+`k2.compose` is a faithful replacement for it — and at 1.9s on
+mini-librispeech it was never the problem.
+
 **An FsaVec's arcs are three levels deep, not two.** `fsa.arcs.shape()` is
 FSA, then state, then arc, so `row_splits(1)` gives *state* boundaries per
 FSA and `row_splits(2)` gives arc boundaries per state. Slicing per-arc data
