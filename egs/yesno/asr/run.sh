@@ -178,6 +178,12 @@ fi
 # The graph is built from the dictionary and the ARPA model by BenNevis.lm,
 # not from the language directory's compiled FSTs, so this stage uses no
 # OpenFST and no Kaldi binary at all.
+#
+# data/local/dict/lexicon.txt rather than input/lexicon.txt, which
+# prepare_dict.sh copies it from: the two are identical here, but the one
+# prepare_lang.sh actually read is the one to rebuild from, and a
+# preparation step that ever transformed the lexicon would make them
+# differ with nothing to say so.
 if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
     echo "$0: stage 10: decode again with k2, for comparison"
     for topo in ${topos}; do
@@ -185,7 +191,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
             python3 run/decode_k2.py \
                 data/${x} data/lang_test_tg_${topo} \
                 exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_k2_${x} \
-                --lexicon input/lexicon.txt \
+                --lexicon data/local/dict/lexicon.txt \
                 --arpa input/task.arpabo \
                 --topo ${topo} \
                 || { echo "$0: decode_k2.py failed for ${topo}/${x}" >&2; exit 1; }
