@@ -47,19 +47,33 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # The Python version is swept on Linux, where it is cheapest, and the
-      # other two platforms are covered at a single version. Sweeping both
-      # axes would be twelve jobs to catch almost nothing: a version-specific
-      # break is rarely also platform-specific.
+      # The Python version is swept on Linux, where it is cheapest, and
+      # Windows is covered at a single version. Sweeping both axes would be
+      # twelve jobs to catch almost nothing: a version-specific break is
+      # rarely also platform-specific.
       #
       # 3.8 and 3.9 are both end-of-life and no longer available on current
       # GitHub runners. The floor is whatever torch and k2 publish wheels for.
+      #
+      # macOS is deliberately absent *here* and present in tiers 1b and 2,
+      # which is where a platform difference can actually bite -- those
+      # carry torch and k2, while this tier imports nothing heavier than
+      # the standard library, pytest and pyyaml. The reason is allocation
+      # rather than coverage: on 23 November the macOS pool failed to
+      # assign a runner four times in one day, each time leaving a job
+      # `cancelled` with `runner_name: ""`, zero steps and exactly 15m02s
+      # of queueing, and each time costing a re-run before a green PR
+      # could be merged. Four macOS tickets in the matrix is four chances
+      # of that per push; this was the one whose loss costs least.
+      #
+      # Windows stays because it is not interchangeable: `as_posix()` and
+      # the `bash` probe in CLAUDE.md are three real tier 1 breakages that
+      # only Windows showed, and nothing else in CI runs there at this
+      # tier.
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         include:
-          - os: macos-latest
-            python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
     steps:

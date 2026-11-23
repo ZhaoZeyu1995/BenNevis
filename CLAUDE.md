@@ -195,13 +195,29 @@ The same applies to locating any POSIX tool by name — `which` on Windows
 wants a `PATHEXT` extension, and `os.access(..., os.X_OK)` is meaningless
 there because there is no execute bit.
 
-CI runs tiers 1, 1b and 2 on `ubuntu-latest`, `macos-latest` and
-`windows-latest`. k2 publishes cp312 CPU wheels for all three at the pinned
-torch version, so the FST tier is not Linux-only; **check the index before
-bumping the pin**, since a newer build may not cover every platform on the
-day. Tests must therefore not assume POSIX: no shell pipelines, no `os.popen`,
-no hardcoded `/tmp`, and `subprocess` only via `sys.executable` with an
-argument list.
+CI runs tiers 1b and 2 on `ubuntu-latest`, `macos-latest` and
+`windows-latest`, and tier 1 on Linux and Windows only. k2 publishes cp312
+CPU wheels for all three at the pinned torch version, so the FST tier is not
+Linux-only; **check the index before bumping the pin**, since a newer build
+may not cover every platform on the day. Tests must therefore not assume
+POSIX: no shell pipelines, no `os.popen`, no hardcoded `/tmp`, and
+`subprocess` only via `sys.executable` with an argument list.
+
+**Tier 1 does not run on macOS, and the reason is allocation rather than
+coverage.** On 23 November the macOS pool failed to assign a runner four
+times in one day — twice in a single run — each time leaving the job
+`cancelled` rather than failed, with `runner_name: ""`, zero steps and
+exactly 15m02s of queueing, and each time costing a re-run before a green
+PR could merge. Four `macos-latest` tickets in the matrix is four chances
+of that per push, and tier 1's was the cheapest to give up: it imports
+nothing heavier than the standard library, pytest and pyyaml, while tiers
+1b and 2 still cover macOS carrying torch and k2, which is where a
+platform difference can actually bite. Windows is **not** interchangeable
+with it — `as_posix()` and the `bash` probe below are three real tier 1
+breakages that only Windows showed, and no other tier runs there at this
+tier's cost. If the pool settles, putting it back is one line; the thing
+not to do is make the macOS jobs `continue-on-error`, which would swallow
+a real regression along with the allocation faults.
 
 ## Equivalence and tolerances
 
