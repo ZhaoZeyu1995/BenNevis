@@ -73,11 +73,19 @@ run the cheap ones everywhere and the expensive ones rarely.
 yesno sits at nought to two word errors, so nothing that improves a model can
 be shown to improve it, and yesno's filterbank is degenerate so nothing about
 features can be judged on it either. Its stages 0–4 need no training and take
-minutes, which is the path for feature and graph comparison; stage 5 onward is
-about ten minutes an epoch for five hours of audio, so twenty epochs of one
-topology is three hours and all eight would be a day. It is therefore **not**
-part of the nightly, and has no WER ledger entry until a training run has been
-recorded.
+minutes, which is the path for feature and graph comparison; stage 5 onward
+is **about twenty minutes an epoch on a CI runner** for five hours of audio,
+so twelve epochs of one topology is four hours and all eight would be days.
+It is therefore **not** part of the nightly, and has no WER ledger entry
+until a training run has been recorded.
+The twenty is measured, from run 45202289714: twelve epochs of `ctc` ran
+18:05 to 22:08, which is 20m09s each. It had been written here as ten, and
+that estimate is what made a 300-minute ceiling look generous — the run hit
+it in stage 10 having spent four hours of its five on training. **Validation
+loss bottomed at epoch 8** there, 1.8028 against 1.8879 by epoch 12, so the
+last four epochs cost eighty minutes and made the model worse: for a run
+whose point is to compare two decoders on the same acoustics, eight epochs is
+both cheaper and better.
 
 Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
 `.github/workflows/nightly.yml`. It is the **only** coverage the entry points
