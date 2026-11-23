@@ -156,6 +156,11 @@ jobs:
             !egs/mini_librispeech/asr/corpus/*.tar.gz
           key: mini-librispeech-corpus-v1
 
+      # WGETRC, because a job log is capped at about 2MB and wget's dot
+      # progress writes a line per 50KB: mini-librispeech's 1.2GiB of
+      # corpus and language models filled the whole budget with dots
+      # twice, leaving what the recipe actually did unreadable. The file
+      # turns verbosity off and keeps errors; see .github/wgetrc.
       - name: Run the recipe
         env:
           TOPOS: ${{ github.event.inputs.topos }}
@@ -188,6 +193,7 @@ jobs:
             -e PYTHONPATH=/workspace \
             -e WANDB_MODE=disabled \
             -e OMP_NUM_THREADS=1 \
+            -e WGETRC=/workspace/.github/wgetrc \
             "$IMAGE" \
             ./run.sh "${opts[@]}"
 
