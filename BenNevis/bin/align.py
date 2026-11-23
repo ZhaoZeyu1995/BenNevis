@@ -47,6 +47,7 @@ import kaldiio
 import logging
 import argparse
 from BenNevis.core.lang import Lang
+from BenNevis.decode.decoder import aux_labels_per_arc
 from BenNevis.utils.data import read_dict
 
 
@@ -187,7 +188,13 @@ def main(args):
 
             best_path = k2.shortest_path(lattice, use_double_scores=True)
             labels = best_path.labels.numpy()
-            aux_labels = best_path.aux_labels.numpy()
+            # Not `best_path.aux_labels.numpy()`: composition can make
+            # `aux_labels` a RaggedTensor, which has no `.numpy()`, and
+            # whether it does depends on the lexicon rather than on
+            # anything here. yesno's four words give a plain tensor and
+            # mini-librispeech's 206,510 give a ragged one, so this
+            # crashed on every real corpus while tier 3 stayed green.
+            aux_labels = np.asarray(aux_labels_per_arc(best_path), dtype=labels.dtype)
             logging.info("Best path labels: " + str(labels))
             logging.info("Best path aux labels: " + str(aux_labels))
             writer(utt, labels)

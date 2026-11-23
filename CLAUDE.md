@@ -669,6 +669,31 @@ touch the Actions budget — but 58 seconds is the number to beat.
   the table off disc, and one test asserts
   `graph.labels.max() == len(tokens) - 1`, which is the invariant that
   would have failed immediately.
+- **`bin/align.py` crashed on every real corpus, and the reduction of
+  `aux_labels` is why.** `best_path.aux_labels.numpy()` works while
+  `aux_labels` is a plain tensor and raises `AttributeError` once it is a
+  `RaggedTensor`, which took out stages 8 and 9 of the first real
+  mini-librispeech run, all eight jobs, both before and after decoding.
+  yesno's four-word lexicon leaves it dense, so tier 3 — **the only tier
+  that reaches `bin/align.py` at all** — stayed green through it.
+  **`k2.remove_epsilon` is what makes it ragged, not `k2.compose`**, which
+  was measured after assuming otherwise: composing two transducers returns
+  a plain tensor, while removing an epsilon-input arc that carries a word
+  has to put that word on a surviving arc. A test named for the
+  composition had been standing in for this and asserted nothing of the
+  kind.
+  There are **two** reductions and they are not interchangeable.
+  `words_from_best_path` flattens, which answers *which words were said*.
+  An alignment reads `labels[i]` and `aux_labels[i]` together to decide
+  which frames a word covers, so it needs exactly one entry per arc and a
+  length matching `labels` — that is `aux_labels_per_arc`. Two words on
+  one arc raises there rather than dropping one, because dropping one
+  shifts every word after it and the result looks plausible.
+  One asymmetry is left in deliberately: `remove_epsilon` empties the
+  final arc's row instead of leaving `-1`, so the ragged path reports `0`
+  where the dense path reports `-1`. Normalising would change the ark
+  yesno already writes, so both conventions stand and **the CTM from the
+  next real run is what should settle it**.
 - Topology FSTs and `tokens.txt` must stay consistent — the topology
   determines the neural network's output vocabulary. Both now come from the
   same spec, and `TopologySpec.validate` rejects a spec whose arcs use a token

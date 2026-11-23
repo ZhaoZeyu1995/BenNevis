@@ -88,6 +88,61 @@ def words_from_best_path(best: k2.Fsa) -> List[List[int]]:
     return [[label for label in path if label > 0] for path in paths]
 
 
+def aux_labels_per_arc(best: k2.Fsa) -> List[int]:
+    """
+    One output label per arc of a single best path.
+
+    This is the other reduction of `aux_labels`, and the distinction
+    matters. `words_from_best_path` flattens the ragged case, which is
+    right for *which words were said* and wrong for an alignment:
+    `bin/align.py` reads `labels[i]` and `aux_labels[i]` together to work
+    out which frames a word covers, so it needs exactly one entry per arc
+    and a length that matches `labels`.
+
+    `-1` is k2's end-of-path marker and is preserved, because the dense
+    path has always carried it through and the caller's walk is written
+    against that. `0` is `<eps>`.
+
+    Arguments
+    ---------
+    best: k2.Fsa
+        One path, as `k2.shortest_path` returns it. Not an FsaVec of
+        several: the caller aligns one utterance at a time, and
+        `_arc_ranges` is what splits a batch.
+
+    Returns
+    -------
+    List[int]
+        One label per arc, in arc order.
+
+    Raises
+    ------
+    ValueError
+        If an arc carries more than one word. An alignment places a word
+        across a span of frames, and two words on one arc cannot be laid
+        out in time -- so this is reported rather than resolved by
+        dropping one, which would silently shift every word after it.
+    """
+    aux = best.aux_labels
+    if not isinstance(aux, k2.RaggedTensor):
+        return aux.cpu().tolist()
+    labels = []
+    for arc, row in enumerate(aux.tolist()):
+        words = [label for label in row if label > 0]
+        if len(words) > 1:
+            raise ValueError(
+                f"arc {arc} carries {len(words)} output labels, {words}; "
+                "an alignment cannot place more than one word on an arc"
+            )
+        if words:
+            labels.append(words[0])
+        elif -1 in row:
+            labels.append(-1)
+        else:
+            labels.append(0)
+    return labels
+
+
 def _arc_ranges(best: k2.Fsa) -> Iterable[Tuple[int, int]]:
     """
     The half-open arc range of each FSA in an FsaVec.
