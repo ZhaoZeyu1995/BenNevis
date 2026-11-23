@@ -724,6 +724,24 @@ workflow changes.
   each stage, refusing an inverted range and stopping on a failing one;
   `tests/recipes/test_run_stages.py` holds the list of converted recipes and
   asserts its own membership, so the gap is visible rather than unasserted.
+- **Stage 10 rebuilds the lexicon, so its settings must match the
+  recipe's `prepare_lang.sh` call — and the two recipes differ on both.**
+  yesno passes `--position-dependent-phones false --sil_prob 0.0`;
+  mini_librispeech passes neither, so `prepare_lang.sh`'s defaults apply
+  and stage 10 has to say `--sil_prob 0.5 --position_dependent_phones`
+  explicitly. Getting either wrong builds a lexicon that is **wrong rather
+  than broken**: the graph composes, the decoder runs, and the
+  transcriptions are quietly worse.
+  `tests/recipes/test_decode_k2_settings.py` reads both the stage-10 flags
+  and the `prepare_lang.sh` line out of each `run.sh` and checks they
+  agree, so the table is pinned against the source of truth rather than
+  against itself; it also asserts its own list of recipes matches what is
+  on disc, so a recipe gaining stage 10 cannot go unchecked.
+  Rebuild from **the dictionary `prepare_lang.sh` read**, not from the
+  recipe's input copy: yesno's `prepare_dict.sh` copies
+  `input/lexicon.txt` to `data/local/dict/lexicon.txt`, so the two agree
+  today and would diverge silently the moment a preparation step
+  transformed the lexicon.
 - **Recipes have `--stage` and `--stop_stage`**, numbered 0 to 9 in
   `egs/yesno/asr/run.sh` and announced as they run. Each stage reads what the
   ones before it wrote, so resuming is only safe where the earlier output

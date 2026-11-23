@@ -58,6 +58,7 @@ test_lang=data/lang_nosp_test_tgsmall
 #   3  topologies                       7  decode
 #   4  decoding graphs                  8  align against the reference
 #                                       9  align against the decoding output
+#                                      10  decode again with k2, for comparison
 stage=0
 stop_stage=100
 
@@ -192,6 +193,38 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
             run/align.sh --nj ${nj} data/${x} data/lang_test_tgsmall_${topo} \
                 exp/${model}-${topo}/pred_${x} \
                 exp/${model}-${topo}/dec_${x}/aw_1.0-ma_5000-bm_32 || exit 1;
+        done
+    done
+fi
+
+# Beside stage 7 rather than in place of it, so one run decodes the same
+# models both ways. On yesno the two agreed on all eight topologies, error
+# for error -- but yesno has 232 reference words and nought to one error per
+# topology, so that showed the pipeline was wired correctly and nothing about
+# how the two searches behave when pruning actually bites. This recipe is
+# where that gets tested: five hours of audio, a 200k-word lexicon and a real
+# 3-gram, so there are errors for the two to disagree about.
+#
+# The settings are this recipe's, not yesno's, and both differ:
+# prepare_lang.sh is called with its defaults here, so optional silence is
+# 0.5 and phones are position-dependent. Getting either wrong builds a
+# lexicon FST that is wrong rather than one that fails.
+#
+# lm_tgsmall.arpa.gz is download_lm.sh's symlink to 3-gram.pruned.3e-7,
+# which is the model format_lms.sh builds data/lang_test_tgsmall from.
+if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
+    echo "$0: stage 10: decode again with k2, for comparison"
+    for topo in ${topos}; do
+        for x in ${recog_sets}; do
+            python3 run/decode_k2.py \
+                data/${x} data/lang_test_tgsmall_${topo} \
+                exp/${model}-${topo}/pred_${x} exp/${model}-${topo}/dec_k2_${x} \
+                --lexicon data/local/dict_nosp/lexicon.txt \
+                --arpa data/local/lm/lm_tgsmall.arpa.gz \
+                --topo ${topo} \
+                --sil_prob 0.5 \
+                --position_dependent_phones \
+                || { echo "$0: decode_k2.py failed for ${topo}/${x}" >&2; exit 1; }
         done
     done
 fi
