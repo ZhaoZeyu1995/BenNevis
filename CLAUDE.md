@@ -984,9 +984,20 @@ touch the Actions budget — but 58 seconds is the number to beat.
   when the job stopped**, and reading that silence as evidence of a hang is
   a mistake this project has already made once: it was offered as a symptom
   of the lost runner above, when the real and sufficient evidence was the
-  annotation. The nightly's `docker run` therefore sets `WGETRC` to
-  `.github/wgetrc`, which turns verbosity off and leaves errors alone;
-  `quiet = on` would suppress the errors too and is what the test forbids.
-  Kaldi's `download_and_untar.sh` still runs `tar -xvzf` and so prints
-  every file name, about 2,600 lines, which is tolerable and is not ours to
-  change.
+  annotation. It cost more than that too — three hours of a recipe were
+  unreadable, and "still training" could not be told from "hung" while the
+  run was in flight.
+  So two things now keep the step readable. The `docker run` sets `WGETRC`
+  to `.github/wgetrc`, which coarsens the meter to `dot:giga` — a line per
+  50MiB rather than per 50KiB, about 25 lines for 1.2GiB, with the
+  transfer rate kept because openslr is sometimes slow enough for it to
+  matter. **And the whole recipe output is tee'd to `artefacts/recipe.log`
+  and uploaded**, which is the part that generalises: the cap applies to
+  everything a recipe prints, not only to `wget`, and Kaldi's
+  `tar -xvzf` chatter and a long training run are not ours to quieten.
+  `tee` rather than a redirect, so the job log still streams. Neither
+  `quiet = on` nor `verbose = off` belongs in that file — the first drops
+  the errors, the second drops the rate — and
+  `tests/recipes/test_nightly_logging.py` forbids both, checks the tee
+  lands under `artefacts/`, and checks an `always()` upload collects it,
+  since a kept log nothing uploads dies with the runner.
