@@ -235,6 +235,8 @@ jobs:
           # line from BenNevis.utils.scoring, so both formats are read --
           # a row saying "unknown" means the file was there and
           # unparseable, which is worth telling apart from no row at all.
+          rows=0
+          unparsed=0
           {
             echo "## ${RECIPE} error rates"
             echo
@@ -247,13 +249,35 @@ jobs:
                 *dec_k2_*) who=k2 ;;
                 *)         who=kaldi ;;
               esac
-              wer=$(grep -E '\| *Sum/Avg' "$d" | awk '{print $(NF-2)}')
+              # awk rather than `grep | awk`: this step sets pipefail and
+              # the shell is `bash -e`, so a grep that finds nothing fails
+              # the pipeline and aborts the step. That is exactly what
+              # happened once the k2 files appeared -- they are not sclite
+              # format, so the grep matched nothing and a successful recipe
+              # reported failure. awk treats no-match as empty output
+              # rather than as an error, which is what is wanted here.
+              #
+              # Field NF-2 is sclite's Err column. The row is
+              #   | Sum/Avg|  29  232 | 99.6  0.0  0.4  0.0  0.4  3.4 |
+              # whose last three fields are Err, S.Err and a bar -- so
+              # NF-1 would be the *sentence* error rate, which is a much
+              # larger number and looks plausible.
+              wer=$(awk '/\| *Sum\/Avg/ {print $(NF-2); exit}' "$d")
               if [ -z "$wer" ]; then
                 wer=$(sed -nE 's/^WER ([0-9.]+)%.*/\1/p' "$d" | head -1)
               fi
+              if [ -z "$wer" ]; then
+                unparsed=$((unparsed + 1))
+              fi
+              rows=$((rows + 1))
               echo "| $topo | $who | ${wer:-unknown} |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+          # Said out loud rather than left to the table, for the same
+          # reason the file count above is: "no rows" and "the step could
+          # not read them" used to look identical.
+          echo "summarised ${rows} result file(s), ${unparsed} unparseable"
+
 
       - name: Upload the scores and logs
         if: always()
