@@ -933,8 +933,26 @@ workflow changes.
   files and stores another and looks exactly like a cache that keeps
   missing. Nothing saves when the runner itself is lost, which is a limit
   of the mechanism: that is how run 45202289714 lost 1.2GiB of
-  mini-librispeech download at 56% of the unpruned 3-gram, with the job
-  marked failed two hours later and the log ending mid-`wget` with no error
-  in it at all. **"The hosted runner lost communication with the server" is
-  an annotation, not a log line** — `gh run view --log` shows nothing, and
-  the only way to read it is the check-run's annotations.
+  mini-librispeech download, and was marked failed two hours later.
+- **"The hosted runner lost communication with the server" is an
+  annotation, not a log line.** `gh run view --log` does not contain it at
+  all; the only place it appears is the check-run's annotations, which is
+  the first thing to read when a job fails with nothing in its log —
+  `gh api repos/<owner>/<repo>/check-runs/<job-id>/annotations`. The job
+  carries the same story in its shape: a lost runner leaves `Run the
+  recipe` with `completed_at: null`, every later step never started, and a
+  `conclusion` the steps themselves do not account for.
+- **A job log is capped at about 2MB, and `wget`'s progress dots will spend
+  the whole budget.** Two attempts of run 45202289714 were cut off 59 bytes
+  apart — 2,117,576 and 2,117,517 — both mid-download at around 55% of the
+  724MB 3-gram, and two fetches of a live job's log 45 seconds apart came
+  back byte-identical. So **a log that stops mid-step says nothing about
+  when the job stopped**, and reading that silence as evidence of a hang is
+  a mistake this project has already made once: it was offered as a symptom
+  of the lost runner above, when the real and sufficient evidence was the
+  annotation. The nightly's `docker run` therefore sets `WGETRC` to
+  `.github/wgetrc`, which turns verbosity off and leaves errors alone;
+  `quiet = on` would suppress the errors too and is what the test forbids.
+  Kaldi's `download_and_untar.sh` still runs `tar -xvzf` and so prints
+  every file name, about 2,600 lines, which is tolerable and is not ours to
+  change.
