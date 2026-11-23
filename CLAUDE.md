@@ -922,3 +922,19 @@ workflow changes.
   `grep -P` it is a digit class, the pattern stops matching, and the token
   table silently comes out as `#0_0`, `#0_1`. Prefer Python for anything that
   parses a symbol table.
+- **`actions/cache` does not save when the job fails.** Its post step is
+  `post-if: success()`, so the combined action caches nothing from a run
+  that got the corpus and then died in training — and the retry pays for
+  the download again, which is the one case a corpus cache is for. The
+  split `actions/cache/restore` and `actions/cache/save` pair with
+  `if: always()` on the save is the way round it, at the cost of a path
+  list and a key written twice; `tests/recipes/test_nightly_cache.py`
+  checks the two copies agree, since a pair that drifts restores one set of
+  files and stores another and looks exactly like a cache that keeps
+  missing. Nothing saves when the runner itself is lost, which is a limit
+  of the mechanism: that is how run 45202289714 lost 1.2GiB of
+  mini-librispeech download at 56% of the unpruned 3-gram, with the job
+  marked failed two hours later and the log ending mid-`wget` with no error
+  in it at all. **"The hosted runner lost communication with the server" is
+  an annotation, not a log line** — `gh run view --log` shows nothing, and
+  the only way to read it is the check-run's annotations.
