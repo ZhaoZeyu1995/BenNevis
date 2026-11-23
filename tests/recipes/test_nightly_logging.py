@@ -12,12 +12,20 @@ job that stopped mid-step, and the silence was read here as a symptom of
 the lost runner it had nothing to do with. So the volume is a correctness
 concern about the project's own diagnosis, not housekeeping.
 
-`.github/wgetrc` is the fix, passed to the container as `WGETRC` so that
-Kaldi's download scripts -- which are reached through the `local/` symlink
-and are not ours to edit -- need no change. What these tests pin is the
-part that is easy to get wrong in the quiet direction: `quiet = on` would
-suppress wget's error messages too, which trades one unreadable log for
-another.
+Two things keep it readable. `.github/wgetrc`, passed to the container as
+`WGETRC` so that Kaldi's download scripts -- reached through the `local/`
+symlink and not ours to edit -- need no change, coarsens the progress
+meter to `dot:giga`: a line per 50MiB instead of per 50KiB, so the same
+1.2GiB costs about 25 lines and the transfer rate survives. And the whole
+recipe output is tee'd to an artefact, so the cap cannot hide what the
+recipe did even when something else floods the log.
+
+What these tests pin is the part that is easy to get wrong in the quiet
+direction. `quiet = on` would suppress wget's error messages, and
+`verbose = off` -- which was the first fix here -- suppresses the rate
+along with the dots; either trades one unreadable log for another. And a
+tee'd log that nothing uploads is worse than no tee at all, because it
+looks like a record and is discarded with the runner.
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
@@ -95,28 +103,88 @@ def test_the_recipe_step_passes_wgetrc():
     assert in_repo == WGETRC, f"{in_repo} is not {WGETRC}"
 
 
-def test_the_wgetrc_silences_the_progress_output():
-    """`verbose = off` is wget's -nv: no dots, errors kept."""
-    assert settings().get("verbose") == "off", settings()
-
-
-def test_the_wgetrc_does_not_silence_the_errors():
+def test_the_wgetrc_coarsens_the_progress_meter():
     """
-    `quiet` would hide what the log is kept for.
+    One line per 50MiB rather than per 50KiB.
 
-    The point of trimming the log is to be able to read a failure in it, so
-    suppressing wget's error messages would defeat the change that
-    introduced this file.
+    `dot:giga` is one dot per MiB and fifty to a line, which turns
+    mini-librispeech's 1.2GiB from some 25,000 lines into about 25.
+    """
+    assert settings().get("progress") == "dot:giga", settings()
+
+
+def test_the_wgetrc_silences_nothing():
+    """
+    Both of wget's quiet knobs are the wrong fix, for different reasons.
+
+    `quiet = on` drops the error messages, which is what the log is kept
+    for. `verbose = off` keeps them but drops the transfer rate, which is
+    worth having when openslr is slow enough to cost half an hour -- it
+    was the first fix here and the meter is strictly better.
     """
     assert settings().get("quiet") in (None, "off"), settings()
+    assert settings().get("verbose") in (None, "on"), settings()
 
 
 def test_the_wgetrc_sets_nothing_unexplained():
     """
     A startup file applies to every download the recipe makes.
 
-    Anything beyond the two settings above changes how the corpus is
-    fetched -- timeouts, retries, proxies -- which is a decision about the
-    recipe rather than about its log, and belongs in a PR that says so.
+    Anything beyond the settings above changes how the corpus is fetched
+    -- timeouts, retries, proxies -- which is a decision about the recipe
+    rather than about its log, and belongs in a PR that says so.
     """
-    assert set(settings()) <= {"verbose", "quiet"}, settings()
+    assert set(settings()) <= {"progress", "verbose", "quiet"}, settings()
+
+
+def tee_target() -> str:
+    """
+    The file the recipe step tees its output into.
+
+    Returns
+    -------
+    str
+        The path as the step writes it, relative to the working directory.
+    """
+    lines = [line for line in recipe_step()["run"].splitlines() if "| tee " in line]
+    assert len(lines) == 1, f"the recipe step tees {len(lines)} times"
+    return lines[0].split("| tee ", 1)[1].split()[0].strip('"')
+
+
+def test_the_recipe_output_is_kept_whole():
+    """
+    The job log is capped; the tee'd copy is not.
+
+    Without this, three hours of recipe output was unreadable on run
+    45202289714 and "still training" could not be told from "hung".
+    """
+    target = tee_target()
+    assert target.startswith("artefacts/"), target
+    # The directory has to exist before the tee opens the file, and the
+    # runner creates it in an earlier step -- deliberately, since a
+    # container creating it first would own it as root.
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["recipe"]["steps"]
+    names = [s.get("name") for s in steps]
+    made = [
+        n for n, s in zip(names, steps) if "mkdir -p artefacts" in str(s.get("run"))
+    ]
+    assert made, "nothing creates the artefacts directory"
+    assert names.index(made[0]) < names.index("Run the recipe")
+
+
+def test_the_kept_output_is_uploaded():
+    """
+    A tee'd log nothing uploads is discarded with the runner.
+
+    It also has to upload on failure, since a run that broke is the one
+    whose log is worth reading.
+    """
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["recipe"]["steps"]
+    uploads = [
+        s
+        for s in steps
+        if str(s.get("uses", "")).startswith("actions/upload-artifact")
+        and tee_target() in str(s.get("with", {}).get("path", ""))
+    ]
+    assert len(uploads) == 1, f"{tee_target()} is uploaded {len(uploads)} times"
+    assert str(uploads[0].get("if")) == "always()", uploads[0].get("if")

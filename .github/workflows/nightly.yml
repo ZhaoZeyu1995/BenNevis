@@ -156,11 +156,21 @@ jobs:
             !egs/mini_librispeech/asr/corpus/*.tar.gz
           key: mini-librispeech-corpus-v1
 
-      # WGETRC, because a job log is capped at about 2MB and wget's dot
-      # progress writes a line per 50KB: mini-librispeech's 1.2GiB of
-      # corpus and language models filled the whole budget with dots
-      # twice, leaving what the recipe actually did unreadable. The file
-      # turns verbosity off and keeps errors; see .github/wgetrc.
+      # Two things keep this step's output readable, because the job log
+      # is capped at about 2MB and a recipe can print far more than that.
+      #
+      # WGETRC coarsens wget's progress meter from a line per 50KiB to a
+      # line per 50MiB; see .github/wgetrc. And the whole output is tee'd
+      # to a file that is uploaded as an artefact, so the cap can never
+      # again hide what the recipe did -- which is exactly what it did on
+      # run 45202289714, where three hours of recipe were unreadable and
+      # "still training" could not be told from "hung". The job log keeps
+      # the live view; the artefact keeps everything, Kaldi's per-file
+      # `tar -xvzf` chatter included.
+      #
+      # `tee` and not a redirect, so the log still streams while the
+      # recipe runs. `pipefail` is set above, so a failing recipe still
+      # fails the step.
       - name: Run the recipe
         env:
           TOPOS: ${{ github.event.inputs.topos }}
@@ -195,7 +205,7 @@ jobs:
             -e OMP_NUM_THREADS=1 \
             -e WGETRC=/workspace/.github/wgetrc \
             "$IMAGE" \
-            ./run.sh "${opts[@]}"
+            ./run.sh "${opts[@]}" 2>&1 | tee artefacts/recipe.log
 
       # Saved by hand, and on failure too. `actions/cache` is
       # `post-if: success()`, so a job that dies after the download has
@@ -345,6 +355,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: yesno-scores
-          path: artefacts/yesno-scores.tar.gz
+          # recipe.log beside the scores rather than in its own artefact:
+          # it is the same question -- what did this run do -- and a
+          # second upload would be a second place to forget.
+          path: |
+            artefacts/yesno-scores.tar.gz
+            artefacts/recipe.log
           if-no-files-found: warn
           retention-days: 30
