@@ -487,6 +487,25 @@ minimises *and* is where the 1/1024 quantisation enters, and we do not
 minimise at all; and the **disambiguation symbols are carried through the
 T composition and dropped afterwards**, because they are what makes T∘LG
 determinisable — `compose_lg` strips them from LG first.
+**Minimisation does not need a deterministic input, which is the opposite
+of what the pipeline suggests.** OpenFST's `AcceptorMinimize` uses Revuz
+only for `kAcyclic | kIDeterministic` and otherwise falls back to
+Hopcroft, which its own comment says "also works for non-deterministic
+FSTs"; `Minimize` allows it in any **idempotent** semiring, and tropical
+is one. So dropping determinization did *not* put minimisation out of
+reach -- the two are separable, and `fstminimizeencoded` is applicable to
+the undeterminised LG we ship. It is still not implemented, on
+arithmetic: k2 has no `minimize`, so it means Hopcroft in Numba over 6.1M
+arcs, and the gain looks like **5%** (our 6,111,314 arcs against Kaldi's
+~5.8M). Note that ~5.8M is a byte count divided by a guess, so the
+capture now records `shapes` -- states, arcs and final states -- for every
+FST, including the digest-only ones, and the next nightly turns the
+estimate into a count. `fstminimizeencoded` also deliberately avoids the
+weight pushing that OpenFST's public `Minimize` does; a replacement must
+inherit that. Its quantisation rule is
+`floor(w / delta + 0.5) * delta` in float32, which is what puts weights
+on the 1/1024 grid and reproduces yesno's 2358/1024 exactly from
+-log(0.1).
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first

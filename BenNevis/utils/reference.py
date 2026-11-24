@@ -383,6 +383,16 @@ class Manifest:
         digest, so the comparison still works; what is lost is the ability to
         diff a mismatch against the committed reference. Listed separately so
         a missing file can be told apart from a forgotten one.
+    shapes: Dict[str, Dict[str, int]]
+        Relative path to the FST's size as `states`, `arcs` and `finals`.
+        Recorded for every FST text captured, large or small, because a
+        size comparison against a Python replacement otherwise has to be
+        inferred from the byte count -- 138,155,979 bytes of `LG.fst.txt`
+        divided by a guessed bytes-per-arc, which is how the figure
+        "about 5.8M arcs" entered `docs/kaldi-graph-chain.md`. The
+        question it answers is what Kaldi's determinize-and-minimise
+        actually buys over the composition we ship, and that deserves a
+        count rather than an estimate.
     functional: Dict[str, Dict[str, float]]
         Relative path to a map from a word sequence to the weight the FST
         gives it. The standard for an FST is functional equivalence rather
@@ -404,6 +414,7 @@ class Manifest:
     arrays: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
     large: Dict[str, int] = field(default_factory=dict)
+    shapes: Dict[str, Dict[str, int]] = field(default_factory=dict)
     functional: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     def write(self, path: Path) -> None:

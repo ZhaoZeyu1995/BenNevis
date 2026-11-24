@@ -130,3 +130,35 @@ def test_the_flags_the_document_explains_are_still_used():
     for flag in FLAGS:
         assert flag in script, f"{SCRIPT.name} no longer passes {flag}"
         assert flag in DOC.read_text(), f"{DOC.name} does not explain {flag}"
+
+
+def test_the_document_records_the_minimisation_precondition():
+    """
+    The finding a reader would otherwise assume the other way.
+
+    Textbook minimisation is defined on a DFA, so the obvious reading of
+    the shell pipeline is that `fstminimizeencoded` is only available
+    after `fstdeterminizestar` -- and therefore that dropping
+    determinization dropped minimisation with it. OpenFST's
+    `AcceptorMinimize` falls back to Hopcroft for non-deterministic input,
+    and `Minimize`'s own comment allows it in an idempotent semiring,
+    which the tropical semiring is. The document has to say so, because
+    the mistake is the kind that silently narrows what anyone considers
+    doing next.
+    """
+    text = DOC.read_text()
+    assert "Hopcroft" in text, "the fallback that makes this work is unnamed"
+    assert "idempotent" in text, "the condition on the semiring is unstated"
+    assert "separable" in text, "the conclusion for our own chain is missing"
+
+
+def test_the_quantisation_rule_is_given_rather_than_only_its_effect():
+    """
+    `floor(w / delta + 0.5) * delta` is what a replacement must copy to
+    land on Kaldi's grid; "quantised to 1/1024" is not enough to
+    reproduce, and the 2358/1024 example is only evidence that the rule is
+    right.
+    """
+    text = DOC.read_text()
+    assert "std::floor(Value() / delta + 0.5F) * delta" in text
+    assert "2358/1024" in text
