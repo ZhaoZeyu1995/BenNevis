@@ -145,6 +145,23 @@ LANG_FSTS = ("L.fst", "L_disambig.fst")
 LEXICON_FINGERPRINT_COUNT = 24
 GRAPH_FSTS = ("G.fst", "TLG.fst", "LG.fst")
 
+#: Text files in a per-topology graph directory, captured because they are
+#: the symbol tables the graphs' labels are written against -- and because
+#: **the two token tables are not interchangeable.** `prepare_topo.sh`
+#: writes `tokens.txt` with `<eps>` for Kaldi's `T.fst`, and
+#: `k2/tokens.txt` with neither `<eps>` nor the disambiguation symbols for
+#: ours, because a network cannot emit `<eps>`. So the same token has a
+#: different id on each side -- measured on mini-librispeech, `<blk>` is 1
+#: in Kaldi's table and 0 in ours, `SIL` 2 and 1 -- and any comparison of
+#: `TLG` has to go through token *names*. Comparing raw ids would line
+#: `<blk>` up against `SIL`, which is the shift that broke the first real
+#: k2 decoding run.
+#:
+#: Capturing them also removes a reconstruction: measuring our own TLG
+#: meant rebuilding both tables by hand, which is a second implementation
+#: of something the recipe already writes.
+GRAPH_TEXT = ("tokens.txt", "k2/tokens.txt", "k2/phones.txt")
+
 
 #: Where each Kaldi tool lives inside the tree, relative to KALDI_ROOT.
 TOOL_LOCATIONS = {
@@ -687,6 +704,15 @@ def capture_language(
 
     for topology in topologies:
         graph = recipe / f"{graph_prefix}{topology}"
+        for name in GRAPH_TEXT:
+            source = graph / name
+            if source.is_file():
+                store(
+                    manifest,
+                    destination,
+                    f"graph/{topology}/{name}",
+                    source.read_bytes(),
+                )
         for name in GRAPH_FSTS:
             source = graph / name
             if not source.is_file():
