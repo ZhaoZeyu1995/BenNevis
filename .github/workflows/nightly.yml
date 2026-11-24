@@ -55,10 +55,18 @@ jobs:
     name: recipe end to end
     runs-on: ubuntu-latest
     # Eight topologies at eighty epochs each, plus feature extraction, graph
-    # compilation, decoding and alignment. Well under the six-hour ceiling,
-    # but far enough above the expected hour that a slow day is not mistaken
-    # for a hang.
-    timeout-minutes: 300
+    # compilation, decoding and alignment. Below the six-hour ceiling a
+    # hosted runner enforces, but far enough above the expected hour that a
+    # slow day is not mistaken for a hang.
+    #
+    # 350 and not 300, because 300 was set against an estimate of ten
+    # minutes an epoch for mini-librispeech and the measured figure is
+    # twenty. Run 45202289714 was cancelled here with twelve epochs done
+    # and only stage 10 outstanding, having also lost 26 minutes to a
+    # congested openslr -- 34 minutes for a download that usually takes 8.
+    # The corpus cache makes that particular loss a one-off; the epoch time
+    # does not change.
+    timeout-minutes: 350
     permissions:
       contents: read
       packages: read
