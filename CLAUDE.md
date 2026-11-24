@@ -899,6 +899,21 @@ touch the Actions budget — but 58 seconds is the number to beat.
   `input/lexicon.txt` to `data/local/dict/lexicon.txt`, so the two agree
   today and would diverge silently the moment a preparation step
   transformed the lexicon.
+- **We strip the disambiguation symbols by threshold where Kaldi uses a
+  list, and that is an assumption with a silent failure.** `fstrmsymbols`
+  takes the explicit `disambig.int` and, with no options, replaces those
+  labels with `<eps>` on the **input** side -- a relabelling, not a
+  deletion, since `--remove-arcs=true` is a different graph. `compose_lg`
+  instead zeroes every label at or above `first_disambig`, which agrees
+  only while the `#` symbols are a contiguous suffix of `phones.txt`.
+  They are: yesno 8..9 of 10, mini-librispeech 347..363 of 364. Were an
+  ordinary phone ever numbered above them it would be mapped to epsilon,
+  and the graph would still compose, the decoder would still run and the
+  transcriptions would be quietly wrong -- the same "wrong rather than
+  broken" shape as the stage-10 lexicon settings. `build_graph` refuses
+  such a directory now, and the test is pinned in both directions,
+  because a guard that rejected every language directory would also pass
+  a one-sided test.
 - **Recipes have `--stage` and `--stop_stage`**, numbered 0 to 9 in
   `egs/yesno/asr/run.sh` and announced as they run. Each stage reads what the
   ones before it wrote, so resuming is only safe where the earlier output

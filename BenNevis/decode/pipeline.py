@@ -260,6 +260,31 @@ def build_graph(
         )
     first_disambig = min(disambig)
 
+    # `compose_lg` strips the disambiguation symbols with a *threshold*,
+    # `labels >= first_disambig`, where Kaldi's `fstrmsymbols` takes the
+    # explicit list in `disambig.int`. The two agree only while the `#`
+    # symbols occupy a contiguous suffix of `phones.txt` -- true for both
+    # corpora here, yesno at 8..9 of 10 and mini-librispeech at 347..363
+    # of 364 -- and if an ordinary phone ever sorted above them the
+    # threshold would map that phone to epsilon. The graph would still
+    # compose and the decoder would still run, so this is the "wrong
+    # rather than broken" failure the stage-10 settings note warns about,
+    # and nothing downstream would report it. Cheaper to assert than to
+    # diagnose.
+    intruders = sorted(
+        key
+        for key, value in phones.items()
+        if value >= first_disambig and not key.startswith("#")
+    )
+    if intruders:
+        raise ValueError(
+            f"{lang_dir}/phones.txt has {len(intruders)} symbol(s) numbered "
+            f"at or above the first disambiguation symbol "
+            f"#{first_disambig}: {intruders[:8]}. Stripping the "
+            f"disambiguation symbols by threshold would map these to "
+            f"epsilon and silently corrupt the graph"
+        )
+
     logging.info("building L_disambig from %s", lexicon)
     lexicon_fsa = load_openfst_text(
         build_disambig_fst_text(
