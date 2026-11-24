@@ -351,6 +351,39 @@ jobs:
       # `--skip-tlg` is the escape if the TLG half proves unaffordable.
       # **Turn this into a blocking gate once the cost is known** -- a
       # check that cannot fail the build is a report, not a gate.
+      # The equivalence gate for the graph, and the only place it can run.
+      # mini-librispeech's LG.fst and TLG.fst are 138MB and 340MB, so the
+      # capture keeps their digests and not their bytes, and the Python
+      # side needs a 3-gram model that is downloaded rather than
+      # committed -- so both sides exist only inside a recipe run.
+      #
+      # yesno cannot answer the question: there our TLG is 11 states and
+      # 33 arcs against Kaldi's 10 and 29 and the weights agree, because a
+      # four-word lexicon leaves Kaldi's second pipeline nothing to
+      # compact. On mini-librispeech ours is 43,263,880 arcs.
+      #
+      # The flags mirror stage 10's call, including the graph directory
+      # standing in for the language directory -- that is where
+      # prepare_topo.sh writes tokens.txt and k2/ -- and --sil_prob 0.5
+      # with --position_dependent_phones, which are prepare_lang.sh's
+      # defaults this recipe takes.
+      #
+      # **Invoked directly, not through `bash -c '...'`.** The first
+      # version wrapped the command in single quotes so that `path.sh`
+      # could be sourced to find `fstprint`, which meant `${RECIPE}` was
+      # expanded *inside* the container -- where it is not set, because
+      # it is a workflow-level `env:` and nothing passed it in. It became
+      # `--recipe ""` and the script died on
+      # `data/lang_test_tgsmall_ctc/words.txt`. The script finds
+      # `fstprint` itself now, the way capture.py does, so no shell is
+      # needed and the runner expands the variables as it does for every
+      # other step here.
+      #
+      # `continue-on-error` deliberately: the cost of `remove_epsilon` on
+      # a 43M-arc TLG is not yet measured, so until a run has shown what
+      # it takes, this reports rather than fails the job. **Turn it into a
+      # blocking gate once the cost is known** -- a check that cannot fail
+      # the build is a report, not a gate.
       - name: Compare the Python graphs against Kaldi's
         if: always() && env.RECIPE == 'egs/mini_librispeech/asr'
         continue-on-error: true
@@ -361,19 +394,15 @@ jobs:
             -e HOME=/tmp \
             -e PYTHONPATH=/workspace \
             "$IMAGE" \
-            bash -c '
-              set -eo pipefail
-              . "${RECIPE}/path.sh" 2>/dev/null || true
-              python3 tests/reference/compare_graphs.py \
-                --recipe "${RECIPE}" \
-                --graph-dir data/lang_test_tgsmall_ctc \
-                --lexicon data/local/dict_nosp/lexicon.txt \
-                --arpa data/local/lm/lm_tgsmall.arpa.gz \
-                --topo ctc \
-                --sil-prob 0.5 \
-                --position-dependent-phones \
-                --fstprint "$(command -v fstprint || echo "${KALDI_ROOT}/tools/openfst/bin/fstprint")"
-            ' 2>&1 | tee artefacts/graph-comparison.log
+            python3 tests/reference/compare_graphs.py \
+              --recipe "${RECIPE}" \
+              --graph-dir data/lang_test_tgsmall_ctc \
+              --lexicon data/local/dict_nosp/lexicon.txt \
+              --arpa data/local/lm/lm_tgsmall.arpa.gz \
+              --topo ctc \
+              --sil-prob 0.5 \
+              --position-dependent-phones \
+            2>&1 | tee artefacts/graph-comparison.log
 
       - name: Upload the Kaldi reference
         if: always()

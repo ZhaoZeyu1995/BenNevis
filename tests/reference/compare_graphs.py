@@ -54,6 +54,10 @@ from typing import Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+# So that `capture.py` beside this file is importable however this is
+# invoked.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def fstprint(printer: str, path: Path) -> str:
@@ -201,7 +205,13 @@ def main() -> int:
         help="must match the recipe's prepare_lang.sh call; getting it "
         "wrong builds a lexicon that is wrong rather than broken",
     )
-    parser.add_argument("--fstprint", default="fstprint")
+    parser.add_argument(
+        "--fstprint",
+        default=None,
+        help="the fstprint executable; found the way capture.py finds it "
+        "when omitted, because it is in the image but only on the PATH a "
+        "recipe's path.sh builds",
+    )
     parser.add_argument("--sequences", type=int, default=24)
     parser.add_argument(
         "--skip-tlg",
@@ -221,6 +231,24 @@ def main() -> int:
         position_dependent_table,
         sample_lexicon_sequences,
     )
+
+    # Found rather than assumed on the PATH: fstprint lives in the image
+    # but only on the PATH a recipe's `path.sh` builds, and sourcing that
+    # from the workflow is what cost this step its environment once
+    # already. `capture.py` solved the same problem; reuse it rather than
+    # keep a second answer.
+    printer = args.fstprint
+    if printer is None:
+        from capture import find_fstprint
+
+        printer = find_fstprint()
+        if printer is None:
+            print(
+                "FAILED: no fstprint, so Kaldi's graphs cannot be read",
+                flush=True,
+            )
+            return 1
+    print(f"  fstprint: {printer}", flush=True)
 
     graph_dir = args.recipe / args.graph_dir
     lexicon_path = args.recipe / args.lexicon
@@ -258,7 +286,7 @@ def main() -> int:
 
     started = time.time()
     their_lg = load_openfst_text(
-        fstprint(args.fstprint, graph_dir / "LG.fst"), acceptor=False
+        fstprint(printer, graph_dir / "LG.fst"), acceptor=False
     )
     say("loaded Kaldi's LG", started)
     size("Kaldi LG", their_lg)
@@ -291,7 +319,7 @@ def main() -> int:
         size("our TLG", our_tlg)
         started = time.time()
         their_tlg = load_openfst_text(
-            fstprint(args.fstprint, graph_dir / "TLG.fst"), acceptor=False
+            fstprint(printer, graph_dir / "TLG.fst"), acceptor=False
         )
         say("loaded Kaldi's TLG", started)
         size("Kaldi TLG", their_tlg)
