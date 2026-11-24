@@ -1155,3 +1155,87 @@ class TestUnorderedArtefacts:
 
     def test_an_empty_payload_is_left_alone(self):
         assert capture.normalise_unordered("dict/extra_questions.txt", b"") == b""
+
+
+class TestRecordShape:
+    """
+    How large Kaldi's FSTs are, counted rather than inferred.
+
+    A `large` artefact keeps its digest and not its bytes, so until now
+    its size was knowable only as a byte count -- which is how
+    `docs/kaldi-graph-chain.md` came to say Kaldi's `LG.fst` holds "about
+    5.8M arcs", from 138,155,979 bytes divided by a guess at bytes per
+    line. That number decides whether the determinize-and-minimise pair
+    the Python skips is compacting the graph or not, so an estimate is not
+    good enough to judge a replacement by.
+    """
+
+    def test_it_counts_arcs_and_final_states(self):
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import record_shape
+
+        manifest = Manifest()
+        text = b"0 1 1 1 0.5\n0 2 2 2 1.5\n1 2 3 3 0.0\n2 0.25\n"
+        record_shape(manifest, "lang/L.fst.txt", text)
+        assert manifest.shapes["lang/L.fst.txt"] == {
+            "states": 3,
+            "arcs": 3,
+            "finals": 1,
+        }
+
+    def test_a_state_reached_but_never_a_source_is_counted(self):
+        """
+        The subtlety that makes this a count and not a maximum.
+
+        An FST text need not mention every state as the source of an arc:
+        a final state with no outgoing arcs appears only as a destination.
+        Counting sources alone undercounts it, and taking the highest
+        index seen assumes the numbering is dense.
+        """
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import record_shape
+
+        manifest = Manifest()
+        # State 9 is only ever a destination, and nothing numbered 1..8
+        # exists, so neither "sources" nor "max index" gives 2.
+        record_shape(manifest, "f.txt", b"0 9 1 1 0.0\n9 0.0\n")
+        assert manifest.shapes["f.txt"]["states"] == 2
+
+    def test_a_weightless_arc_line_is_still_an_arc(self):
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import record_shape
+
+        manifest = Manifest()
+        record_shape(manifest, "f.txt", b"0 1 5 5\n1\n")
+        assert manifest.shapes["f.txt"]["arcs"] == 1
+        assert manifest.shapes["f.txt"]["finals"] == 1
+
+    def test_an_empty_fst_records_zeroes(self):
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import record_shape
+
+        manifest = Manifest()
+        record_shape(manifest, "f.txt", b"")
+        assert manifest.shapes["f.txt"] == {
+            "states": 0,
+            "arcs": 0,
+            "finals": 0,
+        }
+
+    def test_the_shape_is_recorded_for_an_artefact_too_large_to_store(self):
+        """
+        The whole point: a digest-only artefact still reports its size.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import record_shape, store
+
+        manifest = Manifest()
+        text = b"".join(b"0 1 1 1 0.0\n" for _ in range(200)) + b"1 0.0\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            store(manifest, Path(tmp), "graph/ctc/LG.fst.txt", text, max_bytes=16)
+            record_shape(manifest, "graph/ctc/LG.fst.txt", text)
+        assert "graph/ctc/LG.fst.txt" in manifest.large
+        assert manifest.shapes["graph/ctc/LG.fst.txt"]["arcs"] == 200

@@ -438,6 +438,43 @@ def parse_fst_text(text: bytes) -> Tuple[dict, dict, Optional[int]]:
     return arcs, finals, start
 
 
+def record_shape(manifest: Manifest, relative: str, text: bytes) -> None:
+    """
+    Record how large an FST is, in states, arcs and final states.
+
+    A `large` artefact keeps its digest and not its bytes, so its *size*
+    was knowable only as a byte count and anything about its structure had
+    to be inferred from it. That is how `docs/kaldi-graph-chain.md` came
+    to say Kaldi's `LG.fst` holds "about 5.8M arcs": 138,155,979 bytes
+    divided by a guess at bytes per line. The number matters, because it
+    is what decides whether the `fstdeterminizestar`/`fstminimizeencoded`
+    pair we skip is compacting the graph or not, and a replacement cannot
+    be judged against an estimate.
+
+    Arguments
+    ---------
+    manifest: Manifest
+        The manifest to record it in.
+    relative: str
+        The FST's path within the capture, which is its manifest key.
+    text: bytes
+        The fstprint dump.
+    """
+    arcs, finals, _ = parse_fst_text(text)
+    # States are counted as every state that appears as a source or a
+    # destination, not as the highest index seen: an FST text need not
+    # mention every state as a source, and a final state with no outgoing
+    # arcs appears only as a destination.
+    states = set(arcs) | set(finals)
+    for outgoing in arcs.values():
+        states.update(destination for destination, _, _ in outgoing)
+    manifest.shapes[relative] = {
+        "states": len(states),
+        "arcs": sum(len(outgoing) for outgoing in arcs.values()),
+        "finals": len(finals),
+    }
+
+
 def record_fingerprint(
     manifest: Manifest,
     relative: str,
@@ -545,7 +582,9 @@ def capture_language(
             continue
         text = fstprint(printer, source)
         if text is not None:
-            store(manifest, destination, f"lang/{name}.txt", text)
+            relative = f"lang/{name}.txt"
+            store(manifest, destination, relative, text)
+            record_shape(manifest, relative, text)
 
     # The word symbol table the graph FSTs' output labels index. Read from
     # the language directory rather than recomputed, for the same reason
@@ -569,6 +608,7 @@ def capture_language(
             if text is not None:
                 relative = f"graph/{topology}/{name}.txt"
                 store(manifest, destination, relative, text)
+                record_shape(manifest, relative, text)
                 if name == "G.fst":
                     # G accepts any sequence of in-vocabulary words, because
                     # its back-off arcs reach the unigram state. L and TLG

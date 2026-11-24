@@ -61,13 +61,74 @@ pushed, not which semiring the merge happens in.
 `delta` defaults to `kDelta`, 1/1024, and decides when two weights count as
 equal.
 
-**`fstminimizeencoded`** minimises "after encoding [similar to fstminimize,
-but **no weight-pushing**]". Encoding folds each (label, weight) pair into a
-single label so the transducer becomes an acceptor that can be minimised as
-an ordinary DFA, then decodes. Its `--delta` is documented as the "delta
-likelihood used for quantization of weights", and **this is where the 1/1024
-grid in CLAUDE.md comes from** -- yesno's `G.fst` carries 2.30258512 for
--log(0.1) while its `LG.fst` carries 2.30273438, which is 2358/1024.
+**`fstminimizeencoded`** is four operations, and `MinimizeEncoded` in
+`fstext/fstext-utils.h` is short enough to quote in full:
+
+```cpp
+ArcMap(fst, QuantizeMapper<Arc>(delta));
+EncodeMapper<Arc> encoder(kEncodeLabels | kEncodeWeights, ENCODE);
+Encode(fst, &encoder);
+internal::AcceptorMinimize(fst);
+Decode(fst, encoder);
+```
+
+The quantisation is the first line and nothing else does it, so **this is
+where CLAUDE.md's 1/1024 grid comes from**. The rule is
+`TropicalWeight::Quantize` in OpenFST's `float-weight.h`:
+
+```cpp
+return TropicalWeightTpl<T>(std::floor(Value() / delta + 0.5F) * delta);
+```
+
+Round half up onto a grid of `delta`, in float32, with infinity left alone.
+That is checkable rather than merely observed: `-log(0.1)` is 2.30258509,
+and `floor(2.30258509 * 1024 + 0.5) / 1024` is `2358/1024` = **2.30273438**,
+exactly the weight yesno's `LG.fst` carries where its `G.fst` carries
+2.30258512.
+
+The encoding folds each (label, weight) pair into a single label, which
+turns a weighted transducer into an **unweighted acceptor** -- the only
+thing `AcceptorMinimize` accepts -- and `Decode` unfolds it afterwards.
+
+**Minimisation does not require a deterministic input, and this was worth
+checking rather than assuming.** The natural reading is that
+`fstdeterminizestar` and `fstminimizeencoded` are an inseparable pair,
+because textbook minimisation is defined on a DFA. OpenFST's
+`AcceptorMinimize` says otherwise:
+
+```cpp
+static constexpr auto revuz_props = kAcyclic | kIDeterministic;
+if (fst->Properties(revuz_props, true) == revuz_props) {
+  // Acyclic minimization (Revuz).
+} else {
+  // Either the FST has cycles, or it's generated from non-deterministic
+  // input (which the Revuz algorithm can't handle), so use the cyclic
+  // minimization algorithm of Hopcroft.
+}
+```
+
+and `Minimize`'s own comment is explicit that it handles "deterministic
+weighted automata and transducers, and also non-deterministic ones **if
+they use an idempotent semiring**". The tropical semiring is idempotent --
+`Plus` is `min`, and `min(a, a) = a`. So minimising the undeterminised
+tropical LG that `compose_lg` now produces is a legitimate operation, not
+a stage that became unavailable when determinization was dropped. The two
+are **separable**, which is the opposite of what the shell pipeline
+suggests.
+
+Also deliberate: `fstminimizeencoded` exists *because* it does not push
+weights. OpenFST's public `Minimize` calls
+`Push(fst, REWEIGHT_TO_INITIAL, delta)` on a weighted acceptor first;
+Kaldi's comment says "it will not push the weights, or the symbols. This
+is better for our recipes, as we avoid ever pushing the weights." A
+replacement should inherit that choice rather than reach for the
+convenient library call.
+
+One caveat Kaldi states and a replacement must not lose: it "will only
+minimize optimally if your graphs are such that the symbols are as far to
+the left as they can go, and the weights in combinable paths are the
+same". So this is not guaranteed-minimal output; it is a cheap merge that
+happens to work well on the graphs these recipes build.
 
 **`fstrmsymbols disambig.int`** maps the listed labels to `<eps>`. Note
 *which* list each pipeline uses: `disambig.int` for the token-level graph and
@@ -89,7 +150,7 @@ stochasticity in the log semiring.
 | --- | --- | --- |
 | compose L, G | `fsttablecompose`, tropical | `k2.compose` — equivalent |
 | determinize LG | log semiring, with epsilon removal | **not done**, measured: see below |
-| minimise LG | `fstminimizeencoded`, quantises to 1/1024 | *not done* |
+| minimise LG | `fstminimizeencoded`, quantises to 1/1024 | *not done* — but **available**, see above: Hopcroft needs no determinism |
 | disambiguation symbols | kept in `tmp/LG.fst`, **through** the T composition | stripped from LG **before** composing T |
 | determinize T∘LG | again, log semiring | *not done* |
 | epsilon removal | `fstrmepslocal`, never grows the graph | `k2.remove_epsilon`, removes all, can grow it |
@@ -129,16 +190,52 @@ an input string by **adding their probabilities**, so Kaldi's arc weights can
 be lower than any single path's; without determinization the cheapest path
 stands alone. One-best Viterbi picks the same path either way, which is all
 the decoder asks, but a lattice or any sum over paths would differ. Kaldi's
-own LG is about the size of the undeterminised composition --
-`LG.fst.txt` is 138,155,979 bytes, on the order of 5.8M lines -- which says
-the `fstminimizeencoded` we skip is doing real work, and that k2's
-determinization without it inflates where Kaldi's compacts.
+own LG is about the size of the undeterminised composition.
+`LG.fst.txt` is 138,155,979 bytes; at the average length of an arc line that
+is **on the order of 5.8M arcs**, against the 6,111,314 we ship. **That
+figure is an estimate and must not be quoted as a measurement** -- it is a
+byte count divided by a guess, which is why the capture now records `shapes`
+for every FST, so the next nightly replaces it with a count.
+
+If it holds, it is the useful number here: Kaldi determinizes in the log
+semiring *and* minimises to arrive within a few percent of a composition we
+produce by doing neither. k2's determinization without minimisation gives
+18,732,970 -- so it is the minimisation that compacts, and the two stages
+are a pair in *effect* even though, per the section above, they are
+separable in *principle*.
 
 L_disambig has **2** input epsilons in 1,589,729 arcs, from the optional
 silence start arcs, and G's input side carries words plus `#0` with no
 epsilons. So the missing epsilon removal is *not* what makes k2 slow here --
 a hypothesis worth discarding explicitly, since the naming of
 `determinizestar` invites it.
+
+## Is minimisation worth reimplementing?
+
+Not yet, and the reason is arithmetic rather than difficulty.
+
+What it would cost: k2 has no `minimize`, so this is Hopcroft over an
+encoded acceptor, written in Python with Numba to stand a chance --
+O(e log v), about 6.1M arcs by 21, so some 10^8 partition operations, plus
+the (label, weight) encoding and the float32 quantisation above to stay
+faithful, with a correctness obligation on every graph the project builds.
+
+What it would buy, on the estimate above: our LG is 6,111,314 arcs against
+Kaldi's ~5.8M, so **about 5%**. That does not pay for a Hopcroft
+implementation, and `intersect_dense_pruned` needs the graph to be neither
+deterministic nor minimal.
+
+Two things would change that verdict, and both are measurable rather than
+matters of opinion:
+
+- **The count, once the nightly records it.** If Kaldi's LG is materially
+  smaller than 5.8M arcs, the 5% is wrong and the case reopens.
+- **TLG, which is the graph the decoder actually reads.** `TLG.fst.txt` is
+  340,397,504 bytes, two and a half times `LG`, and the second pipeline
+  minimises *after* composing the topology on and removing epsilons. That
+  composition is where a size difference would hurt, and nothing here has
+  measured our TLG against Kaldi's. It is the comparison to make next, and
+  it needs no new algorithm -- only the counts the capture now takes.
 
 ## Reimplementing `DeterminizeStar`
 
