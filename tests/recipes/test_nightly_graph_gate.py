@@ -154,3 +154,60 @@ class TestItKeepsWhatItMeasured:
         step = _step("Upload the scores and logs")
         assert "artefacts/graph-comparison.log" in step["with"]["path"]
         assert step["if"] == "always()"
+
+
+class TestTheStepKeepsItsEnvironment:
+    """
+    The bug that cost the gate its first run.
+
+    The first version wrapped the command in `bash -c '...'` so that
+    `path.sh` could be sourced to put `fstprint` on the PATH. Single
+    quotes mean the *container's* shell expands `${RECIPE}`, and `RECIPE`
+    is a workflow-level `env:` that nothing passed in with `-e`. It became
+    `--recipe ""`, every path resolved against `/workspace`, and the
+    script died on `data/lang_test_tgsmall_ctc/words.txt` -- after the
+    step had already reported success, because `continue-on-error` hides a
+    non-zero exit.
+
+    Two assertions, because either alone can be satisfied the wrong way:
+    the command must not be wrapped in a single-quoted shell, and any
+    workflow variable it uses must either be expanded by the runner or
+    passed in explicitly.
+    """
+
+    def test_the_command_is_not_wrapped_in_a_quoted_shell(self):
+        run = _step(STEP)["run"]
+        assert "bash -c '" not in run, (
+            "a single-quoted bash -c defers expansion to the container, "
+            "where the workflow's env: variables do not exist"
+        )
+
+    def test_every_variable_it_uses_reaches_it(self):
+        """
+        `${RECIPE}` is expanded by the runner here. If a future edit moves
+        the command inside a container shell, the variable has to be
+        passed with `-e` instead -- this checks one or the other holds.
+        """
+        run = _step(STEP)["run"]
+        import re
+
+        used = set(re.findall(r"\$\{(\w+)\}", run))
+        # IMAGE is referenced as "$IMAGE" and is a runner-side variable
+        # like the rest; what matters is that nothing is left to a shell
+        # inside the container.
+        for name in used:
+            passed = f"-e {name}" in run
+            runner_side = "bash -c" not in run
+            assert passed or runner_side, (
+                f"${{{name}}} is expanded inside the container but never "
+                f"passed in with -e"
+            )
+
+    def test_it_does_not_rely_on_path_sh_for_fstprint(self):
+        """
+        Sourcing `path.sh` is what motivated the shell wrapper. The script
+        finds `fstprint` itself, the way `capture.py` does, so the step
+        needs no shell at all.
+        """
+        run = _step(STEP)["run"]
+        assert "path.sh" not in run
