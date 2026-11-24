@@ -461,3 +461,154 @@ class TestEquivalenceOnLexiconDrawnSequences:
         for words, phone_sequence in drawn:
             unknown = [p for p in phone_sequence if p not in phones]
             assert not unknown, f"{' '.join(words)} wants {unknown}"
+
+
+@pytest.fixture(scope="module")
+def our_tlg(tables, built):
+    """
+    `TLG` for yesno, from a dictionary, an ARPA model and a topology.
+
+    The same three parts Kaldi's `prepare_graph.sh` composes, by different
+    algorithms -- which is the whole question this file exists to settle.
+    """
+    from BenNevis.topos import build as topo_build
+    from BenNevis.topos import spec as topo_spec
+
+    words, phones = tables
+    first = min(value for key, value in phones.items() if key.startswith("#"))
+    lexicon = load_openfst_text(
+        build_disambig_fst_text(
+            read_lexicon(YESNO / "lexicon.txt"), words, phones, sil_prob=0.0
+        )
+    )
+    grammar = load_openfst_text(build_fst_text(read_arpa(YESNO / "task.arpabo"), words))
+    # The topology's k2 variant: tokens in, phones out, with neither the
+    # disambiguation symbols nor `<eps>`, because `compose_lg` has already
+    # stripped the former and a network cannot emit the latter.
+    loaded = topo_spec.load("ctc")
+    out_phones = {
+        key: value for key, value in phones.items() if not key.startswith("#")
+    }
+    phone_list = [key for key, _ in sorted(out_phones.items(), key=lambda kv: kv[1])]
+    tokens = {
+        token: index
+        for index, token in enumerate(
+            topo_build.build_tokens(
+                loaded, phone_list, with_eps=False, with_disambig=False
+            )
+        )
+    }
+    topology = load_openfst_text(
+        topo_build.build_openfst_int_text(
+            loaded, "k2", phone_list, isymbols=tokens, osymbols=out_phones
+        )
+    )
+    return build_decoding_graph(topology, lexicon, grammar, first)
+
+
+@pytest.fixture(scope="module")
+def probes(our_tlg):
+    """Both TLGs, inverted and epsilon-free, ready to search by words."""
+    from BenNevis.decode.graph import prepare_output_probe
+
+    kaldi = load_openfst_text(
+        (REFERENCE / "graph" / "ctc" / "TLG.fst.txt").read_text(),
+        acceptor=False,
+    )
+    return prepare_output_probe(kaldi), prepare_output_probe(our_tlg)
+
+
+class TestTlgEquivalenceByOutput:
+    """
+    `TLG` compared as the function a decoder uses.
+
+    This is the graph `decode-faster` actually reads, and the question
+    that matters is what it costs to recognise a word sequence. Under a
+    CTC topology that is a **minimum over every token realisation** of
+    those words -- blanks anywhere, labels repeated -- so the search runs
+    on the *output* side. Probing one hand-picked token sequence would
+    compare an alignment no decoder need take, and two graphs could agree
+    on it while differing on the paths that matter.
+
+    Probing the output side also sidesteps the token tables entirely:
+    `prepare_topo.sh` writes `tokens.txt` with `<eps>` for Kaldi and
+    `k2/tokens.txt` without it for us, so every token id differs by one,
+    whereas `words.txt` is the same table on both sides.
+
+    On mini-librispeech our `TLG` is 43,263,880 arcs against Kaldi's
+    (estimated) 14M, so this gate is where that difference will have to
+    be explained -- but the arithmetic cannot run there yet, because the
+    ARPA model is downloaded rather than committed. yesno is where the
+    machinery gets checked against a real Kaldi graph first.
+    """
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            ["YES"],
+            ["NO"],
+            ["YES", "NO"],
+            ["NO", "YES"],
+            ["YES", "YES", "NO"],
+            ["NO", "NO", "NO"],
+            ["YES", "YES", "YES", "YES"],
+        ],
+    )
+    def test_the_weights_agree_within_quantisation(self, probes, tables, sentence):
+        from BenNevis.decode.graph import weight_of_word_sequence
+
+        kaldi_probe, our_probe = probes
+        words, _phones = tables
+        ids = [words[word] for word in sentence]
+
+        theirs = weight_of_word_sequence(kaldi_probe, ids)
+        ours = weight_of_word_sequence(our_probe, ids)
+        assert theirs is not None, f"Kaldi's TLG rejects {sentence}"
+        assert ours is not None, f"our TLG rejects {sentence}"
+
+        bound = (len(sentence) + 1) * QUANTISATION_DELTA
+        assert abs(theirs - ours) <= bound, (
+            f"{' '.join(sentence)}: Kaldi {theirs:.6f}, ours {ours:.6f}, "
+            f"gap {abs(theirs - ours):.6f} exceeds {bound:.6f}"
+        )
+
+    def test_a_sequence_the_grammar_rejects_returns_none(self, probes, tables):
+        """
+        None rather than infinity, and rather than a crash: a rejection is
+        a fact about the lexicon and grammar, so a caller records it as
+        absent. `<SIL>` is in yesno's lexicon but not its grammar.
+        """
+        from BenNevis.decode.graph import weight_of_word_sequence
+
+        kaldi_probe, our_probe = probes
+        words, _phones = tables
+        if "<SIL>" not in words:
+            pytest.skip("no out-of-grammar word to try")
+        ids = [words["<SIL>"]]
+        assert weight_of_word_sequence(kaldi_probe, ids) is None
+        assert weight_of_word_sequence(our_probe, ids) is None
+
+    def test_the_probe_is_epsilon_free(self, probes):
+        """
+        The precondition that makes the lattice acyclic, and so makes
+        `k2.shortest_path` applicable at all. Most of a token graph's arcs
+        emit no word -- 20 of 29 in yesno's TLG -- and as input labels
+        those form cycles, including blank self-loops.
+        """
+        for probe in probes:
+            assert int((probe.labels == 0).sum()) == 0
+
+    def test_longer_sequences_cost_more(self, probes, tables):
+        """
+        A sanity check on the probe itself: if it returned a constant, or
+        the weight of the empty path, every comparison above would agree
+        while measuring nothing.
+        """
+        from BenNevis.decode.graph import weight_of_word_sequence
+
+        _kaldi, our_probe = probes
+        words, _phones = tables
+        one = weight_of_word_sequence(our_probe, [words["YES"]])
+        four = weight_of_word_sequence(our_probe, [words["YES"]] * 4)
+        assert one is not None and four is not None
+        assert four > one * 2
