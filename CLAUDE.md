@@ -1214,12 +1214,24 @@ touch the Actions budget — but 58 seconds is the number to beat.
   | attempt 2 while in progress | 2,117,517 | 20,293 | mid-download, 55% |
   | attempt 2 once completed (cancelled) | 3,009,128 | 28,812 | the end of the job |
 
-  The first two agree to 59 bytes because both are the live buffer: an
-  in-progress job serves only what has been streamed, and a job whose
-  runner is lost never uploads anything more, so the buffer is all that
-  survives. A **completed** job — cancelled at its timeout included —
-  serves the whole log: that 3MB one holds every stage, all twelve epoch
-  lines and 24,879 dot lines.
+  The first two agree to 59 bytes because both are the live buffer. A
+  **completed** job — cancelled at its timeout included — serves the
+  whole log: that 3MB one holds every stage, all twelve epoch lines and
+  24,879 dot lines.
+
+  **A lost runner does not reliably leave even the buffer, and this entry
+  used to claim it did.** Run 45474590201 was lost at 3h36m and serves
+  *nothing*: `gh run view --log` says `log not
+  found` and the job log API returns `BlobNotFound`. An in-progress job
+  can be the same — that run returned `BlobNotFound` while it was
+  running, where 45202289714 served 2.1MB. So log availability is **not
+  guaranteed at any point before a job completes**, and the claim that
+  "the buffer is all that survives" was read here as a guarantee and
+  acted on. That run cost three and a half hours and produced no readings
+  at all, because the memory lines go to the job log and to the tee'd
+  artefact and a lost runner takes both. **Anything a run must yield has
+  to survive the runner being lost, which in practice means a shorter
+  run**, not a better log.
 
   Two consequences, and the second is the one that was got wrong.
   **A log that stops mid-step says nothing about when the job stopped**, so
