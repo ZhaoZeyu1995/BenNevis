@@ -325,6 +325,56 @@ jobs:
             python3 tests/reference/capture.py \
               "${RECIPE}" /workspace/artefacts/reference ${CAPTURE_ARGS}
 
+      # The equivalence gate for the graph, and the only place it can
+      # run. mini-librispeech's LG.fst and TLG.fst are 138MB and 340MB, so
+      # the capture keeps their digests and not their bytes, and the
+      # Python side needs a 3-gram model that is downloaded rather than
+      # committed -- so both sides exist only inside a recipe run.
+      #
+      # yesno cannot answer the question. There our TLG is 11 states and
+      # 33 arcs against Kaldi's 10 and 29 and the weights agree, because a
+      # four-word lexicon leaves Kaldi's second pipeline nothing to
+      # compact; on mini-librispeech ours is 43,263,880 arcs. A
+      # replacement validated on yesno alone would look finished.
+      #
+      # The flags mirror stage 10's call exactly, including the graph
+      # directory standing in for the language directory -- that is where
+      # prepare_topo.sh writes tokens.txt and k2/ -- and --sil_prob 0.5
+      # with --position_dependent_phones, which are prepare_lang.sh's
+      # defaults that this recipe takes. Getting those wrong builds a
+      # lexicon that is wrong rather than broken.
+      #
+      # `continue-on-error` deliberately: the cost of `remove_epsilon` on
+      # a 43M-arc TLG is not yet measured, so until a run has shown what
+      # it takes, this reports rather than fails the job. The step's own
+      # exit code still distinguishes a mismatch from a crash, and
+      # `--skip-tlg` is the escape if the TLG half proves unaffordable.
+      # **Turn this into a blocking gate once the cost is known** -- a
+      # check that cannot fail the build is a report, not a gate.
+      - name: Compare the Python graphs against Kaldi's
+        if: always() && env.RECIPE == 'egs/mini_librispeech/asr'
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            "$IMAGE" \
+            bash -c '
+              set -eo pipefail
+              . "${RECIPE}/path.sh" 2>/dev/null || true
+              python3 tests/reference/compare_graphs.py \
+                --recipe "${RECIPE}" \
+                --graph-dir data/lang_test_tgsmall_ctc \
+                --lexicon data/local/dict_nosp/lexicon.txt \
+                --arpa data/local/lm/lm_tgsmall.arpa.gz \
+                --topo ctc \
+                --sil-prob 0.5 \
+                --position-dependent-phones \
+                --fstprint "$(command -v fstprint || echo "${KALDI_ROOT}/tools/openfst/bin/fstprint")"
+            ' 2>&1 | tee artefacts/graph-comparison.log
+
       - name: Upload the Kaldi reference
         if: always()
         uses: actions/upload-artifact@v4
@@ -418,5 +468,6 @@ jobs:
             artefacts/recipe.log
             artefacts/host.log
             artefacts/memory.log
+            artefacts/graph-comparison.log
           if-no-files-found: warn
           retention-days: 30
