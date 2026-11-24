@@ -276,3 +276,62 @@ class TestWithTheTopology:
         assert graph.num_arcs > 0
         # Its input alphabet is the network's output layer, not phones.
         assert int(graph.labels.max()) < len(tokens)
+
+
+class TestItDoesNotDeterminize:
+    """
+    Skipping `k2.determinize` is a measured decision, pinned here.
+
+    On mini-librispeech's 206,510-word lexicon and its pruned 3-gram,
+    `k2.determinize` took **3358 seconds** and turned 5,447,106 arcs into
+    18,732,970, against the 19 seconds Kaldi spends determinising *in the
+    log semiring* and minimising as well. Skipping it costs 1.5s and
+    leaves 6,111,314 arcs, and the whole of `compose_lg` then runs in
+    2.9s.
+
+    Reinstating it would not break anything visibly -- the graph would
+    still be correct and the tests would still pass. It would just cost
+    an hour per language directory, which in CI reads as a hang. So the
+    absence is asserted rather than left to a comment.
+    """
+
+    def test_determinize_is_never_called(self, tables, monkeypatch):
+        """
+        Fails loudly if `k2.determinize` comes back.
+
+        Patching k2 rather than inspecting the source, so a call added
+        through any path is caught.
+        """
+        words, phones = tables
+
+        def refuse(*args, **kwargs):
+            raise AssertionError(
+                "compose_lg called k2.determinize: 3358s and 3.4x the arcs "
+                "on mini-librispeech, against Kaldi's 19s for more work. "
+                "See docs/kaldi-graph-chain.md before reinstating it."
+            )
+
+        monkeypatch.setattr(k2, "determinize", refuse)
+        lexicon = load_openfst_text(
+            build_disambig_fst_text(
+                read_lexicon(YESNO / "lexicon.txt"), words, phones, sil_prob=0.0
+            )
+        )
+        grammar = load_openfst_text(
+            build_fst_text(read_arpa(YESNO / "task.arpabo"), words)
+        )
+        first = min(value for key, value in phones.items() if key.startswith("#"))
+        compose_lg(lexicon, grammar, first)
+
+    def test_the_graph_is_epsilon_free(self, built):
+        """
+        The invariant that makes skipping it safe.
+
+        An undeterminised graph is fine for `intersect_dense_pruned`, but
+        an input epsilon is not: the acoustic model has no label for it,
+        so one surviving here would be a symbol the decoder can never
+        consume. `remove_epsilon` is what guarantees this, and it is the
+        step that replaces determinization rather than accompanying it.
+        """
+        graph, _first = built
+        assert int((graph.labels == 0).sum()) == 0

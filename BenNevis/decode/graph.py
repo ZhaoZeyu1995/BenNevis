@@ -113,12 +113,40 @@ def compose_lg(
     """
     Compose the lexicon with the grammar and clean up after it.
 
-    Follows the order Kaldi's recipe uses and k2's own HLG construction:
-    compose, connect, determinise, then **remove the disambiguation
-    symbols and the epsilons they leave behind**. The symbols exist only to
-    make the composition determinisable; once it is determinised they are
-    noise, and leaving them in would have the decoder consume a `#1` that
-    no acoustic model ever emits.
+    Composes, connects, then **removes the disambiguation symbols and the
+    epsilons they leave behind**. The symbols exist only to make the
+    composition determinisable, and leaving them in would have the decoder
+    consume a `#1` that no acoustic model ever emits.
+
+    **Deliberately not determinised, which is a departure from both
+    Kaldi's recipe and k2's own HLG construction.** Measured on
+    mini-librispeech's 206,510-word lexicon and its pruned 3-gram:
+
+    ======================================  ==========  ============
+    step                                          time          arcs
+    ======================================  ==========  ============
+    k2 compose + connect                          1.9s     5,447,106
+    k2 determinize                             3358.0s    18,732,970
+    strip disambig + remove_epsilon               1.5s     6,111,314
+    Kaldi: compose, determinizestar, minimise    19.0s    ~5,800,000
+    ======================================  ==========  ============
+
+    So `k2.determinize` costs **56 minutes** against the 19 seconds Kaldi
+    spends doing more -- it determinises in the log semiring *and*
+    minimises -- and it makes the graph 3.4 times larger rather than
+    smaller, because the minimisation that would compact it afterwards has
+    no equivalent here. Skipping it costs 1.5 seconds and yields a graph
+    three times smaller than the determinised one, 12% above the raw
+    composition. `intersect_dense_pruned` does not require a deterministic
+    graph, so nothing downstream needs it.
+
+    What this gives up is real and is not a tolerance: Kaldi's
+    `--use-log=true` merges paths that share an input string by **adding
+    their probabilities**, so its arc weights can be lower than any single
+    path's. Without determinization the cheapest path stands alone. For
+    one-best Viterbi output the winning path is the same, which is what
+    the decoder asks for; a lattice or any sum over paths would differ.
+    `docs/kaldi-graph-chain.md` has the rest of the chain.
 
     Arguments
     ---------
@@ -141,11 +169,13 @@ def compose_lg(
     composed = k2.compose(lexicon, grammar)
     composed = k2.connect(composed)
 
-    logging.info("determinising LG")
-    composed = k2.determinize(composed)
-    composed = k2.connect(composed)
-
-    # The disambiguation symbols have done their job.
+    # No `k2.determinize` here. See the docstring: 56 minutes against
+    # Kaldi's 19 for more work, and a graph 3.4 times larger.
+    #
+    # The disambiguation symbols therefore never serve their purpose and
+    # are pure noise, which is the same reason they go but a different
+    # reason from Kaldi's -- Kaldi carries them through the T composition
+    # so that *it* can determinise again, and drops them after.
     logging.info("removing disambiguation symbols")
     labels = composed.labels.clone()
     labels[labels >= first_disambig] = 0
