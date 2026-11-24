@@ -272,6 +272,58 @@ class TestEndToEnd:
         )
 
     @pytest.mark.k2
+    def test_a_phone_numbered_above_the_disambig_symbols_is_refused(self, tmp_path):
+        """
+        The threshold `compose_lg` strips by, against the list Kaldi uses.
+
+        `fstrmsymbols` takes the explicit `disambig.int`; `compose_lg`
+        zeroes every label at or above `first_disambig`. Those agree only
+        while the `#` symbols are a contiguous suffix of `phones.txt`,
+        which holds for both corpora here -- yesno 8..9 of 10,
+        mini-librispeech 347..363 of 364 -- and is an assumption nothing
+        checked. A phone sorted above them would be mapped to epsilon,
+        leaving a graph that composes, a decoder that runs and
+        transcriptions that are quietly wrong.
+        """
+        from BenNevis.decode.pipeline import build_graph
+
+        (tmp_path / "words.txt").write_text("<eps> 0\nYES 1\n")
+        # `Z` sits above `#0`, which is exactly the arrangement the
+        # threshold cannot survive.
+        (tmp_path / "phones.txt").write_text("<eps> 0\nY 1\n#0 2\nZ 3\n")
+        with pytest.raises(ValueError, match="at or above the first"):
+            build_graph(
+                tmp_path,
+                YESNO / "lexicon.txt",
+                YESNO / "task.arpabo",
+                "ctc",
+            )
+
+    @pytest.mark.k2
+    def test_a_contiguous_suffix_of_disambig_symbols_is_accepted(self, tmp_path):
+        """
+        The guard must not fire on the real arrangement.
+
+        Paired with the test above so the check is pinned in both
+        directions: a guard that rejected every language directory would
+        pass that test and break every recipe.
+        """
+        from BenNevis.decode.pipeline import build_graph
+
+        (tmp_path / "words.txt").write_text("<eps> 0\nYES 1\n")
+        (tmp_path / "phones.txt").write_text("<eps> 0\nY 1\nZ 2\n#0 3\n")
+        # It gets past the symbol check and fails later, on the lexicon --
+        # which is the point: the guard is not what stops it.
+        with pytest.raises(Exception) as caught:
+            build_graph(
+                tmp_path,
+                YESNO / "lexicon.txt",
+                YESNO / "task.arpabo",
+                "ctc",
+            )
+        assert "at or above the first" not in str(caught.value)
+
+    @pytest.mark.k2
     def test_a_lang_dir_without_disambiguation_symbols_is_refused(self, tmp_path):
         """
         Without them the composition cannot be made determinisable, and the
