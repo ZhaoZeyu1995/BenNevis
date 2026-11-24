@@ -419,8 +419,26 @@ tolerances chosen per layer:
   recorded.
   **mini-librispeech's gate cannot run in tier 2**, because its ARPA is
   downloaded rather than committed, so our side cannot be rebuilt offline.
-  That comparison belongs in the nightly, where the corpus and the LM both
-  exist; the capture records the fingerprint either way.
+  It runs in the nightly instead, as `tests/reference/compare_graphs.py`
+  from a step beside the capture: `LG` on lexicon-drawn phone sequences
+  and `TLG` on word sequences, both against Kaldi's own graphs dumped
+  with `fstprint`. The step is `always()`, because the graphs are built
+  in stage 4 and a run that died in training still has graphs worth
+  comparing -- which is the cheapest way to get this measurement.
+  Two things about it to keep in mind. It is **`continue-on-error` for
+  now**, because the cost of `remove_epsilon` on a 43M-arc `TLG` is
+  unmeasured; a check that cannot fail the build is a report rather than
+  a gate, so turn it blocking once a run has shown what it takes, and
+  `--skip-tlg` is the escape if that half proves unaffordable. And it
+  **rebuilds the lexicon**, so `--sil-prob 0.5` and
+  `--position-dependent-phones` must match the recipe's `prepare_lang.sh`
+  call exactly -- the same trap as stage 10, where a mismatch compares
+  the Python graph against a Kaldi graph built from a different lexicon
+  and both numbers look plausible.
+  `tests/recipes/test_nightly_graph_gate.py` reads those flags out of the
+  workflow and out of `run.sh` and checks them against each other, so
+  neither can drift; its first version compared the graph directory as a
+  literal and failed, because the recipe interpolates `${topo}`.
   This is a different standard from CMVN's deliberately. There, the object is
   an array and any difference is a real difference, so byte-exactness was
   both achievable and the right test. Byte-exactness is still expected where

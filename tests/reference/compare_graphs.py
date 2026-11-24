@@ -1,0 +1,329 @@
+"""
+Compare the Python decoding graphs against Kaldi's, inside the recipe.
+
+This is the equivalence gate for mini-librispeech, and it has to run here
+rather than in a test tier because of what it needs. `tests/decode/`
+compares against yesno's committed `LG.fst.txt` and `TLG.fst.txt`, which
+works only because they are 20KB and 313 bytes; mini-librispeech's are
+138,155,979 and 340,397,504 bytes, kept in the capture as digests alone.
+And our side cannot be rebuilt offline either, because the 3-gram model
+is downloaded rather than committed. Both sides exist only inside a
+recipe run, so the comparison belongs there.
+
+**yesno cannot answer this question.** Measured: on yesno our `TLG` is 11
+states and 33 arcs against Kaldi's 10 and 29, and the weights agree -- a
+four-word lexicon leaves Kaldi's second pipeline nothing to compact. On
+mini-librispeech ours is 43,263,880 arcs. A replacement validated on
+yesno alone would look finished.
+
+What is compared, and why each side is probed differently:
+
+* **LG on its input side.** Its input alphabet is phones, so it is asked
+  for the weight of a phone sequence, drawn from the words the lexicon
+  pronounces -- sampling from `words.txt` would draw sequences the
+  lexicon cannot say, and a comparison of rejections compares nothing.
+* **TLG on its output side.** Its input alphabet is tokens, and under a
+  CTC topology a word sequence has many token realisations, so the
+  question a decoder asks is the minimum over all of them. Probing one
+  hand-picked token sequence would compare an alignment no decoder need
+  take. It also avoids the token tables, whose ids differ by one between
+  Kaldi's `tokens.txt` and our `k2/tokens.txt`.
+
+Weights are compared within `n * kDelta / 2` -- Kaldi's own quantisation,
+since `fstminimizeencoded` rounds every arc to a multiple of 1/1024.
+Kaldi is the less precise side; this bounds the comparison rather than
+reproducing the rounding.
+
+The sizes are reported whatever the weights do, because they are the open
+question: being three times Kaldi's arc count is not a correctness
+failure but it is a cost, and the number belongs in the job log.
+
+Authors:
+    * Zeyu Zhao (The University of Edinburgh) 2026
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+def fstprint(printer: str, path: Path) -> str:
+    """Dump a compiled FST as OpenFST text."""
+    result = subprocess.run(
+        [printer, str(path)], capture_output=True, text=True, check=True
+    )
+    return result.stdout
+
+
+def read_table(path: Path) -> Dict[str, int]:
+    """A symbol table as a name-to-id mapping."""
+    table: Dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) == 2:
+            table[fields[0]] = int(fields[1])
+    return table
+
+
+def say(label: str, started: float) -> None:
+    print(f"  {label:44s} {time.time() - started:8.1f}s", flush=True)
+
+
+def size(label: str, fsa) -> None:
+    print(
+        f"  {label:44s} {fsa.shape[0]:>12,} states {fsa.num_arcs:>14,} arcs",
+        flush=True,
+    )
+
+
+def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
+    """
+    Compare LG on phone sequences the lexicon permits.
+
+    Returns the number compared and the failures, so the caller can tell
+    "agreed on nothing" from "agreed on everything" -- a gate that
+    compared nothing must not pass.
+    """
+    import k2
+
+    failures: List[str] = []
+    compared = 0
+    ours = k2.arc_sort(ours)
+    theirs = k2.arc_sort(theirs)
+    for words, phone_sequence in drawn:
+        if any(phone not in phones for phone in phone_sequence):
+            continue
+        ids = [phones[phone] for phone in phone_sequence]
+        linear = k2.arc_sort(k2.linear_fsa(ids))
+        weights: List[Optional[float]] = []
+        for graph in (theirs, ours):
+            lattice = k2.connect(
+                k2.intersect(graph, linear, treat_epsilons_specially=False)
+            )
+            if lattice.num_arcs == 0:
+                weights.append(None)
+                continue
+            best = k2.shortest_path(
+                k2.create_fsa_vec([lattice]), use_double_scores=True
+            )
+            weights.append(-float(best.scores.sum()))
+        kaldi, mine = weights
+        key = " ".join(words)
+        if kaldi is None and mine is None:
+            # Both reject it: a fact about the lexicon and grammar, not a
+            # disagreement, and nothing to compare.
+            continue
+        if kaldi is None or mine is None:
+            failures.append(
+                f"LG {key}: Kaldi "
+                f"{'rejects' if kaldi is None else f'{kaldi:.6f}'}, ours "
+                f"{'rejects' if mine is None else f'{mine:.6f}'}"
+            )
+            continue
+        bound = (len(words) + 1) * delta
+        compared += 1
+        if abs(kaldi - mine) > bound:
+            failures.append(
+                f"LG {key}: Kaldi {kaldi:.6f}, ours {mine:.6f}, gap "
+                f"{abs(kaldi - mine):.6f} exceeds {bound:.6f}"
+            )
+    return compared, failures
+
+
+def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]]:
+    """Compare TLG on word sequences, searched on the output side."""
+    from BenNevis.decode.graph import prepare_output_probe, weight_of_word_sequence
+
+    print("  preparing the output probes (invert, remove epsilons)", flush=True)
+    started = time.time()
+    their_probe = prepare_output_probe(theirs)
+    say("Kaldi TLG inverted and epsilon-free", started)
+    size("Kaldi TLG probe", their_probe)
+    started = time.time()
+    our_probe = prepare_output_probe(ours)
+    say("our TLG inverted and epsilon-free", started)
+    size("our TLG probe", our_probe)
+
+    failures: List[str] = []
+    compared = 0
+    for sentence, _phones in drawn:
+        if any(word not in words_table for word in sentence):
+            continue
+        ids = [words_table[word] for word in sentence]
+        kaldi = weight_of_word_sequence(their_probe, ids)
+        mine = weight_of_word_sequence(our_probe, ids)
+        key = " ".join(sentence)
+        if kaldi is None and mine is None:
+            continue
+        if kaldi is None or mine is None:
+            failures.append(
+                f"TLG {key}: Kaldi "
+                f"{'rejects' if kaldi is None else f'{kaldi:.6f}'}, ours "
+                f"{'rejects' if mine is None else f'{mine:.6f}'}"
+            )
+            continue
+        bound = (len(sentence) + 1) * delta
+        compared += 1
+        if abs(kaldi - mine) > bound:
+            failures.append(
+                f"TLG {key}: Kaldi {kaldi:.6f}, ours {mine:.6f}, gap "
+                f"{abs(kaldi - mine):.6f} exceeds {bound:.6f}"
+            )
+    return compared, failures
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--recipe", type=Path, required=True)
+    parser.add_argument(
+        "--graph-dir",
+        required=True,
+        help="the per-topology graph directory, relative to the recipe; "
+        "this is what stage 10 passes as the language directory, because "
+        "prepare_topo.sh writes tokens.txt and k2/ there",
+    )
+    parser.add_argument("--lexicon", required=True)
+    parser.add_argument("--arpa", required=True)
+    parser.add_argument("--topo", default="ctc")
+    parser.add_argument("--sil-prob", type=float, default=0.0)
+    parser.add_argument(
+        "--position-dependent-phones",
+        action="store_true",
+        help="must match the recipe's prepare_lang.sh call; getting it "
+        "wrong builds a lexicon that is wrong rather than broken",
+    )
+    parser.add_argument("--fstprint", default="fstprint")
+    parser.add_argument("--sequences", type=int, default=24)
+    parser.add_argument(
+        "--skip-tlg",
+        action="store_true",
+        help="compare LG only. remove_epsilon on a 43M-arc TLG has an "
+        "unmeasured cost, so this is the escape if it proves unaffordable",
+    )
+    args = parser.parse_args()
+
+    import k2  # noqa: F401  -- imported early so a missing wheel fails fast
+
+    from BenNevis.decode.graph import QUANTISATION_DELTA, compose_lg, load_openfst_text
+    from BenNevis.decode.pipeline import build_graph
+    from BenNevis.lm import build_fst_text, read_arpa
+    from BenNevis.lm.lexicon import build_disambig_fst_text, read_lexicon
+    from BenNevis.utils.fingerprint import (
+        position_dependent_table,
+        sample_lexicon_sequences,
+    )
+
+    graph_dir = args.recipe / args.graph_dir
+    lexicon_path = args.recipe / args.lexicon
+    arpa_path = args.recipe / args.arpa
+    words = read_table(graph_dir / "words.txt")
+    phones = read_table(graph_dir / "phones.txt")
+    first_disambig = min(value for key, value in phones.items() if key.startswith("#"))
+
+    print(f"comparing {args.topo} graphs in {graph_dir}", flush=True)
+    print(
+        f"  position-dependent phones: {args.position_dependent_phones} "
+        f"(phone table says {position_dependent_table(phones.keys())})",
+        flush=True,
+    )
+
+    # Ours, through the shipped code path, so the gate tests what ships.
+    started = time.time()
+    lexicon_fsa = load_openfst_text(
+        build_disambig_fst_text(
+            read_lexicon(lexicon_path),
+            words,
+            phones,
+            sil_prob=args.sil_prob,
+            position_dependent_phones=args.position_dependent_phones,
+        )
+    )
+    say("built our L_disambig", started)
+    started = time.time()
+    grammar = load_openfst_text(build_fst_text(read_arpa(arpa_path), words))
+    say("built our G", started)
+    started = time.time()
+    our_lg = compose_lg(lexicon_fsa, grammar, first_disambig)
+    say("built our LG", started)
+    size("our LG", our_lg)
+
+    started = time.time()
+    their_lg = load_openfst_text(
+        fstprint(args.fstprint, graph_dir / "LG.fst"), acceptor=False
+    )
+    say("loaded Kaldi's LG", started)
+    size("Kaldi LG", their_lg)
+
+    drawn = sample_lexicon_sequences(
+        read_lexicon(lexicon_path),
+        count=args.sequences,
+        position_dependent_phones=args.position_dependent_phones,
+    )
+    print(f"  drew {len(drawn)} lexicon sequences", flush=True)
+
+    started = time.time()
+    compared_lg, failures = compare_lg(
+        our_lg, their_lg, phones, drawn, QUANTISATION_DELTA
+    )
+    say(f"compared LG on {compared_lg} sequences", started)
+
+    compared_tlg = 0
+    if not args.skip_tlg:
+        started = time.time()
+        our_tlg = build_graph(
+            graph_dir,
+            lexicon_path,
+            arpa_path,
+            args.topo,
+            sil_prob=args.sil_prob,
+            position_dependent_phones=args.position_dependent_phones,
+        )
+        say("built our TLG", started)
+        size("our TLG", our_tlg)
+        started = time.time()
+        their_tlg = load_openfst_text(
+            fstprint(args.fstprint, graph_dir / "TLG.fst"), acceptor=False
+        )
+        say("loaded Kaldi's TLG", started)
+        size("Kaldi TLG", their_tlg)
+        started = time.time()
+        compared_tlg, tlg_failures = compare_tlg(
+            our_tlg, their_tlg, words, drawn, QUANTISATION_DELTA
+        )
+        say(f"compared TLG on {compared_tlg} sequences", started)
+        failures.extend(tlg_failures)
+
+    print(flush=True)
+    for failure in failures:
+        print(f"MISMATCH: {failure}", flush=True)
+
+    # A gate that compared nothing must not pass. Agreement on an empty
+    # set is how the G.fst gate came to skip unconditionally.
+    if compared_lg == 0:
+        print("FAILED: no LG sequence could be compared", flush=True)
+        return 1
+    if not args.skip_tlg and compared_tlg == 0:
+        print("FAILED: no TLG sequence could be compared", flush=True)
+        return 1
+    if failures:
+        print(f"FAILED: {len(failures)} mismatch(es)", flush=True)
+        return 1
+    print(
+        f"OK: LG agreed on {compared_lg} sequences, TLG on {compared_tlg}, "
+        f"within {QUANTISATION_DELTA} per arc",
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
