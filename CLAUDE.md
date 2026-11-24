@@ -559,13 +559,24 @@ Hopcroft, which its own comment says "also works for non-deterministic
 FSTs"; `Minimize` allows it in any **idempotent** semiring, and tropical
 is one. So dropping determinization did *not* put minimisation out of
 reach -- the two are separable, and `fstminimizeencoded` is applicable to
-the undeterminised LG we ship. It is still not implemented, on
-arithmetic: k2 has no `minimize`, so it means Hopcroft in Numba over 6.1M
-arcs, and the gain looks like **5%** (our 6,111,314 arcs against Kaldi's
-~5.8M). Note that ~5.8M is a byte count divided by a guess, so the
-capture now records `shapes` -- states, arcs and final states -- for every
-FST, including the digest-only ones, and the next nightly turns the
-estimate into a count. `fstminimizeencoded` also deliberately avoids the
+the undeterminised LG we ship. It is still not implemented, but **the
+arithmetic has changed now that the counts are measured, and the figure
+this entry used to give was wrong.** Run 45501684352 recorded Kaldi's
+graphs: `LG` 1,383,213 states and **4,367,485 arcs**, `TLG` 3,469,109 and
+**12,711,953**. Against our 6,111,314 and 43,263,880 that is **1.40x on
+LG and 3.40x on TLG** -- not the "about 5%" claimed here before, which
+came from dividing `LG.fst.txt`'s 138,155,979 bytes by a guessed line
+length and was **33% too high**. `shapes` was added for exactly this
+reason and caught exactly this.
+So minimisation buys about **29% on LG** and more on TLG. It remains a
+*cost* question rather than a correctness one, since
+`intersect_dense_pruned` needs the graph neither deterministic nor
+minimal -- but it is a real cost on the graph the decoder loads, and the
+1.40x against 3.40x split puts most of it in the **topology
+composition** rather than in the lexicon and grammar, which points at the
+second pipeline's epsilon-pair merging and minimisation rather than at
+determinization. `L_disambig` agrees with Kaldi to the arc, which checks
+the counting itself. `fstminimizeencoded` also deliberately avoids the
 weight pushing that OpenFST's public `Minimize` does; a replacement must
 inherit that. Its quantisation rule is
 `floor(w / delta + 0.5) * delta` in float32, which is what puts weights
