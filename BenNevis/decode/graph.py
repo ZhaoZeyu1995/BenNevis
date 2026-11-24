@@ -50,7 +50,7 @@ Authors:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 import k2
 import torch
@@ -60,6 +60,8 @@ __all__ = [
     "load_openfst_text",
     "compose_lg",
     "build_decoding_graph",
+    "prepare_output_probe",
+    "weight_of_word_sequence",
 ]
 
 #: OpenFST's `kDelta`, the grid `fstminimizeencoded` rounds weights to. A
@@ -184,6 +186,93 @@ def compose_lg(
     composed = k2.remove_epsilon(composed)
     composed = k2.connect(composed)
     return k2.arc_sort(composed)
+
+
+def prepare_output_probe(graph: k2.Fsa) -> k2.Fsa:
+    """
+    Put a decoding graph in a form its output labels can be searched by.
+
+    A decoding graph is compared as a *function*, and the function a
+    decoder cares about is: what does it cost to recognise this word
+    sequence? That is a minimum over every token realisation of those
+    words -- under a CTC topology a phone sequence has many, with blanks
+    anywhere and labels repeated -- so the search runs on the **output**
+    side. Probing one hand-picked token sequence instead would compare an
+    alignment that no decoder need ever take, and two graphs could agree
+    on it while differing on the paths that matter.
+
+    Two steps, and each is a trap worth knowing.
+
+    `k2.invert`, never `Fsa.invert`: `compose_lg` ends in
+    `k2.remove_epsilon`, which leaves `aux_labels` a `RaggedTensor`, and
+    the method refuses one -- "current invert_ method only supports case
+    where aux_labels is a tensor". The module-level function handles it.
+
+    Then the epsilons have to go. Most of a token graph's arcs emit no
+    word at all -- 20 of 29 in yesno's `TLG` -- and once those are the
+    *input* side they form cycles, a blank self-loop being the obvious
+    one. `k2.shortest_path` requires an acyclic FSA and fails on a cyclic
+    lattice with `dest_state > state_idx01`, which says nothing about
+    epsilons. Removing them first makes every arc consume a word, so
+    intersecting with a finite word sequence can only give an acyclic
+    lattice.
+
+    **The cost of that removal is not yet measured on a real corpus.**
+    `k2.remove_epsilon` removes all epsilons and can grow a graph, and
+    mini-librispeech's `TLG` has 43,263,880 arcs against yesno's 33. Call
+    this once per graph and reuse it across sequences; if it proves
+    unaffordable there, the alternative is a Dijkstra over
+    (state, position) pairs, which tolerates cycles because the weights
+    are non-negative.
+
+    Arguments
+    ---------
+    graph: k2.Fsa
+        A decoding graph, as `build_decoding_graph` returns.
+
+    Returns
+    -------
+    k2.Fsa
+        The graph inverted so words are its input labels, epsilon-free
+        and arc-sorted, ready for `weight_of_word_sequence`.
+    """
+    inverted = k2.invert(graph)
+    inverted = k2.remove_epsilon(inverted)
+    return k2.arc_sort(k2.connect(inverted))
+
+
+def weight_of_word_sequence(
+    prepared: k2.Fsa,
+    word_ids: List[int],
+) -> Optional[float]:
+    """
+    The least weight the graph gives any path outputting these words.
+
+    Arguments
+    ---------
+    prepared: k2.Fsa
+        A graph from `prepare_output_probe`, not a raw decoding graph.
+    word_ids: List[int]
+        The word sequence, as ids in the graph's output symbol table.
+        `words.txt` is the same table on both sides of a Kaldi comparison,
+        which is why this probe is unaffected by the token tables' ids
+        differing by one.
+
+    Returns
+    -------
+    Optional[float]
+        The weight, or None if the graph does not accept the sequence --
+        which is a fact about the lexicon and grammar rather than about
+        the weights, so callers record it as absent rather than as
+        infinity.
+    """
+    linear = k2.arc_sort(k2.linear_fsa(list(word_ids)))
+    lattice = k2.connect(k2.intersect(prepared, linear))
+    if lattice.num_arcs == 0:
+        return None
+    best = k2.shortest_path(k2.create_fsa_vec([lattice]), use_double_scores=True)
+    # k2's scores are negated costs, so the weight is their negative sum.
+    return -float(best.scores.sum())
 
 
 def build_decoding_graph(

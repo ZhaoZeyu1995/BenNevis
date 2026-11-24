@@ -29,6 +29,8 @@ __all__ = [
     "format_trn",
     "write_trn",
     "aux_labels_per_arc",
+    "prepare_output_probe",
+    "weight_of_word_sequence",
 ]
 
 #: Which submodule each exported name lives in, so `__getattr__` can find
@@ -37,6 +39,8 @@ _SOURCES = {
     "build_decoding_graph": "graph",
     "compose_lg": "graph",
     "load_openfst_text": "graph",
+    "prepare_output_probe": "graph",
+    "weight_of_word_sequence": "graph",
     "aux_labels_per_arc": "decoder",
     "decode": "decoder",
     "decode_archive": "decoder",

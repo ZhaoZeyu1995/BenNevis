@@ -488,6 +488,30 @@ deliberately rounding to Kaldi's grid. `QUANTISATION_DELTA` in
 the rounding. This is the clearest example in the project of an equivalence
 gate that would turn an accident into a requirement.
 
+**`TLG` is now gated as a function, and the probe runs on the output
+side.** The question a decoder asks is what it costs to recognise a word
+sequence, which under a CTC topology is a **minimum over every token
+realisation** of those words -- blanks anywhere, labels repeated. So
+`prepare_output_probe` inverts the graph and `weight_of_word_sequence`
+intersects with the words. Probing one hand-picked token sequence instead
+would compare an alignment no decoder need take, and two graphs could
+agree on it while differing on the paths that matter. It also sidesteps
+the token tables entirely, since `words.txt` is the same on both sides.
+Two traps in that, both hit: **`k2.invert`, never `Fsa.invert`**, because
+`compose_lg` ends in `remove_epsilon` and the method refuses a ragged
+`aux_labels`; and the epsilons must be **removed before intersecting**,
+because most of a token graph's arcs emit no word (20 of 29 in yesno's
+`TLG`) and as input labels those form cycles, including blank self-loops
+-- `k2.shortest_path` requires an acyclic FSA and fails with
+`dest_state > state_idx01`, which says nothing about epsilons.
+Measured on yesno, where Kaldi's `TLG` is committed: **ours is 11 states
+and 33 arcs against Kaldi's 10 and 29**, and the weights agree on every
+word sequence, worst gap 0.000746 against a delta of 0.0009766.
+Mutation-verified at 0.249701. The cost of `remove_epsilon` on
+mini-librispeech's 43,263,880-arc `TLG` is **not yet measured** and may be
+the thing that forces a Dijkstra over (state, position) pairs instead,
+which tolerates cycles because the weights are non-negative.
+
 **`TLG.fst`'s only consumer is Kaldi's `decode-faster`.** Training never
 reads it — that path goes through `k2/topo.yaml` and is already Python. So
 porting the graph alone buys nothing: a Python-built text FST still needs
