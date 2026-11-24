@@ -55,7 +55,13 @@ from typing import Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from BenNevis.utils.fingerprint import fingerprint, sample_word_sequences  # noqa: E402
+from BenNevis.utils.fingerprint import (  # noqa: E402
+    fingerprint,
+    fingerprint_phone_sequences,
+    position_dependent_table,
+    sample_lexicon_sequences,
+    sample_word_sequences,
+)
 from BenNevis.utils.reference import (  # noqa: E402
     FEATURE_TOLERANCE,
     MANIFEST_NAME,
@@ -131,6 +137,12 @@ DICT_TEXT = (
 #: Binary FSTs, converted to text with fstprint so that a diff is readable
 #: and a replacement can be compared without OpenFST.
 LANG_FSTS = ("L.fst", "L_disambig.fst")
+
+#: How many lexicon-drawn sequences a phone-input graph's fingerprint
+#: holds. Fewer than the 64 word sequences `G` gets: the search runs over
+#: a graph around three times `G`'s size, and this is a gate rather than a
+#: survey of the language.
+LEXICON_FINGERPRINT_COUNT = 24
 GRAPH_FSTS = ("G.fst", "TLG.fst", "LG.fst")
 
 
@@ -510,6 +522,68 @@ def record_fingerprint(
         manifest.functional[relative] = recorded
 
 
+def record_lexicon_fingerprint(
+    manifest: Manifest,
+    relative: str,
+    text: bytes,
+    phones: Dict[str, int],
+    lexicon: Path,
+    count: int = LEXICON_FINGERPRINT_COUNT,
+) -> None:
+    """
+    Record what a phone-input FST gives sequences its lexicon permits.
+
+    `record_fingerprint` samples from `words.txt`, which works for `G`
+    because a back-off LM accepts any sequence of in-vocabulary words. A
+    phone-input graph does not: it accepts only what the lexicon
+    pronounces, so a randomly sampled word sequence is rejected almost
+    surely and a fingerprint of rejections compares nothing.
+
+    This is the gate mini-librispeech has been missing. Its `LG.fst.txt`
+    is 138,155,979 bytes, so the capture keeps the digest and not the
+    bytes -- and the digest can never match a Python build whose state
+    numbering differs. The yesno equivalence test reads Kaldi's committed
+    `LG.fst.txt` directly, which works only at 20KB.
+
+    Position dependence is read off the phone table rather than
+    configured, because the two recipes differ and a capture should not
+    have to be told which one it is of.
+
+    Arguments
+    ---------
+    manifest: Manifest
+        The manifest to record into.
+    relative: str
+        The FST's path within the capture directory.
+    text: bytes
+        Its fstprint dump.
+    phones: Dict[str, int]
+        The phone symbol table its input labels index.
+    lexicon: Path
+        `prepare_lang.sh`'s input dictionary, as captured under `dict/`.
+    count: int
+        How many sequences to draw. Lower than the word-sequence default,
+        because the shortest-distance search runs over a graph some three
+        times `G`'s size and the fingerprint is a gate rather than a
+        sample of the whole language.
+    """
+    from BenNevis.lm.lexicon import read_lexicon
+
+    if not phones or not lexicon.is_file():
+        return
+    arcs, finals, start = parse_fst_text(text)
+    if start is None:
+        return
+    drawn = sample_lexicon_sequences(
+        read_lexicon(lexicon),
+        count=count,
+        position_dependent_phones=position_dependent_table(phones.keys()),
+    )
+    recorded = fingerprint_phone_sequences(arcs, finals, phones, start, drawn)
+    if recorded:
+        manifest.functional[relative] = recorded
+
+
 def capture_language(
     manifest: Manifest,
     recipe: Path,
@@ -598,6 +672,19 @@ def capture_language(
             if len(parts) == 2:
                 words[parts[0]] = int(parts[1])
 
+    # The phone table LG's *input* labels index, and the dictionary the
+    # lexicon-drawn sequences come from. Both read from the directories
+    # Kaldi wrote, for the same reason as `words` above: these indices are
+    # what the FSTs were written against.
+    phones: Dict[str, int] = {}
+    phones_path = base / "phones.txt"
+    if phones_path.is_file():
+        for line in phones_path.read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                phones[parts[0]] = int(parts[1])
+    dictionary = dict_base / "lexicon.txt"
+
     for topology in topologies:
         graph = recipe / f"{graph_prefix}{topology}"
         for name in GRAPH_FSTS:
@@ -610,13 +697,18 @@ def capture_language(
                 store(manifest, destination, relative, text)
                 record_shape(manifest, relative, text)
                 if name == "G.fst":
-                    # G accepts any sequence of in-vocabulary words, because
-                    # its back-off arcs reach the unigram state. L and TLG
-                    # accept only what their lexicon permits, so a random
-                    # word sequence says nothing about them -- they need
-                    # sequences drawn from the lexicon, which is not done
-                    # yet.
+                    # G accepts any sequence of in-vocabulary words,
+                    # because its back-off arcs reach the unigram state.
                     record_fingerprint(manifest, relative, text, words)
+                elif name == "LG.fst":
+                    # LG's input side is phones, so it accepts only what
+                    # the lexicon pronounces -- hence sequences drawn from
+                    # the lexicon rather than from words.txt. This is the
+                    # only functional gate the graph has on a corpus whose
+                    # bytes are too large to commit.
+                    record_lexicon_fingerprint(
+                        manifest, relative, text, phones, dictionary
+                    )
 
 
 def capture_features(
