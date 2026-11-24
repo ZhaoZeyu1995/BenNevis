@@ -240,19 +240,27 @@ an input string by **adding their probabilities**, so Kaldi's arc weights can
 be lower than any single path's; without determinization the cheapest path
 stands alone. One-best Viterbi picks the same path either way, which is all
 the decoder asks, but a lattice or any sum over paths would differ. Kaldi's
-own LG is about the size of the undeterminised composition.
-`LG.fst.txt` is 138,155,979 bytes; at the average length of an arc line that
-is **on the order of 5.8M arcs**, against the 6,111,314 we ship. **That
-figure is an estimate and must not be quoted as a measurement** -- it is a
-byte count divided by a guess, which is why the capture now records `shapes`
-for every FST, so the next nightly replaces it with a count.
+own LG is **substantially smaller** than our undeterminised composition,
+and the counts are now measured rather than estimated. Run 45501684352
+recorded them:
 
-If it holds, it is the useful number here: Kaldi determinizes in the log
-semiring *and* minimises to arrive within a few percent of a composition we
-produce by doing neither. k2's determinization without minimisation gives
-18,732,970 -- so it is the minimisation that compacts, and the two stages
-are a pair in *effect* even though, per the section above, they are
-separable in *principle*.
+| | Kaldi states | Kaldi arcs | ours states | ours arcs | ratio |
+| --- | --- | --- | --- | --- | --- |
+| `L_disambig` | 1,176,707 | 1,589,728 | 1,176,708 | 1,589,729 | **exact** |
+| `LG` | 1,383,213 | 4,367,485 | 2,160,124 | 6,111,314 | **1.40x** |
+| `TLG` | 3,469,109 | 12,711,953 | 4,646,729 | 43,263,880 | **3.40x** |
+
+`L_disambig` agrees to the arc, which is a check on the counting itself:
+1,589,728 arcs plus one final line is the 1,589,729 lines recorded for the
+Python build.
+
+**The estimate this replaces was 33% too high, and it changed a verdict.**
+`LG.fst.txt` is 138,155,979 bytes, which divided by a guessed line length
+gave "about 5.8M arcs" and the conclusion that Kaldi arrives "within a few
+percent" of our composition. It is 4,367,485. We are **40% larger on LG**,
+not a few percent, and minimisation there buys about **29%** rather than
+the 5% claimed below. This is exactly why `shapes` was added; quote the
+table, not a byte count divided by anything.
 
 L_disambig has **2** input epsilons in 1,589,729 arcs, from the optional
 silence start arcs, and G's input side carries words plus `#0` with no
@@ -270,22 +278,28 @@ O(e log v), about 6.1M arcs by 21, so some 10^8 partition operations, plus
 the (label, weight) encoding and the float32 quantisation above to stay
 faithful, with a correctness obligation on every graph the project builds.
 
-What it would buy, on the estimate above: our LG is 6,111,314 arcs against
-Kaldi's ~5.8M, so **about 5%**. That does not pay for a Hopcroft
-implementation, and `intersect_dense_pruned` needs the graph to be neither
-deterministic nor minimal.
+What it would buy, now that the counts are measured: our `LG` is 6,111,314
+arcs against Kaldi's 4,367,485, so **29%** -- and our `TLG` is 43,263,880
+against 12,711,953, which is **3.4 times larger**. The earlier verdict here
+was that this bought "about 5%" and so did not pay for a Hopcroft
+implementation. That rested on an estimate that was 33% high, and **the
+case is now materially stronger**, especially for `TLG`, which is the graph
+the decoder actually reads and loads into memory.
 
-Two things would change that verdict, and both are measurable rather than
-matters of opinion:
+It is still not obviously worth a Hopcroft implementation, because
+`intersect_dense_pruned` needs the graph to be neither deterministic nor
+minimal, so this is a cost question rather than a correctness one. But it
+is a real cost, and three things now bear on it:
 
-- **The count, once the nightly records it.** If Kaldi's LG is materially
-  smaller than 5.8M arcs, the 5% is wrong and the case reopens.
-- **TLG, which is the graph the decoder actually reads.** `TLG.fst.txt` is
-  340,397,504 bytes, two and a half times `LG`, and the second pipeline
-  minimises *after* composing the topology on and removing epsilons. That
-  composition is where a size difference would hurt, and nothing here has
-  measured our TLG against Kaldi's. It is the comparison to make next, and
-  it needs no new algorithm -- only the counts the capture now takes.
+- **Whether the graphs are functionally equivalent at all.** The nightly
+  gate answers that, and until it has run cleanly the size difference is
+  not even known to be *only* a size difference.
+- **Where the 3.4x comes from.** `LG` is 1.40x and `TLG` is 3.40x, so the
+  topology composition is where most of it appears -- not the lexicon and
+  grammar. That points at the second pipeline's epsilon-pair merging and
+  minimisation rather than at determinization.
+- **What it costs at decoding time**, in memory and in speed, which nothing
+  has measured.
 
 ## Reimplementing `DeterminizeStar`
 
