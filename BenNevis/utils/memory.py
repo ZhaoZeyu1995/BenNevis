@@ -69,19 +69,52 @@ def rss_bytes() -> Optional[int]:
         return resident_pages * os.sysconf("SC_PAGE_SIZE")
     except (OSError, IndexError, ValueError):
         pass
-    # macOS and other POSIX systems: ps reports kilobytes.
-    if sys.platform != "win32":
+    # Windows: the working set is the analogue of the resident set, read
+    # through psapi with ctypes so that this needs no new dependency --
+    # tier 1 installs pytest and pyyaml only, and an indicator that is
+    # blank on a developer's own machine is an indicator they will not
+    # use.
+    if sys.platform == "win32":
         try:
-            out = subprocess.run(
-                ["ps", "-o", "rss=", "-p", str(os.getpid())],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            ).stdout.strip()
-            if out:
-                return int(out.split()[0]) * 1024
-        except (OSError, ValueError, subprocess.SubprocessError):
+            import ctypes
+            from ctypes import wintypes
+
+            class _Counters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = _Counters()
+            counters.cb = ctypes.sizeof(_Counters)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb
+            ):
+                return int(counters.WorkingSetSize)
+        except Exception:
             pass
+        return None
+    # macOS and other POSIX systems: ps reports kilobytes.
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        if out:
+            return int(out.split()[0]) * 1024
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
     return None
 
 

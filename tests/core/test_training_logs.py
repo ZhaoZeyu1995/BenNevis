@@ -175,5 +175,14 @@ class TestMemoryIsLoggedEachEpoch:
         line = next(
             r.message for r in caplog.records if r.message.startswith("memory after")
         )
-        assert re.search(r"rss \d+MiB", line), line
         assert re.search(r"objects \d+", line), line
+        # Asserted against what this platform can actually report, so that
+        # the line is pinned to carry a number wherever one exists rather
+        # than being excused everywhere. `rss_bytes` covers Linux, macOS
+        # and Windows, so in practice this is the number.
+        from BenNevis.utils.memory import rss_bytes
+
+        if rss_bytes() is None:
+            assert "rss unavailable" in line, line
+        else:
+            assert re.search(r"rss \d+MiB", line), line
