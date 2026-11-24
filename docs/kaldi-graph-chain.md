@@ -130,9 +130,26 @@ the left as they can go, and the weights in combinable paths are the
 same". So this is not guaranteed-minimal output; it is a cheap merge that
 happens to work well on the graphs these recipes build.
 
-**`fstrmsymbols disambig.int`** maps the listed labels to `<eps>`. Note
-*which* list each pipeline uses: `disambig.int` for the token-level graph and
+**`fstrmsymbols disambig.int`** maps the listed labels to `<eps>`, and the
+defaults are worth confirming rather than assuming: `fstrmsymbols.cc` sets
+`remove_arcs = false` and `apply_to_output = false`, and its usage says
+"With no options, replaces a subset of symbols with epsilon, wherever they
+appear on the **input** side". So it is a relabelling, not a deletion --
+`--remove-arcs=true` would send those arcs to a dead state and `Connect`
+them away instead, which is a different graph. Note *which* list each
+pipeline uses: `disambig.int` for the token-level graph and
 `phones/disambig.int` for the phone-level one.
+
+**Our equivalent is a threshold, not a list**, and the difference is an
+assumption. `compose_lg` does `labels[labels >= first_disambig] = 0` with
+`first_disambig = min(id of every symbol starting with "#")`. That matches
+`fstrmsymbols` only while the `#` symbols occupy a **contiguous suffix** of
+`phones.txt`. Measured, they do: yesno has them at 8..9 of 10 symbols and
+mini-librispeech at 347..363 of 364. But if an ordinary phone ever sorted
+above them, the threshold would map that phone to epsilon -- and the graph
+would still compose, the decoder would still run and the transcriptions
+would be quietly wrong. `build_graph` now refuses such a directory
+instead.
 
 **`fstrmepslocal`** is **not** full epsilon removal. Its usage: "Removes some
 (but not all) epsilons in an algorithm that will always reduce the number of
