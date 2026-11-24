@@ -516,7 +516,14 @@ the weights and not the search: Kaldi log-adds paths sharing an input
 string, we keep the cheapest. One-best picks the same path; a lattice
 would not. Also worth
 knowing: `fstrmepslocal` removes *some* epsilons under a guarantee never to
-grow the graph, while `k2.remove_epsilon` removes all and can.
+grow the graph, while `k2.remove_epsilon` removes all and can -- and
+`fstrmepslocal` is **not only epsilon removal**: it also merges
+`(x:eps)(eps:y)` arc pairs into `(x:y)`, which k2 has no counterpart for
+and which is part of how the stage shrinks a graph with few input
+epsilons to remove. With no flags it is `RemoveEpsLocalSpecial`, which
+keeps equivalence in the tropical semiring and stochasticity in the log
+sense; the header says this cannot be had by casting, because combining
+identical arcs would then break equivalence in the original semiring.
 `fsttablecompose` is the one stage that is only an optimisation, so
 `k2.compose` is a faithful replacement for it — and at 1.9s on
 mini-librispeech it was never the problem.

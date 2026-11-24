@@ -162,3 +162,32 @@ def test_the_quantisation_rule_is_given_rather_than_only_its_effect():
     text = DOC.read_text()
     assert "std::floor(Value() / delta + 0.5F) * delta" in text
     assert "2358/1024" in text
+
+
+def test_the_document_names_the_variant_the_script_actually_calls():
+    """
+    `fstrmepslocal` with no flags is `RemoveEpsLocalSpecial`.
+
+    `fstrmepslocal.cc` defaults `use_log = false` and
+    `stochastic_in_log = true`, and that combination picks the special
+    variant rather than the plain `RemoveEpsLocal` the header documents
+    first. A replacement written against the wrong one preserves
+    stochasticity in the wrong semiring, which is not something any test
+    of ours would notice.
+    """
+    text = DOC.read_text()
+    assert "RemoveEpsLocalSpecial" in text
+
+
+def test_the_document_records_that_rmepslocal_merges_arc_pairs():
+    """
+    The operation `k2.remove_epsilon` has no counterpart for.
+
+    `remove-eps-local.h`: it "does not just remove epsilon arcs; it also
+    combines pairs of input-epsilon and output-epsilon arcs into one." A
+    reader who takes the stage for epsilon removal alone will substitute
+    `k2.remove_epsilon` and lose the arc-pair merge, which is part of how
+    the stage shrinks a graph.
+    """
+    text = DOC.read_text()
+    assert "(x:eps)(eps:y)" in text, "the merge is not shown"
