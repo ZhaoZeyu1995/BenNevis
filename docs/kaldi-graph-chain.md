@@ -134,12 +134,45 @@ happens to work well on the graphs these recipes build.
 *which* list each pipeline uses: `disambig.int` for the token-level graph and
 `phones/disambig.int` for the phone-level one.
 
-**`fstrmepslocal`** is **not** full epsilon removal. Its usage: "Removes some
-(but not all) epsilons in an algorithm that will always reduce the number of
-arcs+states." That guarantee is the point -- full epsilon removal can grow a
-graph without bound, and this is the conservative version chosen to avoid
-that. Called with no flags, so it preserves tropical equivalence and
-stochasticity in the log semiring.
+**`fstrmepslocal`** is **not** full epsilon removal, and it is not only
+epsilon removal either. Its usage: "Removes some (but not all) epsilons in
+an algorithm that will always reduce the number of arcs+states." That
+guarantee is the point -- full epsilon removal can grow a graph without
+bound, and this is the conservative version chosen to avoid that.
+`remove-eps-local.h` adds that the algorithm "is not optimal but is
+reasonably clever", so the output is not canonical and two correct
+implementations need not agree.
+
+The part a replacement would miss: **it also combines pairs of
+input-epsilon and output-epsilon arcs into one.** That is a transducer
+operation with no counterpart in `k2.remove_epsilon`, which removes arcs
+whose *input* is epsilon. An arc pair `(x:eps)(eps:y)` becomes `(x:y)`,
+which is how this stage can shrink a graph that has few input epsilons to
+remove.
+
+**Called with no flags it is `RemoveEpsLocalSpecial`, not
+`RemoveEpsLocal`.** `fstrmepslocal.cc` defaults `use_log = false` and
+`stochastic_in_log = true`, and that combination selects the special
+variant: equivalence in the **tropical** semiring, stochasticity preserved
+in the **log** sense where possible. The header explains why this cannot
+be had by casting -- "in that case we would no longer be able to guarantee
+equivalence in the original semiring (this arises from what happens when we
+combine identical arcs)" -- and notes that where the two cannot both hold,
+equivalence wins.
+
+The file's own worked example shows what the semiring choice costs. Given
+
+```
+0 1 0 0
+0 0
+1 0
+```
+
+a two-state FST with an epsilon arc and both states final, `fstrmepslocal`
+gives a single state `0`, while `fstrmepslocal --use-log=true` gives
+`0  -0.693147182` -- which is `-log(2)`, the two identical paths log-added.
+Equivalence in one semiring is a different answer from equivalence in the
+other, on a three-line FST.
 
 **`fstarcsort --sort_type=ilabel`** sorts arcs by input label. Note this does
 **not** make a k2 FSA `ARC_SORTED`; CLAUDE.md records that measurement.
@@ -153,7 +186,7 @@ stochasticity in the log semiring.
 | minimise LG | `fstminimizeencoded`, quantises to 1/1024 | *not done* — but **available**, see above: Hopcroft needs no determinism |
 | disambiguation symbols | kept in `tmp/LG.fst`, **through** the T composition | stripped from LG **before** composing T |
 | determinize T∘LG | again, log semiring | *not done* |
-| epsilon removal | `fstrmepslocal`, never grows the graph | `k2.remove_epsilon`, removes all, can grow it |
+| epsilon removal | `RemoveEpsLocalSpecial`, never grows the graph, **also merges `(x:eps)(eps:y)` arc pairs** | `k2.remove_epsilon`, removes all input epsilons, merges no pairs, can grow it |
 | minimise TLG | `fstminimizeencoded` | *not done* |
 
 Three of these change the weights or the size of the result, and one
