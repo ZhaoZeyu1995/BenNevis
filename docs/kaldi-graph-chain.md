@@ -88,7 +88,7 @@ stochasticity in the log semiring.
 | | Kaldi | `compose_lg` / `build_decoding_graph` |
 | --- | --- | --- |
 | compose L, G | `fsttablecompose`, tropical | `k2.compose` — equivalent |
-| determinize LG | log semiring, with epsilon removal | `k2.determinize`, tropical, no epsilon removal |
+| determinize LG | log semiring, with epsilon removal | **not done**, measured: see below |
 | minimise LG | `fstminimizeencoded`, quantises to 1/1024 | *not done* |
 | disambiguation symbols | kept in `tmp/LG.fst`, **through** the T composition | stripped from LG **before** composing T |
 | determinize T∘LG | again, log semiring | *not done* |
@@ -113,8 +113,26 @@ LG            2,628,241 states   5,447,106 arcs    1.9s to compose + connect
 For comparison, from the nightly's own log, Kaldi's whole first pipeline --
 compose, determinize-star in the log semiring, minimise, arcsort -- takes
 **19 seconds**, and the second takes 36. `k2.determinize` on that same 5.4M
-arc LG had not finished after 15 minutes in CI, with memory flat around
-200MiB and creeping, so it is grinding rather than exploding.
+arc LG takes **3358 seconds** -- 56 minutes, peaking at 2.1GiB -- and
+returns 18,732,970 arcs, 3.4 times what it was given. It grinds rather than
+explodes, so the CI job would have finished with another 40 minutes.
+
+**So `compose_lg` does not determinize, as of the measurement above.**
+Stripping the disambiguation symbols and removing the epsilons instead costs
+1.5 seconds and gives 6,111,314 arcs -- 12% above the raw composition, and
+three times smaller than the determinised graph. The whole of `compose_lg`
+then runs in 2.9s, against Kaldi's 19 for its first pipeline.
+`intersect_dense_pruned` does not require a deterministic graph.
+
+What that gives up is not a tolerance. `--use-log=true` merges paths sharing
+an input string by **adding their probabilities**, so Kaldi's arc weights can
+be lower than any single path's; without determinization the cheapest path
+stands alone. One-best Viterbi picks the same path either way, which is all
+the decoder asks, but a lattice or any sum over paths would differ. Kaldi's
+own LG is about the size of the undeterminised composition --
+`LG.fst.txt` is 138,155,979 bytes, on the order of 5.8M lines -- which says
+the `fstminimizeencoded` we skip is doing real work, and that k2's
+determinization without it inflates where Kaldi's compacts.
 
 L_disambig has **2** input epsilons in 1,589,729 arcs, from the optional
 silence start arcs, and G's input side carries words plus `#0` with no

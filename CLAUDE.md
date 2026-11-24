@@ -475,8 +475,16 @@ construction, which k2's has no equivalent for; `fstminimizeencoded`
 minimises *and* is where the 1/1024 quantisation enters, and we do not
 minimise at all; and the **disambiguation symbols are carried through the
 T composition and dropped afterwards**, because they are what makes T∘LG
-determinisable — `compose_lg` strips them from LG first, which forecloses
-Kaldi's second determinization rather than merely skipping it. Also worth
+determinisable — `compose_lg` strips them from LG first.
+**`compose_lg` now skips determinization altogether, and that is measured
+rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
+and returns 3.4 times the arcs, against 19s for Kaldi's whole first
+pipeline, which determinises in the log semiring *and* minimises. Skipping
+it costs 1.5s, and `compose_lg` runs in 2.9s.
+`intersect_dense_pruned` needs no deterministic graph, so the cost is in
+the weights and not the search: Kaldi log-adds paths sharing an input
+string, we keep the cheapest. One-best picks the same path; a lattice
+would not. Also worth
 knowing: `fstrmepslocal` removes *some* epsilons under a guarantee never to
 grow the graph, while `k2.remove_epsilon` removes all and can.
 `fsttablecompose` is the one stage that is only an optimisation, so
