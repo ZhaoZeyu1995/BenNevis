@@ -782,6 +782,16 @@ touch the Actions budget — but 58 seconds is the number to beat.
   The k2 variant's *output* side is `k2/phones.txt`, phones without the
   disambiguation symbols, which is right because `compose_lg` strips them
   from LG before the topology is composed on.
+  **The two token tables are not interchangeable, and the ids differ by
+  one.** `prepare_topo.sh` writes `tokens.txt` *with* `<eps>` for Kaldi's
+  `T.fst` and `k2/tokens.txt` with neither `<eps>` nor the disambiguation
+  symbols for ours. Measured on mini-librispeech: `<blk>` is **1** in
+  Kaldi's table and **0** in ours, `SIL` 2 and 1, and so on all the way
+  down. So **any comparison of `TLG` must resolve token names through each
+  side's own table** -- comparing raw ids would line `<blk>` up against
+  `SIL` and measure nothing while looking fine. This is the same shift
+  described above, approached from the other direction, and all three
+  tables are now in the capture so a comparison need not rebuild them.
   **The test could not have caught it**: it generated its own log
   probabilities from the same derived table, so the graph and the acoustics
   were wrong together and agreed. A test that derives its inputs from the

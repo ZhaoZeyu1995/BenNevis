@@ -1239,3 +1239,62 @@ class TestRecordShape:
             record_shape(manifest, "graph/ctc/LG.fst.txt", text)
         assert "graph/ctc/LG.fst.txt" in manifest.large
         assert manifest.shapes["graph/ctc/LG.fst.txt"]["arcs"] == 200
+
+
+class TestGraphTokenTables:
+    """
+    The two token tables, and why both are captured.
+
+    `prepare_topo.sh` writes `tokens.txt` with `<eps>` for Kaldi's
+    `T.fst` and `k2/tokens.txt` with neither `<eps>` nor the
+    disambiguation symbols for ours, because a network cannot emit
+    `<eps>`. The same token therefore has a **different id on each
+    side**: measured on mini-librispeech, `<blk>` is 1 in Kaldi's table
+    and 0 in ours.
+
+    That is the shift that broke the first real k2 decoding run, where
+    the decoder read `<blk>` as `<eps>` and failed inside
+    `intersect_dense_pruned` with a message about state counts. Any
+    comparison of `TLG` has to resolve token *names* through each side's
+    own table; comparing raw ids would line `<blk>` up against `SIL` and
+    silently measure nothing.
+    """
+
+    def test_both_tables_are_captured(self, tmp_path):
+        from tests.reference.capture import GRAPH_TEXT
+
+        assert "tokens.txt" in GRAPH_TEXT
+        assert "k2/tokens.txt" in GRAPH_TEXT
+
+    def test_the_k2_phone_table_is_captured_too(self):
+        """
+        The output side of our T, and the table our TLG's output labels
+        index. Measuring our own TLG previously meant rebuilding it by
+        hand, which is a second implementation of what the recipe writes.
+        """
+        from tests.reference.capture import GRAPH_TEXT
+
+        assert "k2/phones.txt" in GRAPH_TEXT
+
+    def test_the_tables_are_stored_whole(self):
+        """
+        They are *inputs* to a replacement, not outputs of one: a token
+        table fixes the network's output indices, and a checkpoint is only
+        valid while those stay put. `ALWAYS_STORED` keeps them however
+        large.
+        """
+        from tests.reference.capture import is_input_artefact
+
+        assert is_input_artefact("graph/ctc/tokens.txt")
+        assert is_input_artefact("graph/ctc/k2/tokens.txt")
+        assert is_input_artefact("graph/ctc/k2/phones.txt")
+
+    def test_a_graph_text_file_is_stored_under_its_topology(self, tmp_path):
+        """Pins the layout a comparison will look the tables up by."""
+        from BenNevis.utils.reference import Manifest
+        from tests.reference.capture import store
+
+        manifest = Manifest()
+        store(manifest, tmp_path, "graph/ctc/k2/tokens.txt", b"<blk> 0\nSIL 1\n")
+        assert (tmp_path / "graph" / "ctc" / "k2" / "tokens.txt").is_file()
+        assert "graph/ctc/k2/tokens.txt" in manifest.exact
