@@ -26,6 +26,8 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import sys
+
 import pytest
 
 from BenNevis.utils.memory import (
@@ -41,6 +43,25 @@ class Leaked:
 
 
 class TestRssBytes:
+    def test_every_supported_platform_can_report_one(self):
+        """
+        No skip here, deliberately.
+
+        The first Windows implementation returned None -- it truncated the
+        process pseudo-handle -- and because the other tests skipped when
+        no reading was available, the whole suite went green with the
+        indicator dead on a supported platform. A skip that hides a
+        defect is indistinguishable from a platform that cannot do the
+        job, so this asserts outright that the three platforms the
+        library supports all report a size.
+        """
+        if sys.platform not in ("linux", "darwin", "win32"):
+            pytest.skip(f"{sys.platform} is not a supported platform")
+        assert rss_bytes() is not None, (
+            f"no resident size on {sys.platform}, so the memory indicator "
+            "is blank exactly where a developer would read it"
+        )
+
     def test_it_reports_a_plausible_size(self):
         rss = rss_bytes()
         if rss is None:

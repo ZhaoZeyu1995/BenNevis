@@ -93,11 +93,30 @@ def rss_bytes() -> Optional[int]:
                     ("PeakPagefileUsage", ctypes.c_size_t),
                 ]
 
+            # The signatures are declared rather than left to ctypes'
+            # defaults, and that is the whole of why a first attempt here
+            # returned nothing. `GetCurrentProcess` hands back the
+            # pseudo-handle -1; with the default `c_int` return type that
+            # becomes a 32-bit -1, and passing it where a 64-bit HANDLE is
+            # wanted truncates it, so the call fails and reports no error
+            # anyone sees.
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetCurrentProcess.argtypes = []
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            psapi.GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_Counters),
+                wintypes.DWORD,
+            ]
+
             counters = _Counters()
             counters.cb = ctypes.sizeof(_Counters)
-            handle = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(
-                handle, ctypes.byref(counters), counters.cb
+            if psapi.GetProcessMemoryInfo(
+                kernel32.GetCurrentProcess(),
+                ctypes.byref(counters),
+                counters.cb,
             ):
                 return int(counters.WorkingSetSize)
         except Exception:
