@@ -116,3 +116,73 @@ class TestEachEpochIsLogged:
         assert "step" in line
         # A number for each, so the line is informative rather than decorative.
         assert len(re.findall(r"\d+\.\d{6}", line)) == 2
+
+
+class TestMemoryIsLoggedEachEpoch:
+    """
+    The reading that three SIGKILLs went without.
+
+    A `ctc` run on mini-librispeech was killed three times on a 15.6GiB
+    runner with the trainer at 9.3GiB, and the log said nothing about what
+    was holding it -- so the next run had to be spent on measuring rather
+    than on the WER it was dispatched for. These pin the line, because an
+    indicator nothing asserts is one that disappears in a refactor and is
+    missed only on the next long run.
+    """
+
+    def test_fit_logs_a_memory_line_per_epoch_and_a_baseline(
+        self, process_group, dataset_for_logs, tmp_path, monkeypatch, caplog
+    ):
+        from omegaconf import OmegaConf
+
+        monkeypatch.setenv("WANDB_MODE", "disabled")
+        trainer, loader, valid = dataset_for_logs(
+            tmp_path,
+            max_epochs=2,
+            config=OmegaConf.create({"logger": {"project": None, "name": "t"}}),
+        )
+
+        with caplog.at_level(logging.INFO):
+            trainer.fit(loader, valid)
+
+        lines = [
+            record.message
+            for record in caplog.records
+            if record.message.startswith("memory")
+        ]
+        # One before training plus one per epoch: the baseline is what the
+        # first epoch's growth is measured against.
+        assert len(lines) == 3, lines
+        assert "before training" in lines[0]
+        assert "after epoch 1" in lines[1]
+        assert "after epoch 2" in lines[2]
+
+    def test_the_line_carries_a_resident_size(
+        self, process_group, dataset_for_logs, tmp_path, monkeypatch, caplog
+    ):
+        """A reading without a number is decoration."""
+        from omegaconf import OmegaConf
+
+        monkeypatch.setenv("WANDB_MODE", "disabled")
+        trainer, loader, valid = dataset_for_logs(
+            tmp_path,
+            max_epochs=1,
+            config=OmegaConf.create({"logger": {"project": None, "name": "t"}}),
+        )
+        with caplog.at_level(logging.INFO):
+            trainer.fit(loader, valid)
+
+        line = next(
+            r.message for r in caplog.records if r.message.startswith("memory after")
+        )
+        assert re.search(r"objects \d+", line), line
+        # Asserted against what this platform can actually report, so that
+        # the line is pinned to carry a number wherever one exists rather
+        # than being excused everywhere. `rss_bytes` covers Linux, macOS
+        # and Windows, so in practice this is the number.
+        from BenNevis.utils.memory import rss_bytes
+
+        if rss_bytes() is None:
+            assert "rss unavailable" in line, line
+        else:
+            assert re.search(r"rss \d+MiB", line), line

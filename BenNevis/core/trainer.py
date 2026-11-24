@@ -24,6 +24,7 @@ from torchinfo import summary
 from kaldiio import WriteHelper
 from omegaconf import OmegaConf
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
+from BenNevis.utils.memory import MemoryReporter
 from BenNevis.utils.platform import (
     link_or_copy,
     resolve_device,
@@ -972,6 +973,13 @@ class Trainer:
             else:
                 self._load_checkpoint(checkpoint)
 
+        # One reporter for the whole run, not one per epoch: the reading is
+        # a difference against the previous epoch, and a fresh reporter has
+        # nothing to difference against.
+        memory = MemoryReporter()
+        if self.gpu_id == 0:
+            logging.info(memory.report("before training"))
+
         while self.epoch < self.max_epochs:
             self.model.train()
             for opt in self.optimizers:
@@ -994,6 +1002,16 @@ class Trainer:
                     f"train loss {train_loss:.6f}, valid loss {valid_loss:.6f}, "
                     f"step {self.step}"
                 )
+            # Beside the loss line, because a run that is killed leaves
+            # only its log: three mini-librispeech runs were SIGKILLed on a
+            # 15.6GiB runner with the trainer at 9.3GiB, and nothing in the
+            # log said what was holding it. The reading names the types
+            # that gained instances since the previous epoch, so a leak
+            # points at itself -- `Fsa` at the graph, `Tensor` at a
+            # retained autograd graph.
+            if self.gpu_id == 0:
+                logging.info(memory.report(f"after epoch {self.epoch}"))
+
             for lrs in self.schedulers:
                 lrs.step(valid_loss)
 
