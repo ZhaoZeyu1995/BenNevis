@@ -650,6 +650,32 @@ touch the Actions budget — but 58 seconds is the number to beat.
   forever**: the batch was reset but the pointer never advanced. Note
   `max_dur` can exceed `max_sum_dur` in the shipped configs, so that one was
   reachable with real data.
+- **The mini-librispeech trainer leaks memory, and it is not yet known
+  what.** Three `ctc` runs were SIGKILLed on a 15.6GiB runner -- epoch 4,
+  epoch 4 and epoch 7, so the epoch is not the pattern, the race between
+  growth and the epoch count is. The host-side sample from run
+  45337445608 is the evidence: the trainer climbs to about 7.4GiB during
+  epoch 1, plateaus there for four epochs, then rises again to 9.3GiB and
+  is killed with 9MiB of the host left, after which 8.7GiB comes back. A
+  plateau that resumes rising is a leak rather than a cache filling.
+  **The loss path is measured clean and so is not the cause**: 2,000 steps
+  of `GraphLoss` with the real `compile_training_graph`, with fixed and
+  with varying batch shapes, hold flat at about 400MiB. `k2.Fsa.to()`
+  returns `self` on the same device, so the per-step `.to()` in
+  `compile_training_graph` allocates nothing, and `kaldiio`'s `LazyLoader`
+  caches no arrays. `k2.arc_sort` on an already-sorted topology is a
+  no-op, and rebuilding the denominator `FsaVec` each step costs 13ms for
+  a 350-token topology -- 12 seconds an epoch against 34 minutes, so
+  caching it is not worth the unbounded cache that dynamic batch sizes
+  would need. All of that was measured before being believed, and none of
+  it explains the growth.
+  What the log could not say is *what* is held, which is why
+  `BenNevis.utils.memory` reports the resident size, the live tensor
+  storage and **the types that gained instances since the previous
+  epoch** once per epoch. The reading is a difference deliberately: a
+  trainer legitimately holds a lexicon FST and an optimiser state, so an
+  absolute count says nothing and a type that rises every epoch and never
+  falls is the answer. Take the next reading before theorising further.
 - **Progress bars are off when stderr is not a terminal, and every epoch
   logs a line.** `tqdm` writes a fresh line per update off-terminal, so a
   nightly run produced thousands of near-identical lines with no epoch
