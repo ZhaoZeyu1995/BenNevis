@@ -116,6 +116,25 @@ jobs:
       - name: Make the artefact directory
         run: mkdir -p artefacts/reference
 
+      # Two runs of the same commit trained at 20m09s and 34m30s an epoch,
+      # and the slower pair was then SIGKILLed in epoch 4. Everything that
+      # could be compared from outside the runner was identical: the same
+      # 894 steps an epoch, the same losses to five decimal places, the
+      # same image but for `charset_normalizer` and `packaging`, the same
+      # apt versions, `OMP_NUM_THREADS=1` throughout. What is left is the
+      # host, and `ubuntu-latest` says nothing about how much memory or
+      # how many cores it came with. So record it, because a third run
+      # that fails the same way with no numbers beside it is a wasted
+      # three hours.
+      - name: Record what the runner is
+        run: |
+          {
+            echo "runner: ${RUNNER_NAME:-unknown}"
+            echo "nproc: $(nproc)"
+            echo "cpu: $(awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo)"
+            grep -E '^(MemTotal|MemAvailable|SwapTotal):' /proc/meminfo
+          } | tee artefacts/host.log
+
       - name: Pull the Kaldi image
         run: |
           docker pull "$IMAGE"
@@ -188,6 +207,33 @@ jobs:
           STOP_STAGE: ${{ github.event.inputs.stop_stage }}
         run: |
           set -euo pipefail
+          # Sampled on the host rather than in the container, because the
+          # OOM killer decides on the host's free memory and that is the
+          # number that explains a SIGKILL. The three largest resident
+          # processes go beside it, so a growing `python3` can be told
+          # from a runner that was short of memory to begin with.
+          sample_memory() {
+            while :; do
+              stamp=$(date -u +%H:%M:%S)
+              avail=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
+              # `NR <= 3` rather than `head -3`: under the `pipefail` set
+              # above, `head` closing the pipe early makes `ps` exit on
+              # SIGPIPE, the pipeline return 141, and `errexit` kill this
+              # loop after a single sample -- leaving a one-line log and a
+              # green step, which is the failure this sampler exists to
+              # avoid.
+              top=$(ps -eo rss=,comm= --sort=-rss |
+                awk 'NR <= 3 {printf "%s=%dMiB ", $2, $1 / 1024}')
+              echo "${stamp} avail=${avail}MiB ${top}"
+              # Overridable so that a test can drive the loop fast enough
+              # to prove it loops; 30s over a five-hour recipe is 600
+              # samples, which is small beside the recipe log.
+              sleep "${SAMPLE_INTERVAL:-30}"
+            done
+          }
+          sample_memory > artefacts/memory.log 2>&1 &
+          sampler=$!
+          trap 'kill "${sampler}" 2>/dev/null || true' EXIT
           opts=()
           if [ -n "${TOPOS}" ]; then
             opts+=(--topos "${TOPOS}")
@@ -370,5 +416,7 @@ jobs:
           path: |
             artefacts/yesno-scores.tar.gz
             artefacts/recipe.log
+            artefacts/host.log
+            artefacts/memory.log
           if-no-files-found: warn
           retention-days: 30
