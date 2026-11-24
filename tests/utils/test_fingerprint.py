@@ -20,6 +20,9 @@ import pytest
 from BenNevis.utils.fingerprint import (
     NON_WORDS,
     fingerprint,
+    fingerprint_phone_sequences,
+    position_dependent_table,
+    sample_lexicon_sequences,
     sample_word_sequences,
     shortest_distance,
 )
@@ -196,3 +199,141 @@ class TestFingerprint:
         arcs = {0: [(1, SYMBOLS["#0"], 0.25)], 1: [(1, 1, 1.0)]}
         result = fingerprint(arcs, {1: 0.0}, SYMBOLS, 0, [("A",)])
         assert result["A"] == pytest.approx(1.25)
+
+
+class TestPositionDependentTable:
+    """
+    Read off the data, because the two recipes differ and a capture
+    should not have to be told which one it is of: mini-librispeech takes
+    `prepare_lang.sh`'s default, which suffixes, and yesno passes
+    `--position-dependent-phones false`.
+    """
+
+    def test_a_suffixed_table_is_detected(self):
+        assert position_dependent_table(["<eps>", "AH0_B", "AH0_E", "SIL"])
+
+    def test_a_plain_table_is_not(self):
+        assert not position_dependent_table(["<eps>", "Y", "N", "SIL"])
+
+    def test_a_disambiguation_symbol_does_not_decide_it(self):
+        """`#0` is not a phone, and must not vote either way."""
+        assert not position_dependent_table(["<eps>", "Y", "#0", "#1"])
+
+    def test_an_empty_table_is_not(self):
+        assert not position_dependent_table([])
+
+
+class TestSampleLexiconSequences:
+    LEXICON = [
+        ("YES", ("Y", "E", "S")),
+        ("NO", ("N", "O")),
+        ("ONE", ("W",)),
+    ]
+
+    def test_it_draws_only_words_the_lexicon_pronounces(self):
+        drawn = sample_lexicon_sequences(self.LEXICON, count=20)
+        assert drawn
+        known = {"YES", "NO", "ONE"}
+        for words, _phones in drawn:
+            assert set(words) <= known
+
+    def test_the_phones_are_the_concatenated_pronunciations(self):
+        drawn = sample_lexicon_sequences(self.LEXICON, count=20)
+        expansion = {"YES": ("Y", "E", "S"), "NO": ("N", "O"), "ONE": ("W",)}
+        for words, phones in drawn:
+            expected = tuple(p for word in words for p in expansion[word])
+            assert phones == expected
+
+    def test_position_dependence_suffixes_the_phones(self):
+        """
+        `_S` alone for a one-phone word, otherwise `_B`, `_I`, `_E` -- the
+        project's own `position_dependent`, so the expansion cannot drift
+        from the lexicon FST it is meant to probe.
+        """
+        drawn = sample_lexicon_sequences(
+            [("YES", ("Y", "E", "S"))],
+            count=1,
+            min_length=1,
+            max_length=1,
+            position_dependent_phones=True,
+        )
+        assert drawn == [(("YES",), ("Y_B", "E_I", "S_E"))]
+
+    def test_a_single_phone_word_takes_the_s_suffix(self):
+        drawn = sample_lexicon_sequences(
+            [("ONE", ("W",))],
+            count=1,
+            min_length=1,
+            max_length=1,
+            position_dependent_phones=True,
+        )
+        assert drawn == [(("ONE",), ("W_S",))]
+
+    def test_the_first_pronunciation_wins(self):
+        """
+        A word with alternatives would otherwise make the expected phone
+        sequence depend on which was picked, and the whole point is that
+        two implementations are asked the same question.
+        """
+        lexicon = [("READ", ("R", "IY", "D")), ("READ", ("R", "EH", "D"))]
+        drawn = sample_lexicon_sequences(lexicon, count=1, min_length=1, max_length=1)
+        assert drawn == [(("READ",), ("R", "IY", "D"))]
+
+    def test_the_draw_is_reproducible(self):
+        first = sample_lexicon_sequences(self.LEXICON, count=12)
+        again = sample_lexicon_sequences(self.LEXICON, count=12)
+        assert first == again
+
+    def test_a_different_seed_draws_differently(self):
+        first = sample_lexicon_sequences(self.LEXICON, count=12, seed=1)
+        other = sample_lexicon_sequences(self.LEXICON, count=12, seed=2)
+        assert first != other
+
+    def test_non_words_are_left_out(self):
+        lexicon = [("<eps>", ("X",)), ("#0", ("X",)), ("YES", ("Y",))]
+        drawn = sample_lexicon_sequences(lexicon, count=10)
+        for words, _phones in drawn:
+            assert set(words) == {"YES"}
+
+    def test_an_empty_lexicon_draws_nothing(self):
+        assert sample_lexicon_sequences([], count=10) == []
+
+
+class TestFingerprintPhoneSequences:
+    #: `A B` costs 1.0, and the FST also accepts `A` alone for 0.5.
+    ARCS = {0: [(1, 1, 0.5)], 1: [(2, 2, 0.5)]}
+    FINALS = {1: 0.0, 2: 0.0}
+    PHONES = {"<eps>": 0, "a": 1, "b": 2, "z": 3}
+
+    def test_it_keys_on_the_word_sequence(self):
+        """Readable, and the same question both implementations are asked."""
+        drawn = [(("WORD",), ("a", "b"))]
+        got = fingerprint_phone_sequences(self.ARCS, self.FINALS, self.PHONES, 0, drawn)
+        assert set(got) == {"WORD"}
+        assert got["WORD"] == pytest.approx(1.0)
+
+    def test_a_multi_word_key_is_space_joined(self):
+        drawn = [(("ONE", "TWO"), ("a", "b"))]
+        got = fingerprint_phone_sequences(self.ARCS, self.FINALS, self.PHONES, 0, drawn)
+        assert set(got) == {"ONE TWO"}
+
+    def test_a_rejected_sequence_is_left_out(self):
+        """
+        Not recorded as infinity: a rejection is a fact about the lexicon
+        rather than the weights, and an entry both sides agree is
+        unreachable would pass the comparison while testing nothing.
+        """
+        drawn = [(("BAD",), ("b", "a")), (("GOOD",), ("a", "b"))]
+        got = fingerprint_phone_sequences(self.ARCS, self.FINALS, self.PHONES, 0, drawn)
+        assert set(got) == {"GOOD"}
+
+    def test_a_phone_outside_the_table_is_skipped(self):
+        drawn = [(("MISSING",), ("a", "q"))]
+        got = fingerprint_phone_sequences(self.ARCS, self.FINALS, self.PHONES, 0, drawn)
+        assert got == {}
+
+    def test_nothing_drawn_gives_nothing(self):
+        assert (
+            fingerprint_phone_sequences(self.ARCS, self.FINALS, self.PHONES, 0, [])
+            == {}
+        )

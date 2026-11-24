@@ -98,6 +98,32 @@ def tables():
 
 
 @pytest.fixture(scope="module")
+def drawn(tables):
+    """Word sequences the lexicon pronounces, with their phone sequences."""
+    from BenNevis.utils.fingerprint import (
+        position_dependent_table,
+        sample_lexicon_sequences,
+    )
+
+    _words, phones = tables
+    return sample_lexicon_sequences(
+        read_lexicon(YESNO / "lexicon.txt"),
+        count=24,
+        position_dependent_phones=position_dependent_table(phones.keys()),
+    )
+
+
+@pytest.fixture(scope="module")
+def kaldi_fingerprint(tables, drawn):
+    """What Kaldi's own LG gives each drawn sequence."""
+    from BenNevis.utils.fingerprint import fingerprint_phone_sequences
+
+    _words, phones = tables
+    arcs, finals, start = read_openfst(REFERENCE / "graph" / "ctc" / "LG.fst.txt")
+    return fingerprint_phone_sequences(arcs, finals, phones, start, drawn)
+
+
+@pytest.fixture(scope="module")
 def built(tables):
     """LG for yesno, from a dictionary and an ARPA model and nothing else."""
     words, phones = tables
@@ -335,3 +361,103 @@ class TestItDoesNotDeterminize:
         """
         graph, _first = built
         assert int((graph.labels == 0).sum()) == 0
+
+
+class TestEquivalenceOnLexiconDrawnSequences:
+    """
+    The gate that generalises past hardcoded sentences.
+
+    `TestFunctionalEquivalenceWithKaldi` asks about seven sentences whose
+    pronunciations are written into this file as `PRONUNCIATIONS`. That
+    works for a four-word lexicon and is useless for mini-librispeech's
+    206,510 entries, which is the one corpus where a graph replacement
+    matters -- and whose `LG.fst.txt` is 138,155,979 bytes, so the capture
+    keeps its digest and not its bytes and there is no committed FST to
+    compare against at all.
+
+    `sample_lexicon_sequences` is the machinery for that: word sequences
+    drawn reproducibly from the words the *lexicon* pronounces, with the
+    phone sequence `L` accepts for each, suffixed by the project's own
+    `position_dependent` so the expansion cannot drift from the lexicon
+    FST it probes. Sampling from `words.txt` instead would be no use,
+    because a phone-input FST rejects almost every sequence drawn that way
+    and a fingerprint of rejections compares nothing.
+
+    These tests exercise that machinery here, where Kaldi's `LG.fst.txt`
+    is 20KB and committed, so it is checked against a real Kaldi graph
+    before mini-librispeech has to rely on it. Note that a sequence the
+    *lexicon* permits can still be rejected by `G`: yesno's grammar is
+    restrictive, so about a third of the draws survive. That is expected,
+    and it is why the fingerprint records only what was accepted.
+    """
+
+    def test_kaldis_graph_accepts_some_of_them(self, kaldi_fingerprint, drawn):
+        """
+        Guards the whole class against being vacuous.
+
+        If the sampler produced sequences Kaldi rejected outright, every
+        comparison below would pass by having nothing to compare -- the
+        same shape as the `G.fst` gate that built its path wrongly and
+        skipped unconditionally.
+        """
+        assert drawn, "the sampler drew nothing"
+        assert kaldi_fingerprint, (
+            "Kaldi's LG accepted none of the lexicon-drawn sequences, so "
+            "the comparison would be empty"
+        )
+
+    def test_our_graph_agrees_within_quantisation(
+        self, built, tables, drawn, kaldi_fingerprint
+    ):
+        """
+        Every sequence Kaldi scores, we must score the same, within the
+        1/1024 grid `fstminimizeencoded` puts Kaldi's weights on.
+        """
+        graph, _first = built
+        _words, phones = tables
+        arcs, finals = as_dicts(graph)
+
+        compared = 0
+        for words, phone_sequence in drawn:
+            key = " ".join(words)
+            if key not in kaldi_fingerprint:
+                continue
+            sequence = [phones[phone] for phone in phone_sequence]
+            ours = shortest_distance(arcs, finals, sequence, 0)
+            assert ours is not None, f"this graph rejects {key}"
+            theirs = kaldi_fingerprint[key]
+            bound = (len(words) + 1) * QUANTISATION_DELTA
+            assert abs(theirs - ours) <= bound, (
+                f"{key}: Kaldi {theirs:.6f}, this {ours:.6f}, gap "
+                f"{abs(theirs - ours):.6f} exceeds {bound:.6f}"
+            )
+            compared += 1
+        assert compared, "nothing was compared"
+
+    def test_the_sequences_are_reproducible(self, drawn):
+        """
+        Two implementations must be asked the same questions, so the draw
+        is seeded. A fingerprint recorded from a different draw compares
+        nothing, and would look like agreement on an empty set.
+        """
+        from BenNevis.utils.fingerprint import (
+            position_dependent_table,
+            sample_lexicon_sequences,
+        )
+
+        again = sample_lexicon_sequences(
+            read_lexicon(YESNO / "lexicon.txt"),
+            count=24,
+            position_dependent_phones=position_dependent_table({"Y": 1}.keys()),
+        )
+        assert again == drawn
+
+    def test_the_phones_come_from_the_lexicon(self, drawn, tables):
+        """
+        Every phone drawn must be in the table the FST is written against,
+        or the sequence could never be scored and the draw is the bug.
+        """
+        _words, phones = tables
+        for words, phone_sequence in drawn:
+            unknown = [p for p in phone_sequence if p not in phones]
+            assert not unknown, f"{' '.join(words)} wants {unknown}"

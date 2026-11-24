@@ -396,8 +396,31 @@ tolerances chosen per layer:
   implementations are asked the same questions, and
   `BenNevis.utils.fingerprint` is a few kilobytes against 61MB. This works
   for `G` because a back-off LM FST accepts every sequence of in-vocabulary
-  words; `L` and `TLG` accept only what their lexicon permits, so they need
-  sequences drawn from the lexicon and do not have fingerprints yet.
+  words; `L`, `LG` and `TLG` accept only what their lexicon permits, so a
+  sequence sampled from `words.txt` is rejected almost surely and a
+  fingerprint of rejections compares nothing.
+  **`sample_lexicon_sequences` closes that for the phone-input graphs**,
+  and `LG` now has a fingerprint. It draws word sequences from the words
+  the *lexicon* pronounces and expands each with the project's own
+  `position_dependent`, so the suffixing cannot drift from the lexicon FST
+  it probes; position dependence is read off the phone table rather than
+  configured, since the two recipes differ. The first pronunciation wins,
+  because a word with alternatives would otherwise make the expected phone
+  sequence depend on which was picked.
+  This is what the big corpus had been missing: the yesno equivalence test
+  reads Kaldi's committed `LG.fst.txt` directly, which works only because
+  yesno's is 20KB, while mini-librispeech's is 138MB and kept as a digest.
+  Verified end to end on yesno, where both sides exist: our Python `LG`
+  agrees with Kaldi's on every accepted sequence, **worst gap 0.000896
+  against a delta of 0.0009766**, and perturbing our arc weights by 0.05
+  fails the gate at 0.249552. Note a sequence the lexicon permits can
+  still be rejected by `G` -- yesno's grammar is restrictive and about a
+  third of the draws survive -- which is why only the accepted ones are
+  recorded.
+  **mini-librispeech's gate cannot run in tier 2**, because its ARPA is
+  downloaded rather than committed, so our side cannot be rebuilt offline.
+  That comparison belongs in the nightly, where the corpus and the LM both
+  exist; the capture records the fingerprint either way.
   This is a different standard from CMVN's deliberately. There, the object is
   an array and any difference is a real difference, so byte-exactness was
   both achievable and the right test. Byte-exactness is still expected where
