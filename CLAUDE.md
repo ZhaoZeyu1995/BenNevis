@@ -86,6 +86,17 @@ loss bottomed at epoch 8** there, 1.8028 against 1.8879 by epoch 12, so the
 last four epochs cost eighty minutes and made the model worse: for a run
 whose point is to compare two decoders on the same acoustics, eight epochs is
 both cheaper and better.
+**Twenty minutes is not a stable figure, and the second training run is why.**
+Run 45293910683 took **34m30s** an epoch on the same recipe, commit range and
+runner label — 71% slower — and was then **SIGKILLed in epoch 4**, exit code
+`-9` out of `torchrun` after 213 minutes. Nothing between the two runs touches
+training, so this is the runner rather than the code, and the two symptoms
+have one likely cause: memory pressure, which both slows a job down and ends
+it. Treat the epoch cost as 20 to 35 minutes, and note what that does to the
+budget — eight epochs is 160 minutes at the fast end and 276 at the slow one,
+so a 350-minute ceiling fits the first comfortably and the second only if
+nothing else goes wrong. A run that needs the corpus downloaded as well does
+not fit at all.
 
 Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
 `.github/workflows/nightly.yml`. It is the **only** coverage the entry points
@@ -1026,8 +1037,22 @@ touch the Actions budget — but 58 seconds is the number to beat.
   checks the two copies agree, since a pair that drifts restores one set of
   files and stores another and looks exactly like a cache that keeps
   missing. Nothing saves when the runner itself is lost, which is a limit
-  of the mechanism: that is how run 45202289714 lost 1.2GiB of
-  mini-librispeech download, and was marked failed two hours later.
+  of the mechanism rather than something the split pair fixes.
+  **It had been written here that this is how run 45202289714 lost 1.2GiB
+  of mini-librispeech download. That is wrong**: #57 added these steps at
+  18:52 on 23 November and that run was created at 15:10, so it had no
+  cache steps at all and there was nothing for a lost runner to take with
+  it. The limit is real and the example was invented to illustrate it —
+  which is the more useful lesson, since an illustration is exactly the
+  part of an entry nobody checks.
+  The first run that could use the cache was 45293910683, and it **missed**,
+  paying 73 minutes to re-download at 68 KB/s from openslr before saving
+  1,647MiB under `mini-librispeech-corpus-v1`. That miss was unavoidable —
+  there was no entry yet — but the step still reported **success**, because
+  `actions/cache/restore` succeeds on a miss and only `cache-hit` says
+  otherwise. So a green restore step is not evidence the corpus came from
+  the cache, and the download in the log is the only thing that settles
+  it.
 - **"The hosted runner lost communication with the server" is an
   annotation, not a log line.** `gh run view --log` does not contain it at
   all; the only place it appears is the check-run's annotations, which is
