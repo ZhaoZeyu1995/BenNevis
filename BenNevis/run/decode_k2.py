@@ -50,6 +50,16 @@ def main(argv=None) -> int:
     parser.add_argument("--output_beam", type=float, default=8.0)
     parser.add_argument("--min_active_states", type=int, default=30)
     parser.add_argument("--max_active_states", type=int, default=10000)
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help="how many utterances to decode at once. 8 rather than 1 "
+        "because run 45511013199 spent 4h16m48s on 900 of 1,089 "
+        "utterances with a batch of one, which is what stood between "
+        "stage 10 and finishing inside a CI run; 8 is also what "
+        "decode_faster.sh runs at nj=8, so the two stay comparable",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -104,6 +114,7 @@ def main(argv=None) -> int:
         utterances(),
         idx2word,
         acoustic_scale=args.acoustic_scale,
+        batch_size=args.batch_size,
         search_beam=args.search_beam,
         output_beam=args.output_beam,
         min_active_states=args.min_active_states,
