@@ -469,6 +469,42 @@ tolerances chosen per layer:
   **hung** rather than failed, on yesno's 33-arc TLG. So a hang is one
   of this function's failure modes, and a mutation test on it wants a
   timeout.
+  **And the verdict is in: our `TLG` is equivalent to Kaldi's too.** Run
+  45705231089 compared all 24 word sequences on the output side and
+  agreed on every one, within 0.0009765625 per arc, so the **3.36x TLG
+  size difference is only a size difference** -- the same conclusion as
+  `LG` and the one that closes the correctness question on the whole
+  graph chain. Minimisation and epsilon-pair merging are now purely cost
+  questions, on both graphs.
+  The timings are the other half of what that run measured, and two of
+  them are worth keeping:
+
+  | Step | Cost |
+  | --- | --- |
+  | `k2.invert` on Kaldi's TLG / ours | 0.5s / 4.1s |
+  | `build_graph` for our TLG | 38.6s |
+  | `fstprint` and parse of Kaldi's TLG | 24.0s |
+  | searching 24 sequences, both TLGs | 113.0s |
+  | the whole job, `stop_stage=4` | 10m42s |
+
+  **`k2.invert` was never the expensive part** -- the entire cost of
+  `prepare_output_probe` was `remove_epsilon`, so the half that would
+  not fit became a two-minute search by dropping one call.
+  **And the memory fix turned out to be a 20x speed fix, which says
+  where the old time went.** The LG half fell from 148.9s and 125.7s to
+  **6.2s** on identical graphs and sequences, with nothing about the
+  search changed. So the old figure was almost entirely `tolist()`
+  building millions of Python ints and inner lists, paid afresh on each
+  of 48 calls; `frombytes` costs milliseconds. The lesson is the one
+  this file keeps relearning from the other direction: a cost attributed
+  to an algorithm was in the marshalling around it, and the way to tell
+  was to change only the marshalling.
+  That also exposed a repeat of the same mistake one level up: the probe
+  packed its arrays **per question** rather than per graph, which is 48
+  repacks of graphs that do not change. `LabelProbe` holds the pack and
+  `weight_of_label_sequence` is now the one-off wrapper, with the count
+  pinned by monkeypatching `_arc_arrays` rather than by timing, since
+  neither figure is visible on a graph small enough to test with.
   **That crash also hid the LG verdict, which is a defect in the gate
   rather than in the graph.** Mismatches were printed only after both
   halves had run, so a kill in the expensive half took the cheap half's

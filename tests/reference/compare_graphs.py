@@ -125,7 +125,13 @@ def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
     "agreed on nothing" from "agreed on everything" -- a gate that
     compared nothing must not pass.
     """
-    from BenNevis.decode.graph import weight_of_label_sequence
+    from BenNevis.decode.graph import LabelProbe
+
+    # One probe per graph, not per question. The pack is per graph, and
+    # paying it per sequence is what made this half 125.7s where it is
+    # now six seconds.
+    their_probe = LabelProbe(theirs)
+    our_probe = LabelProbe(ours)
 
     failures: List[str] = []
     compared = 0
@@ -140,11 +146,11 @@ def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
         # 0 sequences`; with it True the epsilons match, but an n-gram
         # back-off arc is an input epsilon and those form cycles, so
         # `k2.shortest_path` fails with `dest_state > state_idx01`.
-        # `weight_of_label_sequence` is a Dijkstra over
+        # `LabelProbe` searches with a Dijkstra over
         # (state, position) pairs, which tolerates the cycles because the
         # weights are non-negative.
-        weights = [weight_of_label_sequence(graph, ids) for graph in (theirs, ours)]
-        kaldi, mine = weights
+        kaldi = their_probe.weight(ids)
+        mine = our_probe.weight(ids)
         key = " ".join(words)
         if kaldi is None and mine is None:
             # Both reject it: a fact about the lexicon and grammar, not a
@@ -176,7 +182,7 @@ def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]
     `k2.remove_epsilon` is what a 43,263,880-arc graph does not survive:
     run 45554380456 printed `preparing the output probes` and stopped
     inside a minute with no traceback, which is what a SIGKILL looks
-    like. `weight_of_label_sequence` needs no removal at all, because a
+    like. `LabelProbe` needs no removal at all, because a
     Dijkstra over (state, position) pairs tolerates the cycles that
     epsilon arcs form -- every arc of a graph built from `-log`
     probabilities costs nothing or more, so going round a cycle can only
@@ -189,22 +195,30 @@ def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]
     this side and `<blk>` on the token side -- a probe hardcoding it
     would look identical while skipping the wrong thing.
 
+    Both probes are packed once and reused across the sequences. The
+    pack is a property of the graph, so asking 24 questions of a
+    per-question probe repacked 43M and 12.9M arcs 24 times each.
+
     Returns the number compared and the failures, like `compare_lg`, so
     a half that compared nothing cannot pass for a half that agreed.
     """
     import k2
 
-    from BenNevis.decode.graph import weight_of_label_sequence
+    from BenNevis.decode.graph import LabelProbe
 
     epsilon = words_table.get("<eps>", 0)
     started = time.time()
-    their_probe = k2.invert(theirs)
+    their_inverted = k2.invert(theirs)
     say("Kaldi TLG inverted", started)
-    size("Kaldi TLG inverted", their_probe)
+    size("Kaldi TLG inverted", their_inverted)
     started = time.time()
-    our_probe = k2.invert(ours)
+    our_inverted = k2.invert(ours)
     say("our TLG inverted", started)
-    size("our TLG inverted", our_probe)
+    size("our TLG inverted", our_inverted)
+    started = time.time()
+    their_probe = LabelProbe(their_inverted, epsilon=epsilon)
+    our_probe = LabelProbe(our_inverted, epsilon=epsilon)
+    say("packed both TLG probes", started)
 
     failures: List[str] = []
     compared = 0
@@ -212,8 +226,8 @@ def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]
         if any(word not in words_table for word in sentence):
             continue
         ids = [words_table[word] for word in sentence]
-        kaldi = weight_of_label_sequence(their_probe, ids, epsilon=epsilon)
-        mine = weight_of_label_sequence(our_probe, ids, epsilon=epsilon)
+        kaldi = their_probe.weight(ids)
+        mine = our_probe.weight(ids)
         key = " ".join(sentence)
         if kaldi is None and mine is None:
             continue
