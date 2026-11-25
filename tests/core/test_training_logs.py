@@ -186,3 +186,68 @@ class TestMemoryIsLoggedEachEpoch:
             assert "rss unavailable" in line, line
         else:
             assert re.search(r"rss \d+MiB", line), line
+
+
+class TestTheHeapIsTrimmedEachEpoch:
+    """
+    The remedy, which is also the measurement that found it.
+
+    Nothing in the trainer leaks. Run 45554764613 ended epoch 1 at
+    6030MiB and epoch 2 at 6645MiB, and `malloc_trim(0)` took both back
+    to the same 1058MiB -- releasing 4972MiB and then 5588MiB. The growth
+    was free heap glibc had not returned to the kernel, which it will not
+    do of its own accord for a block in a secondary arena.
+
+    So the trim belongs in `fit` rather than only in the indicator, and
+    these pin the two properties that matter. It must happen **once an
+    epoch**, because the bound on the resident size is one epoch's worth
+    of allocation. And it must happen on **every rank**, because only
+    rank 0 logs: a four-rank run where three never gave the heap back
+    would be the same failure with three quarters of the evidence
+    missing.
+    """
+
+    def test_fit_trims_once_an_epoch(
+        self, process_group, dataset_for_logs, tmp_path, monkeypatch, caplog
+    ):
+        from omegaconf import OmegaConf
+
+        calls = []
+        monkeypatch.setattr(
+            "BenNevis.utils.memory.trim_malloc", lambda: calls.append(True) or True
+        )
+        monkeypatch.setenv("WANDB_MODE", "disabled")
+        trainer, loader, valid = dataset_for_logs(
+            tmp_path,
+            max_epochs=3,
+            config=OmegaConf.create({"logger": {"project": None, "name": "t"}}),
+        )
+        with caplog.at_level(logging.INFO):
+            trainer.fit(loader, valid)
+        # Three epochs, three trims. The baseline reading before training
+        # does not trim: there is nothing to give back yet, and a trim
+        # there would make the first epoch's growth unreadable.
+        assert len(calls) == 3, calls
+
+    def test_a_rank_that_does_not_log_still_trims(
+        self, process_group, dataset_for_logs, tmp_path, monkeypatch, caplog
+    ):
+        from omegaconf import OmegaConf
+
+        calls = []
+        monkeypatch.setattr(
+            "BenNevis.core.trainer.trim_malloc", lambda: calls.append(True) or True
+        )
+        monkeypatch.setenv("WANDB_MODE", "disabled")
+        trainer, loader, valid = dataset_for_logs(
+            tmp_path,
+            max_epochs=2,
+            config=OmegaConf.create({"logger": {"project": None, "name": "t"}}),
+        )
+        # The one-rank group makes this rank 0, so pretend otherwise: the
+        # point is the branch that never reaches a log line.
+        trainer.gpu_id = 1
+        with caplog.at_level(logging.INFO):
+            trainer.fit(loader, valid)
+        assert len(calls) == 2, calls
+        assert not [r for r in caplog.records if r.message.startswith("memory")]

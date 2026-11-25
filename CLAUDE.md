@@ -818,60 +818,59 @@ touch the Actions budget — but 58 seconds is the number to beat.
   forever**: the batch was reset but the pointer never advanced. Note
   `max_dur` can exceed `max_sum_dur` in the shipped configs, so that one was
   reachable with real data.
-- **The mini-librispeech trainer leaks memory, and it is not yet known
-  what.** Three `ctc` runs were SIGKILLed on a 15.6GiB runner -- epoch 4,
-  epoch 4 and epoch 7, so the epoch is not the pattern, the race between
-  growth and the epoch count is. The host-side sample from run
-  45337445608 is the evidence: the trainer climbs to about 7.4GiB during
-  epoch 1, plateaus there for four epochs, then rises again to 9.3GiB and
-  is killed with 9MiB of the host left, after which 8.7GiB comes back. A
-  plateau that resumes rising is a leak rather than a cache filling.
-  **The loss path is measured clean and so is not the cause**: 2,000 steps
-  of `GraphLoss` with the real `compile_training_graph`, with fixed and
-  with varying batch shapes, hold flat at about 400MiB. `k2.Fsa.to()`
-  returns `self` on the same device, so the per-step `.to()` in
-  `compile_training_graph` allocates nothing, and `kaldiio`'s `LazyLoader`
-  caches no arrays. `k2.arc_sort` on an already-sorted topology is a
-  no-op, and rebuilding the denominator `FsaVec` each step costs 13ms for
-  a 350-token topology -- 12 seconds an epoch against 34 minutes, so
-  caching it is not worth the unbounded cache that dynamic batch sizes
-  would need. All of that was measured before being believed, and none of
-  it explains the growth.
-  What the log could not say is *what* is held, which is why
-  `BenNevis.utils.memory` reports the resident size, the live tensor
-  storage and **the types that gained instances since the previous
-  epoch** once per epoch. The reading is a difference deliberately: a
-  trainer legitimately holds a lexicon FST and an optimiser state, so an
-  absolute count says nothing and a type that rises every epoch and never
-  falls is the answer.
-  **That reading is now in, and it says no Python type is growing.** Run
-  45511013199, two epochs on a 15.6GiB runner: resident **808MiB,
-  7894MiB, 9130MiB**, against live tensor storage of **130MiB, 169MiB,
-  169MiB** and a tracked object count of **960,770, 961,347, 961,127** --
-  flat within four hundred across 8.3GiB of growth. The named growers are
-  three-figure instance counts (`StorageWeakRef` +116, `Tensor` +108,
-  `UntypedStorage` +108), which is noise at this scale and not 8GiB of
-  anything. So the type-growth column has answered the question it was
-  built for, in the negative: the memory is **held below Python**, where
-  neither `gc.get_objects()` nor `tracemalloc` can see it, and a fix
-  guessed at the Python level would be a fix to the wrong layer.
-  What that leaves is the allocator, and the next reading is one
-  measurement rather than a theory. glibc serves large blocks from
-  per-thread arenas and never returns a free block in a secondary arena
-  to the kernel of its own accord, so a workload that allocates and frees
-  large arrays across many threads -- k2's intersection and torch's CPU
-  kernels both -- can carry a resident size made entirely of memory it
-  has already released. `trim_malloc` asks glibc to give it back, the
-  per-epoch reading now takes a resident size either side of that, and
-  the two cases are distinguishable from one line: a resident size that
-  **falls** is a held free heap, and the remedy is `MALLOC_ARENA_MAX` or
-  a periodic trim rather than anything in the trainer; one that does
-  **not** fall is memory genuinely still live in C++, which localises the
-  search to k2 and torch and justifies an allocator-level tool.
-  The probe returns **None off Linux**, deliberately: macOS, Windows and
-  musl have no `malloc_trim`, and a probe that answered False there would
-  read as "the memory is in use" on a platform where the question was
-  never put.
+- **The mini-librispeech trainer does not leak. glibc was holding the
+  heap, and the whole 8GiB came back from one `malloc_trim(0)`.** Three
+  `ctc` runs were SIGKILLed on a 15.6GiB runner -- epoch 4, epoch 4 and
+  epoch 7, so the epoch was never the pattern, the race between growth
+  and the epoch count was -- and the trainer was seen climbing to 7.4GiB
+  in epoch 1, plateauing four epochs, then rising to 9.3GiB and dying
+  with 9MiB of the host left. Two readings settled it, in this order,
+  and the order is the lesson: measure the composition before theorising
+  about the cause.
+  **First, no Python type is growing.** Run 45511013199, two epochs:
+  resident 808MiB, 7894MiB, 9130MiB, against live tensor storage of
+  130MiB, 169MiB, 169MiB and a tracked object count of 960,770, 961,347,
+  961,127 -- flat within four hundred across 8.3GiB. The named growers
+  are three-figure instance counts. So `gc.get_objects()` had answered
+  the question it was built for in the negative, and `tracemalloc` would
+  have been the same instrument again: both see only what Python
+  allocated.
+  **Second, the memory was free all along.** Run 45554764613 ended epoch
+  1 at 6030MiB and epoch 2 at 6645MiB, and `trim_malloc` took both back
+  to the *same* **1058MiB**, releasing 4972MiB and 5588MiB. Identical
+  post-trim sizes two epochs apart is the whole proof: there is nothing
+  accumulating, and each epoch simply leaves about 5.5GiB of free heap
+  that glibc will not return to the kernel on its own -- which it never
+  does for a block in a secondary arena, and a workload that allocates
+  and frees large arrays across threads, as k2's intersection and torch's
+  CPU kernels both do, is what fills those arenas.
+  So `fit` now trims once an epoch, which **bounds** the resident size at
+  one epoch's allocation instead of letting it accumulate towards the
+  runner's limit. Two properties of that are pinned in
+  `tests/core/test_training_logs.py` and each is mutation-verified
+  separately: the trim happens once an epoch, and it happens on **every
+  rank**, because only rank 0 logs and a four-rank run where three never
+  gave the heap back would be the same failure with three quarters of the
+  evidence missing. The baseline reading before training deliberately
+  does not trim -- there is nothing to give back yet, and trimming there
+  would make the first epoch's growth unreadable.
+  Three things not to mislearn from this.
+  **The loss path was measured clean and that was correct**: 2,000 steps
+  of `GraphLoss` with the real `compile_training_graph`, fixed and varying
+  batch shapes, flat at about 400MiB; `k2.Fsa.to()` returns `self` on the
+  same device; `k2.arc_sort` on a sorted topology is a no-op; `kaldiio`'s
+  `LazyLoader` caches no arrays. None of it explained the growth because
+  none of it was the growth.
+  **The absolute numbers are runner-dependent and the trim's are not.**
+  The 8.3GiB run was an Intel Xeon 6973P-C and the 5.5GiB one an AMD EPYC
+  7763, both 4 cores and 15.6GiB; the post-trim size was the same twice
+  on the one runner, which is the figure that carries the argument.
+  **`trim_malloc` returns None off Linux**, because macOS, Windows and
+  musl have no `malloc_trim`. A probe answering False there would read as
+  "the memory is in use" on a platform where the question was never put.
+  If this ever needs to go further, `MALLOC_ARENA_MAX` attacks the cause
+  rather than the symptom, but it has to be set before the allocator
+  initialises, so it belongs in the launcher and not in `fit`.
 - **Progress bars are off when stderr is not a terminal, and every epoch
   logs a line.** `tqdm` writes a fresh line per update off-terminal, so a
   nightly run produced thousands of near-identical lines with no epoch

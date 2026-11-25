@@ -36,6 +36,14 @@ of every tracked object, which on a large run is millions of references.
 So the resident size is read *before* that list exists, and the reading
 is taken once an epoch rather than per step.
 
+**And the answer, now that both readings are in, is that nothing leaks.**
+glibc was holding the heap: run 45554764613 ended epoch 1 at 6030MiB and
+epoch 2 at 6645MiB, and `malloc_trim(0)` took both back to the *same*
+1058MiB. Identical post-trim sizes two epochs apart is the proof --
+nothing accumulates, each epoch simply leaves about 5.5GiB of free heap
+that glibc will not return of its own accord. `fit` trims once an epoch,
+on every rank, which bounds the resident size at one epoch's allocation.
+
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
