@@ -1010,7 +1010,7 @@ class Trainer:
             # points at itself -- `Fsa` at the graph, `Tensor` at a
             # retained autograd graph.
             if self.gpu_id == 0:
-                logging.info(memory.report(f"after epoch {self.epoch}"))
+                logging.info(memory.report(f"after epoch {self.epoch}", trim=True))
 
             for lrs in self.schedulers:
                 lrs.step(valid_loss)

@@ -777,7 +777,35 @@ touch the Actions budget — but 58 seconds is the number to beat.
   epoch** once per epoch. The reading is a difference deliberately: a
   trainer legitimately holds a lexicon FST and an optimiser state, so an
   absolute count says nothing and a type that rises every epoch and never
-  falls is the answer. Take the next reading before theorising further.
+  falls is the answer.
+  **That reading is now in, and it says no Python type is growing.** Run
+  45511013199, two epochs on a 15.6GiB runner: resident **808MiB,
+  7894MiB, 9130MiB**, against live tensor storage of **130MiB, 169MiB,
+  169MiB** and a tracked object count of **960,770, 961,347, 961,127** --
+  flat within four hundred across 8.3GiB of growth. The named growers are
+  three-figure instance counts (`StorageWeakRef` +116, `Tensor` +108,
+  `UntypedStorage` +108), which is noise at this scale and not 8GiB of
+  anything. So the type-growth column has answered the question it was
+  built for, in the negative: the memory is **held below Python**, where
+  neither `gc.get_objects()` nor `tracemalloc` can see it, and a fix
+  guessed at the Python level would be a fix to the wrong layer.
+  What that leaves is the allocator, and the next reading is one
+  measurement rather than a theory. glibc serves large blocks from
+  per-thread arenas and never returns a free block in a secondary arena
+  to the kernel of its own accord, so a workload that allocates and frees
+  large arrays across many threads -- k2's intersection and torch's CPU
+  kernels both -- can carry a resident size made entirely of memory it
+  has already released. `trim_malloc` asks glibc to give it back, the
+  per-epoch reading now takes a resident size either side of that, and
+  the two cases are distinguishable from one line: a resident size that
+  **falls** is a held free heap, and the remedy is `MALLOC_ARENA_MAX` or
+  a periodic trim rather than anything in the trainer; one that does
+  **not** fall is memory genuinely still live in C++, which localises the
+  search to k2 and torch and justifies an allocator-level tool.
+  The probe returns **None off Linux**, deliberately: macOS, Windows and
+  musl have no `malloc_trim`, and a probe that answered False there would
+  read as "the memory is in use" on a platform where the question was
+  never put.
 - **Progress bars are off when stderr is not a terminal, and every epoch
   logs a line.** `tqdm` writes a fresh line per update off-terminal, so a
   nightly run produced thousands of near-identical lines with no epoch

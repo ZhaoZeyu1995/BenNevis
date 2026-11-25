@@ -35,6 +35,7 @@ from BenNevis.utils.memory import (
     count_live_objects,
     rss_bytes,
     tensor_bytes,
+    trim_malloc,
 )
 
 
@@ -176,3 +177,68 @@ class TestTensorBytes:
 
     def test_the_report_includes_the_tensor_total(self):
         assert "tensors" in MemoryReporter().report()
+
+
+class TestTrimMalloc:
+    """
+    The allocator probe, which is Linux-only by nature.
+
+    It exists because the first real reading showed 8.3GiB of resident
+    growth with no Python type accumulating, so the next question is
+    whether that memory is in use or merely held. What is pinned here is
+    that the answer is a *tristate* and that the caller can tell "nothing
+    to release" from "could not ask" -- a probe that returned False on
+    macOS would read as "the memory is genuinely in use" on a platform
+    where the question was never put.
+    """
+
+    def test_it_answers_a_boolean_on_linux_and_none_elsewhere(self):
+        answer = trim_malloc()
+        if sys.platform.startswith("linux"):
+            assert answer in (True, False)
+        else:
+            assert answer is None
+
+    def test_it_can_be_called_repeatedly(self):
+        # A second trim with nothing freed in between must not raise; the
+        # per-epoch reading calls it for the life of a run.
+        trim_malloc()
+        trim_malloc()
+
+    def test_the_report_asks_only_when_told_to(self, monkeypatch):
+        called = []
+
+        def fake():
+            called.append(True)
+            return True
+
+        monkeypatch.setattr("BenNevis.utils.memory.trim_malloc", fake)
+        reporter = MemoryReporter()
+        reporter.report("quiet")
+        assert called == []
+        reporter.report("loud", trim=True)
+        assert called == [True]
+
+    def test_it_reports_what_was_released(self, monkeypatch):
+        sizes = iter([900 * 2**20, 400 * 2**20])
+        monkeypatch.setattr("BenNevis.utils.memory.rss_bytes", lambda: next(sizes))
+        monkeypatch.setattr("BenNevis.utils.memory.trim_malloc", lambda: True)
+        line = MemoryReporter().report("after epoch 1", trim=True)
+        assert "after trim 400MiB" in line
+        assert "released 500MiB" in line
+
+    def test_a_trim_that_releases_nothing_still_reports_the_size(self, monkeypatch):
+        # This is the reading that would matter most: the memory is held
+        # by something that still considers it live, so the line must say
+        # so rather than fall back to "unavailable".
+        monkeypatch.setattr("BenNevis.utils.memory.rss_bytes", lambda: 9130 * 2**20)
+        monkeypatch.setattr("BenNevis.utils.memory.trim_malloc", lambda: False)
+        line = MemoryReporter().report("after epoch 2", trim=True)
+        assert "after trim 9130MiB" in line
+        assert "released 0MiB" in line
+
+    def test_an_unavailable_trim_says_so(self, monkeypatch):
+        monkeypatch.setattr("BenNevis.utils.memory.trim_malloc", lambda: None)
+        line = MemoryReporter().report("after epoch 1", trim=True)
+        assert "trim unavailable" in line
+        assert "after trim" not in line

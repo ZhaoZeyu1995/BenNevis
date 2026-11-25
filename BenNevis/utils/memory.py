@@ -22,6 +22,15 @@ question -- `k2.Fsa` would point at the graph, `torch.Tensor` at a
 retained autograd graph, `dict` or `list` at something the trainer
 appends to.
 
+The first real reading answered that question with a no, and the module
+kept growing because of it. Two epochs on mini-librispeech: resident
+808MiB, 7894MiB, 9130MiB, against live tensor storage of 130MiB, 169MiB,
+169MiB and a tracked object count flat within four hundred of 961,000.
+No Python type is accumulating, so there is nothing for a type name to
+point at and 8.3GiB is held below Python -- which is what `trim_malloc`
+is for, and why the per-epoch reading now takes a resident size either
+side of it.
+
 Taking the reading costs memory itself: `gc.get_objects()` builds a list
 of every tracked object, which on a large run is millions of references.
 So the resident size is read *before* that list exists, and the reading
@@ -41,6 +50,7 @@ from typing import Dict, List, Optional, Tuple
 
 __all__ = [
     "rss_bytes",
+    "trim_malloc",
     "count_live_objects",
     "tensor_bytes",
     "MemoryReporter",
@@ -135,6 +145,52 @@ def rss_bytes() -> Optional[int]:
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     return None
+
+
+def trim_malloc() -> Optional[bool]:
+    """
+    Ask glibc to return free heap pages to the operating system.
+
+    This is a question rather than a remedy, and it is here because the
+    first real reading made it the next one to ask. Over two epochs on
+    mini-librispeech the resident size went 808MiB, 7894MiB, 9130MiB
+    while the live tensor storage went 130MiB, 169MiB, 169MiB and the
+    tracked object count stayed flat within four hundred. So the growth
+    is **not** in Python: nothing the collector can see is accumulating,
+    and 8.3GiB is unaccounted for by every tensor the process owns.
+
+    What that leaves is the allocator. glibc serves large blocks from
+    per-thread arenas and never returns a free block in a secondary arena
+    to the kernel of its own accord, so a workload that allocates and
+    frees large arrays across many threads -- which k2's intersection and
+    torch's CPU kernels both are -- can hold a large resident size made
+    entirely of memory it has already released. `malloc_trim` releases
+    what it can, so the reading taken either side of it separates the two
+    cases: a resident size that falls is free memory being held, and one
+    that does not is memory genuinely still in use.
+
+    Returns
+    -------
+    trimmed: Optional[bool]
+        True if glibc released anything, False if it had nothing to
+        release, and None where `malloc_trim` does not exist -- macOS,
+        Windows and musl have no counterpart, so this is a Linux-only
+        reading and the caller must treat None as "not asked".
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        trim = libc.malloc_trim
+    except (OSError, AttributeError):
+        # musl has no `libc.so.6` and no `malloc_trim`; a static build has
+        # neither either. Nothing to report rather than an error.
+        return None
+    trim.restype = ctypes.c_int
+    trim.argtypes = [ctypes.c_size_t]
+    return bool(trim(0))
 
 
 def _scan() -> Tuple[Dict[str, int], Optional[int]]:
@@ -277,7 +333,7 @@ class MemoryReporter:
         risen.sort(key=lambda item: (-item[1], item[0]))
         return risen[: self.top]
 
-    def report(self, label: str = "") -> str:
+    def report(self, label: str = "", trim: bool = False) -> str:
         """
         Take a reading and format it as one line for the log.
 
@@ -285,12 +341,20 @@ class MemoryReporter:
         ---------
         label: str
             Prefix identifying the reading, such as `epoch 3`.
+        trim: bool
+            Whether to call `trim_malloc` after the reading and report
+            the resident size again. False by default, because the
+            reading should be able to be taken without changing the
+            process it measures; the training loop asks for it because
+            the difference is the only thing that separates a held free
+            heap from memory still in use.
 
         Returns
         -------
         line: str
-            A single line: resident size, live tensor storage, and the
-            types that grew since the previous reading.
+            A single line: resident size, live tensor storage, the types
+            that grew since the previous reading, and -- if asked -- what
+            the allocator gave back.
         """
         # Read before `gc.get_objects()` exists, since that list is itself
         # millions of references on a large run.
@@ -308,4 +372,17 @@ class MemoryReporter:
         if growth:
             grew = ", ".join(f"{name} +{count}" for name, count in growth)
             parts.append(f"grew: {grew}")
+        if trim:
+            trimmed = trim_malloc()
+            if trimmed is None:
+                parts.append("trim unavailable")
+            else:
+                after = rss_bytes()
+                if after is None or rss is None:
+                    parts.append(f"trimmed {trimmed}")
+                else:
+                    parts.append(
+                        f"after trim {after / 2 ** 20:.0f}MiB "
+                        f"(released {(rss - after) / 2 ** 20:.0f}MiB)"
+                    )
         return " ".join(parts)
