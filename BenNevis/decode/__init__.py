@@ -31,6 +31,8 @@ __all__ = [
     "aux_labels_per_arc",
     "prepare_output_probe",
     "weight_of_word_sequence",
+    "weight_of_label_sequence",
+    "LabelProbe",
 ]
 
 #: Which submodule each exported name lives in, so `__getattr__` can find
@@ -41,6 +43,8 @@ _SOURCES = {
     "load_openfst_text": "graph",
     "prepare_output_probe": "graph",
     "weight_of_word_sequence": "graph",
+    "weight_of_label_sequence": "graph",
+    "LabelProbe": "graph",
     "aux_labels_per_arc": "decoder",
     "decode": "decoder",
     "decode_archive": "decoder",

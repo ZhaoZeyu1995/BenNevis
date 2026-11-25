@@ -64,6 +64,7 @@ __all__ = [
     "prepare_output_probe",
     "weight_of_word_sequence",
     "weight_of_label_sequence",
+    "LabelProbe",
 ]
 
 #: OpenFST's `kDelta`, the grid `fstminimizeencoded` rounds weights to. A
@@ -314,13 +315,9 @@ def _arc_arrays(graph: k2.Fsa) -> Tuple["array.array", "array.array", "array.arr
     return arrays[0], arrays[1], arrays[2]
 
 
-def weight_of_label_sequence(
-    graph: k2.Fsa,
-    labels: List[int],
-    epsilon: int = 0,
-) -> Optional[float]:
+class LabelProbe:
     """
-    The least weight of a path reading these input labels, over epsilons.
+    A graph packed so the weight of a label sequence can be searched for.
 
     A Dijkstra over (state, position) pairs rather than a composition
     followed by `k2.shortest_path`, and the reason is that the obvious
@@ -342,67 +339,126 @@ def weight_of_label_sequence(
     settled-set argument holds. That is the one property to check before
     reusing this on a graph from somewhere else.
 
+    **Packed once, searched many times**, which is what this being a
+    class is for. The arrays cost milliseconds to build and the gate
+    asks 24 sequences of four graphs, so rebuilding them per question
+    was 48 repacks of graphs that never change: measured at about 15s of
+    the TLG half's 113s on run 45705231089, and the whole of the LG
+    half's old 125.7s back when the pack was a `tolist()`.
+    `weight_of_label_sequence` is the one-off form and builds one of
+    these for a single question.
+
     Arguments
     ---------
     graph: k2.Fsa
         The graph to search, with the sequence on its **input** side. A
         word-sequence probe therefore passes `k2.invert(graph)`.
-    labels: List[int]
-        The label sequence, as ids in the graph's input symbol table.
     epsilon: int
         The label that consumes no position, 0 by default. Note label 0
         is `<blk>` rather than `<eps>` on a k2 topology's input side, so
         a probe of a token graph must say which it means.
+    """
+
+    def __init__(self, graph: k2.Fsa, epsilon: int = 0) -> None:
+        # Three flat `array.array`s rather than `tolist()`, because the
+        # graph this has to survive is mini-librispeech's `TLG` at
+        # 43,263,880 arcs. `arcs.values()[:, :3].tolist()` is a list of
+        # three-element lists: about 160 bytes an arc once each Python
+        # int and each inner list is counted, so some 7GiB for that
+        # graph before Kaldi's 12.9M-arc one is read beside it -- which
+        # on a 15.6GiB runner is the same SIGKILL `remove_epsilon`
+        # already earned, arrived at from the other side. An
+        # `array.array` stores four bytes an element and still indexes
+        # to a Python int, so the three together are 516MiB.
+        self.destinations, self.labels, self.costs = _arc_arrays(graph)
+        self.splits = graph.arcs.row_splits(1).tolist()
+        self.epsilon = epsilon
+
+    def weight(self, labels: List[int]) -> Optional[float]:
+        """
+        The least weight of a path reading these input labels.
+
+        Arguments
+        ---------
+        labels: List[int]
+            The label sequence, as ids in the graph's input symbol
+            table.
+
+        Returns
+        -------
+        Optional[float]
+            The weight, or None if no path reads the sequence -- a fact
+            about the lexicon and grammar rather than about the weights,
+            so callers record it as absent rather than as infinity.
+        """
+        import heapq
+
+        destinations = self.destinations
+        out_labels = self.labels
+        costs = self.costs
+        splits = self.splits
+        epsilon = self.epsilon
+        target = list(labels)
+        length = len(target)
+
+        best: Dict[Tuple[int, int], float] = {(0, 0): 0.0}
+        queue: List[Tuple[float, int, int]] = [(0.0, 0, 0)]
+        while queue:
+            cost, state, position = heapq.heappop(queue)
+            if cost > best.get((state, position), float("inf")):
+                continue
+            for index in range(splits[state], splits[state + 1]):
+                label = out_labels[index]
+                if label == -1:
+                    # The arc into the super-final state, which accepts
+                    # only once the whole sequence has been read.
+                    if position == length:
+                        return cost + costs[index]
+                    continue
+                if label == epsilon:
+                    advanced = position
+                elif position < length and label == target[position]:
+                    advanced = position + 1
+                else:
+                    continue
+                key = (destinations[index], advanced)
+                through = cost + costs[index]
+                if through < best.get(key, float("inf")):
+                    best[key] = through
+                    heapq.heappush(queue, (through, key[0], advanced))
+        return None
+
+
+def weight_of_label_sequence(
+    graph: k2.Fsa,
+    labels: List[int],
+    epsilon: int = 0,
+) -> Optional[float]:
+    """
+    One label sequence's least weight, packing the graph for the once.
+
+    The one-off form of `LabelProbe`, kept because a single question is
+    a reasonable thing to ask and the packing is a detail. **Anything
+    asking more than one question of the same graph should build a
+    `LabelProbe` and keep it**: the pack is per graph, not per question,
+    and paying it per question is what made the gate's LG half 125.7s
+    where it is now 6.2s.
+
+    Arguments
+    ---------
+    graph: k2.Fsa
+        The graph to search, with the sequence on its **input** side.
+    labels: List[int]
+        The label sequence, as ids in the graph's input symbol table.
+    epsilon: int
+        The label that consumes no position, 0 by default.
 
     Returns
     -------
     Optional[float]
-        The weight, or None if no path reads the sequence -- a fact about
-        the lexicon and grammar rather than about the weights, so callers
-        record it as absent rather than as infinity.
+        The weight, or None if no path reads the sequence.
     """
-    import heapq
-
-    # Three flat `array.array`s rather than `tolist()`, because the graph
-    # this has to survive is mini-librispeech's `TLG` at 43,263,880 arcs.
-    # `arcs.values()[:, :3].tolist()` is a list of three-element lists:
-    # about 160 bytes an arc once each Python int and each inner list is
-    # counted, so some 7GiB for that graph before Kaldi's 12.9M-arc one is
-    # read beside it -- which on a 15.6GiB runner is the same SIGKILL
-    # `remove_epsilon` already earned, arrived at from the other side. An
-    # `array.array` stores four bytes an element and still indexes to a
-    # Python int, so the three together are 516MiB.
-    destinations, out_labels, costs = _arc_arrays(graph)
-    splits = graph.arcs.row_splits(1).tolist()
-    target = list(labels)
-    length = len(target)
-
-    best: Dict[Tuple[int, int], float] = {(0, 0): 0.0}
-    queue: List[Tuple[float, int, int]] = [(0.0, 0, 0)]
-    while queue:
-        cost, state, position = heapq.heappop(queue)
-        if cost > best.get((state, position), float("inf")):
-            continue
-        for index in range(splits[state], splits[state + 1]):
-            label = out_labels[index]
-            if label == -1:
-                # The arc into the super-final state, which accepts only
-                # once the whole sequence has been read.
-                if position == length:
-                    return cost + costs[index]
-                continue
-            if label == epsilon:
-                advanced = position
-            elif position < length and label == target[position]:
-                advanced = position + 1
-            else:
-                continue
-            key = (destinations[index], advanced)
-            through = cost + costs[index]
-            if through < best.get(key, float("inf")):
-                best[key] = through
-                heapq.heappush(queue, (through, key[0], advanced))
-    return None
+    return LabelProbe(graph, epsilon=epsilon).weight(labels)
 
 
 def build_decoding_graph(

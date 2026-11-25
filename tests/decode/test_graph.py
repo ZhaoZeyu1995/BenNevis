@@ -881,3 +881,73 @@ class TestTlgEquivalenceBySearch:
         four = weight_of_label_sequence(our_graph, [words["YES"]] * 4)
         assert one is not None and four is not None
         assert four > one * 2
+
+
+class TestTheProbeIsPackedOncePerGraph:
+    """
+    What the `LabelProbe` class is for, and it is a measured saving
+    rather than a tidiness.
+
+    The arrays are a property of the graph, so a probe rebuilt per
+    question repacks a graph that has not changed. On run 45705231089
+    that was 48 repacks of 43M and 12.9M arcs for 24 sequences; back
+    when the pack was `tolist()` it was the whole of the LG half's
+    125.7s, which fell to 6.2s when the pack became `frombytes`. Neither
+    number is visible from a small graph, which is why this is pinned by
+    counting rather than by timing.
+    """
+
+    def test_one_probe_packs_once_however_many_questions(self, inverted, tables):
+        from BenNevis.decode import graph as graph_module
+
+        packs = []
+        original = graph_module._arc_arrays
+
+        def counted(graph):
+            packs.append(graph)
+            return original(graph)
+
+        graph_module._arc_arrays = counted
+        try:
+            _their_graph, our_graph = inverted
+            words, _phones = tables
+            probe = graph_module.LabelProbe(our_graph)
+            for sentence in (["YES"], ["NO"], ["YES", "NO"], ["NO", "YES"]):
+                assert probe.weight([words[word] for word in sentence]) is not None
+        finally:
+            graph_module._arc_arrays = original
+        assert len(packs) == 1, f"packed {len(packs)} times for four questions"
+
+    def test_the_one_off_function_still_answers_the_same(self, inverted, tables):
+        """
+        `weight_of_label_sequence` is the single-question form and must
+        not drift from the class it wraps -- every test above this file's
+        TLG classes still calls it.
+        """
+        from BenNevis.decode.graph import LabelProbe, weight_of_label_sequence
+
+        _their_graph, our_graph = inverted
+        words, _phones = tables
+        ids = [words["YES"], words["NO"]]
+        probe = LabelProbe(our_graph)
+        assert weight_of_label_sequence(our_graph, ids) == probe.weight(ids)
+
+    def test_the_epsilon_belongs_to_the_probe(self, inverted, tables):
+        """
+        It is a property of the graph's alphabet rather than of the
+        question, so it is given once. Taking it per question would
+        invite two questions of one graph being asked under different
+        alphabets, which is how a token-side probe comes to skip blanks
+        instead of epsilons.
+        """
+        from BenNevis.decode.graph import LabelProbe
+
+        _their_graph, our_graph = inverted
+        words, _phones = tables
+        ids = [words["YES"]]
+        # `<eps>` is 0 on the word side; calling the blank's id epsilon
+        # instead must change the answer rather than be ignored.
+        assert LabelProbe(our_graph, epsilon=0).weight(ids) is not None
+        assert LabelProbe(our_graph, epsilon=words["YES"]).weight(ids) != (
+            LabelProbe(our_graph, epsilon=0).weight(ids)
+        )
