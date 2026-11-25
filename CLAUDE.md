@@ -435,6 +435,40 @@ tolerances chosen per layer:
   `remove_epsilon`; it tolerates cycles because the weights are
   non-negative. `tests/recipes/test_nightly_graph_gate.py` pins the flag
   with the reason, so restoring it is a decision.
+  **That is done, and the TLG half runs again.** `compare_tlg` inverts
+  with `k2.invert` and then *searches* with `weight_of_label_sequence`
+  instead of inverting and removing epsilons, so nothing of the 43M-arc
+  graph has to be rewritten; the flag stays as an escape, and the test
+  now pins its **absence** with the same reason attached, because the
+  state to notice is the half being off.
+  Two things had to be settled before that was worth dispatching.
+  **The probe's own memory had to come down, or it would have been the
+  same SIGKILL from the other side.** `graph.arcs.values()[:, :3]
+  .tolist()` is a list of three-element lists -- roughly 160 bytes an arc
+  once each Python int and each inner list is counted, so about 7GiB for
+  43,263,880 arcs, before Kaldi's 12.9M-arc TLG is read beside it on a
+  15.6GiB runner. `_arc_arrays` packs the destinations, labels and costs
+  into three `array.array`s at four bytes an element, 516MiB in total,
+  and they still index to Python ints so the search loop is unchanged.
+  Worth remembering as a shape: a probe that avoids an expensive k2
+  operation can reintroduce the same limit in Python object overhead.
+  **And the two routes are checked against each other on yesno**, where
+  both fit: `TestTlgEquivalenceBySearch` asserts the searched weight
+  equals the composed one exactly rather than within quantisation, since
+  they are one graph's one minimum and any difference would be a defect
+  in one of them. That is what licences using the cheap route on
+  mini-librispeech, where the expensive one cannot be run to compare.
+  The test asserts first that the inverted graphs **still have input
+  epsilons**, because a probe that tolerates epsilons can only be shown
+  to do so on a graph that has them -- the same lesson as the prefix
+  test below.
+  One property of the probe is worth knowing before editing it: its
+  state space is bounded only because an epsilon arc does not advance
+  the position and a label arc advances it only on a match. A mutation
+  that advanced on epsilon made the positions unbounded and the search
+  **hung** rather than failed, on yesno's 33-arc TLG. So a hang is one
+  of this function's failure modes, and a mutation test on it wants a
+  timeout.
   **That crash also hid the LG verdict, which is a defect in the gate
   rather than in the graph.** Mismatches were printed only after both
   halves had run, so a kill in the expensive half took the cheap half's
@@ -470,9 +504,9 @@ tolerances chosen per layer:
   It also takes the epsilon label as an argument rather than assuming 0,
   because label 0 is `<blk>` and not `<eps>` on a k2 topology's input
   side -- a probe hardcoding 0 would skip blanks on one graph and
-  epsilons on another while looking identical. And it makes the TLG half
-  reachable again without `remove_epsilon`, which is the expensive thing
-  `--skip-tlg` exists to avoid.
+  epsilons on another while looking identical. And it is what the TLG
+  half runs on now, without `remove_epsilon` -- the expensive thing
+  `--skip-tlg` existed to avoid.
   One test in that set is worth knowing about because it was written
   after a mutation survived. `weight_of_label_sequence` must not accept a
   **prefix** of the sequence, and the first rejection test could not see
@@ -497,6 +531,26 @@ tolerances chosen per layer:
   fail. Same shape as the `G.fst` gate that skipped unconditionally and
   the nightly summary whose `grep` failed a passing run -- a shell
   detail deciding whether a check means anything.
+  Run 45701197144 then repeated that verdict with the step able to fail,
+  in 8m57s end to end, and it is the run that says what a graph-only
+  gate costs: `stop_stage=4` with `topos=ctc` builds the graphs and
+  compares them without training anything, so this is cheap enough to
+  dispatch against a change to `BenNevis/decode/graph.py` rather than
+  waiting for a nightly. Note the gate step is conditioned on the
+  mini-librispeech recipe, and the *scheduled* nightly runs yesno -- so
+  the gate only ever runs on a dispatch, and making its TLG half
+  expensive cannot slow the scheduled run.
+  **A stale comment is a defect, and this file's own lesson applies to
+  the workflow.** When the gate became blocking, the paragraph above it
+  saying "`continue-on-error` deliberately ... **Turn this into a
+  blocking gate once the cost is known**" was left in place, directly
+  above the new paragraph saying the opposite -- in fact the whole
+  comment block was there twice, older copy first. A reader meets the
+  stale one first and has no reason to doubt it.
+  `test_the_comments_do_not_contradict_the_step` now pins the two claims
+  that have a machine-checkable counterpart: a comment promising
+  `continue-on-error` while the step carries none, and a comment asking
+  for a change that has been made.
   Worth keeping in view: the gate found **three defects in its own
   machinery** before it found anything about the graphs -- the quoted
   shell, the epsilon flag, and `shortest_path` on cycles -- and reported

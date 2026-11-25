@@ -108,21 +108,54 @@ class TestTheGateIsWired:
             "pipefail" in first
         ), f"pipefail must be set before the pipeline, not {first!r}"
 
-    def test_the_tlg_half_is_skipped_and_the_cost_is_why(self):
+    def test_both_halves_run(self):
         """
-        `--skip-tlg` was the designed escape and it is now taken.
+        `--skip-tlg` was taken for as long as the TLG half went through
+        `prepare_output_probe`: run 45554380456 showed
+        `k2.remove_epsilon` on the 43,263,880-arc TLG stopping the step
+        inside a minute with no traceback, which is what a SIGKILL looks
+        like. The half is a Dijkstra over (state, position) pairs now,
+        which needs no epsilon removal at all, so the flag goes back to
+        being an escape.
 
-        Run 45554380456 measured what it was waiting for:
-        `prepare_output_probe` on the 43,263,880-arc TLG stopped the step
-        dead inside a minute, with no traceback, which is what a SIGKILL
-        looks like. `remove_epsilon` on a graph that size does not fit
-        the runner, so the TLG half cannot run as written and the LG
-        half -- which costs five seconds -- must not be held hostage to
-        it. Turning this back on wants the Dijkstra over
-        (state, position) pairs instead, which tolerates cycles because
-        the weights are non-negative.
+        The flag still exists, deliberately -- the TLG half is the
+        expensive one and may yet have to come off. What this pins is
+        that taking it is a decision someone writes a reason for, rather
+        than the state the gate quietly sits in.
         """
-        assert "--skip-tlg" in _step(STEP)["run"]
+        assert "--skip-tlg" not in _step(STEP)["run"], (
+            "the TLG half is off again; say what it cost here and in the "
+            "step's comment"
+        )
+
+    def test_the_comments_do_not_contradict_the_step(self):
+        """
+        They did. #86 made the gate blocking and added a paragraph saying
+        so, but left the paragraph above it that said
+        "`continue-on-error` deliberately ... **Turn this into a blocking
+        gate once the cost is known**" -- in fact the whole comment block
+        was there twice, the older copy first. Two comments disagreeing
+        about whether a check can fail the build is worse than neither,
+        because the stale one is the one a reader meets first and has no
+        reason to doubt.
+
+        Only the claims that have a machine-checkable counterpart are
+        pinned: a comment promising `continue-on-error` while the step
+        has none, and one asking for a change that has been made.
+        """
+        raw = WORKFLOW.read_text()
+        before = raw[: raw.index(f"- name: {STEP}")]
+        comments = before[before.rindex("\n\n") :]
+        step = _step(STEP)
+        if "continue-on-error" not in step:
+            assert "continue-on-error` deliberately" not in comments, (
+                "the comment says the step cannot fail the build and the "
+                "step says otherwise"
+            )
+        assert "Turn this into a blocking gate" not in comments, (
+            "that was done; a comment asking for a change already made "
+            "reads as a change still outstanding"
+        )
 
 
 @pytest.fixture(scope="module")
