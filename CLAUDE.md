@@ -487,6 +487,19 @@ tolerances chosen per layer:
   | searching 24 sequences, both TLGs | 113.0s |
   | the whole job, `stop_stage=4` | 10m42s |
 
+  Run 45711798591, with the pack hoisted, searched the same 24 sequences
+  in **51.8s** and packed both TLG probes in 0.8s, the whole job taking
+  8m21s. **That 54% is mostly a faster runner, and the hoist is worth
+  about 21s of it.** Every unrelated step moved too -- our TLG built in
+  28.0s against 38.6s and Kaldi's loaded in 14.4s against 24.0s -- so
+  this runner is some 35% quicker, which puts the like-for-like
+  baseline near 73s and the saving near the ~19s that 48 packs at 0.4s
+  a graph predicts. Reading the headline as the hoist would have been
+  the same error as the 20x claim above, which is only safe because the
+  graphs and sequences were held identical for it. The
+  `packed both TLG probes` line exists so the next run need not infer
+  the pack from a total.
+
   **`k2.invert` was never the expensive part** -- the entire cost of
   `prepare_output_probe` was `remove_epsilon`, so the half that would
   not fit became a two-minute search by dropping one call.
