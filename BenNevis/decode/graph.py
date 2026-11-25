@@ -49,6 +49,7 @@ Authors:
 
 from __future__ import annotations
 
+import array
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -276,6 +277,43 @@ def weight_of_word_sequence(
     return -float(best.scores.sum())
 
 
+def _arc_arrays(graph: k2.Fsa) -> Tuple["array.array", "array.array", "array.array"]:
+    """
+    A graph's destinations, input labels and costs as compact arrays.
+
+    Pulled out of `weight_of_label_sequence` because it is where that
+    probe's memory goes, and the size it has to survive is
+    mini-librispeech's `TLG`. Each array holds four bytes an element and
+    still indexes to a Python int or float, so the search loop reads them
+    exactly as it would read a list.
+
+    Arguments
+    ---------
+    graph: k2.Fsa
+        The graph, on the CPU or elsewhere; its arcs are copied.
+
+    Returns
+    -------
+    Tuple[array.array, array.array, array.array]
+        The destination state, the input label and the **cost** of each
+        arc, in arc order. k2's scores are negated costs, so the third is
+        the negative of `graph.scores`.
+    """
+    code = "i" if array.array("i").itemsize == 4 else "l"
+    if array.array(code).itemsize != 4:
+        raise RuntimeError("no four-byte integer typecode on this platform")
+    values = graph.arcs.values()
+    arrays = []
+    for column in (1, 2):
+        packed = array.array(code)
+        packed.frombytes(values[:, column].contiguous().cpu().numpy().tobytes())
+        arrays.append(packed)
+    costs = array.array("f")
+    costs.frombytes((-graph.scores).contiguous().cpu().numpy().tobytes())
+    arrays.append(costs)
+    return arrays[0], arrays[1], arrays[2]
+
+
 def weight_of_label_sequence(
     graph: k2.Fsa,
     labels: List[int],
@@ -325,9 +363,16 @@ def weight_of_label_sequence(
     """
     import heapq
 
-    arcs = graph.arcs.values()[:, :3].tolist()
-    # k2's scores are negated costs, so a cost is the negative score.
-    costs = (-graph.scores).tolist()
+    # Three flat `array.array`s rather than `tolist()`, because the graph
+    # this has to survive is mini-librispeech's `TLG` at 43,263,880 arcs.
+    # `arcs.values()[:, :3].tolist()` is a list of three-element lists:
+    # about 160 bytes an arc once each Python int and each inner list is
+    # counted, so some 7GiB for that graph before Kaldi's 12.9M-arc one is
+    # read beside it -- which on a 15.6GiB runner is the same SIGKILL
+    # `remove_epsilon` already earned, arrived at from the other side. An
+    # `array.array` stores four bytes an element and still indexes to a
+    # Python int, so the three together are 516MiB.
+    destinations, out_labels, costs = _arc_arrays(graph)
     splits = graph.arcs.row_splits(1).tolist()
     target = list(labels)
     length = len(target)
@@ -339,7 +384,7 @@ def weight_of_label_sequence(
         if cost > best.get((state, position), float("inf")):
             continue
         for index in range(splits[state], splits[state + 1]):
-            _, destination, label = arcs[index]
+            label = out_labels[index]
             if label == -1:
                 # The arc into the super-final state, which accepts only
                 # once the whole sequence has been read.
@@ -352,11 +397,11 @@ def weight_of_label_sequence(
                 advanced = position + 1
             else:
                 continue
-            key = (destination, advanced)
+            key = (destinations[index], advanced)
             through = cost + costs[index]
             if through < best.get(key, float("inf")):
                 best[key] = through
-                heapq.heappush(queue, (through, destination, advanced))
+                heapq.heappush(queue, (through, key[0], advanced))
     return None
 
 

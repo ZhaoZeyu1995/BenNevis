@@ -750,3 +750,134 @@ class TestWeightOfLabelSequence:
             acceptor=False,
         )
         assert weight_of_label_sequence(graph, [1]) == pytest.approx(0.75)
+
+
+@pytest.fixture(scope="module")
+def inverted(our_tlg):
+    """
+    Both TLGs inverted and nothing else -- the route the gate takes.
+
+    `prepare_output_probe` follows the inversion with
+    `k2.remove_epsilon`, and that is the step mini-librispeech's
+    43,263,880-arc TLG does not survive on a 15.6GiB runner. Inverting
+    alone is cheap on any graph; what pays for it is a probe that
+    tolerates the epsilons instead of removing them.
+    """
+    kaldi = load_openfst_text(
+        (REFERENCE / "graph" / "ctc" / "TLG.fst.txt").read_text(),
+        acceptor=False,
+    )
+    return k2.invert(kaldi), k2.invert(our_tlg)
+
+
+class TestTlgEquivalenceBySearch:
+    """
+    The TLG half of the nightly gate, on the one corpus where both
+    graphs are committed.
+
+    It asks the same question as `TestTlgEquivalenceByOutput` above by a
+    different route: invert so the words are the input labels, then
+    search with `weight_of_label_sequence` rather than remove the
+    epsilons and compose. The two routes are compared against each
+    other here as well as against Kaldi, because yesno is where that
+    comparison is affordable and mini-librispeech is where only one of
+    them is.
+    """
+
+    def test_the_inverted_graphs_still_have_input_epsilons(self, inverted):
+        """
+        The premise, and without it the agreement below would prove
+        nothing: a probe that tolerates epsilons can only be shown to do
+        so on a graph that has them. Most of a token graph's arcs emit
+        no word -- 20 of 29 in yesno's TLG -- and inverted those are
+        input epsilons, including the blank self-loops that make the
+        graph cyclic. This is the state `prepare_output_probe` exists to
+        leave behind and this route does not need to.
+        """
+        for graph in inverted:
+            assert int((graph.labels == 0).sum()) > 0
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            ["YES"],
+            ["NO"],
+            ["YES", "NO"],
+            ["NO", "YES"],
+            ["YES", "YES", "NO"],
+            ["NO", "NO", "NO"],
+            ["YES", "YES", "YES", "YES"],
+        ],
+    )
+    def test_the_weights_agree_within_quantisation(self, inverted, tables, sentence):
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        their_graph, our_graph = inverted
+        words, _phones = tables
+        ids = [words[word] for word in sentence]
+
+        theirs = weight_of_label_sequence(their_graph, ids)
+        ours = weight_of_label_sequence(our_graph, ids)
+        assert theirs is not None, f"Kaldi's TLG rejects {sentence}"
+        assert ours is not None, f"our TLG rejects {sentence}"
+
+        bound = (len(sentence) + 1) * QUANTISATION_DELTA
+        assert abs(theirs - ours) <= bound, (
+            f"{' '.join(sentence)}: Kaldi {theirs:.6f}, ours {ours:.6f}, "
+            f"gap {abs(theirs - ours):.6f} exceeds {bound:.6f}"
+        )
+
+    @pytest.mark.parametrize("sentence", [["YES"], ["YES", "NO"], ["NO", "NO", "NO"]])
+    def test_it_finds_what_the_composition_route_finds(
+        self, inverted, probes, tables, sentence
+    ):
+        """
+        The two routes must give the *same* weight, not merely weights
+        that agree to Kaldi's quantisation -- they are searching one
+        graph for one minimum, so any difference is a defect in one of
+        them rather than a tolerance.
+
+        This is what licences the gate using the cheap route on a graph
+        where the expensive one cannot be run for comparison.
+        """
+        from BenNevis.decode.graph import (
+            weight_of_label_sequence,
+            weight_of_word_sequence,
+        )
+
+        words, _phones = tables
+        ids = [words[word] for word in sentence]
+        for searched, composed in zip(inverted, probes):
+            by_search = weight_of_label_sequence(searched, ids)
+            by_composition = weight_of_word_sequence(composed, ids)
+            assert by_search is not None and by_composition is not None
+            assert by_search == pytest.approx(by_composition, abs=1e-5)
+
+    def test_a_sequence_the_grammar_rejects_returns_none(self, inverted, tables):
+        """
+        `<SIL>` is in yesno's lexicon and not in its grammar. The route
+        must report that as absent rather than as a weight, and rather
+        than looping on the epsilon cycles it is tolerating.
+        """
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        words, _phones = tables
+        if "<SIL>" not in words:
+            pytest.skip("no out-of-grammar word to try")
+        ids = [words["<SIL>"]]
+        for graph in inverted:
+            assert weight_of_label_sequence(graph, ids) is None
+
+    def test_longer_sequences_cost_more(self, inverted, tables):
+        """
+        A probe returning a constant, or the weight of the empty path,
+        would pass every comparison above while measuring nothing.
+        """
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        _their_graph, our_graph = inverted
+        words, _phones = tables
+        one = weight_of_label_sequence(our_graph, [words["YES"]])
+        four = weight_of_label_sequence(our_graph, [words["YES"]] * 4)
+        assert one is not None and four is not None
+        assert four > one * 2

@@ -27,7 +27,10 @@ What is compared, and why each side is probed differently:
   question a decoder asks is the minimum over all of them. Probing one
   hand-picked token sequence would compare an alignment no decoder need
   take. It also avoids the token tables, whose ids differ by one between
-  Kaldi's `tokens.txt` and our `k2/tokens.txt`.
+  Kaldi's `tokens.txt` and our `k2/tokens.txt`. The graph is inverted so
+  the words are its input labels and then **searched**, because
+  `k2.remove_epsilon` on 43,263,880 arcs does not fit the runner and the
+  Dijkstra does not need it.
 
 Weights are compared within `n * kDelta / 2` -- Kaldi's own quantisation,
 since `fstminimizeencoded` rounds every arc to a multiple of 1/1024.
@@ -165,18 +168,43 @@ def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
 
 
 def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]]:
-    """Compare TLG on word sequences, searched on the output side."""
-    from BenNevis.decode.graph import prepare_output_probe, weight_of_word_sequence
+    """
+    Compare TLG on word sequences, searched on the output side.
 
-    print("  preparing the output probes (invert, remove epsilons)", flush=True)
+    **Inverted and then searched, not inverted and epsilon-freed.** The
+    first version of this half called `prepare_output_probe`, whose
+    `k2.remove_epsilon` is what a 43,263,880-arc graph does not survive:
+    run 45554380456 printed `preparing the output probes` and stopped
+    inside a minute with no traceback, which is what a SIGKILL looks
+    like. `weight_of_label_sequence` needs no removal at all, because a
+    Dijkstra over (state, position) pairs tolerates the cycles that
+    epsilon arcs form -- every arc of a graph built from `-log`
+    probabilities costs nothing or more, so going round a cycle can only
+    make a path dearer.
+
+    The epsilons it skips are the ones that matter here: most of a token
+    graph's arcs emit no word at all, 20 of 29 even in yesno's `TLG`, and
+    once the graph is inverted those are input epsilons. The label is
+    read out of `words.txt` rather than assumed, because 0 is `<eps>` on
+    this side and `<blk>` on the token side -- a probe hardcoding it
+    would look identical while skipping the wrong thing.
+
+    Returns the number compared and the failures, like `compare_lg`, so
+    a half that compared nothing cannot pass for a half that agreed.
+    """
+    import k2
+
+    from BenNevis.decode.graph import weight_of_label_sequence
+
+    epsilon = words_table.get("<eps>", 0)
     started = time.time()
-    their_probe = prepare_output_probe(theirs)
-    say("Kaldi TLG inverted and epsilon-free", started)
-    size("Kaldi TLG probe", their_probe)
+    their_probe = k2.invert(theirs)
+    say("Kaldi TLG inverted", started)
+    size("Kaldi TLG inverted", their_probe)
     started = time.time()
-    our_probe = prepare_output_probe(ours)
-    say("our TLG inverted and epsilon-free", started)
-    size("our TLG probe", our_probe)
+    our_probe = k2.invert(ours)
+    say("our TLG inverted", started)
+    size("our TLG inverted", our_probe)
 
     failures: List[str] = []
     compared = 0
@@ -184,8 +212,8 @@ def compare_tlg(ours, theirs, words_table, drawn, delta) -> Tuple[int, List[str]
         if any(word not in words_table for word in sentence):
             continue
         ids = [words_table[word] for word in sentence]
-        kaldi = weight_of_word_sequence(their_probe, ids)
-        mine = weight_of_word_sequence(our_probe, ids)
+        kaldi = weight_of_label_sequence(their_probe, ids, epsilon=epsilon)
+        mine = weight_of_label_sequence(our_probe, ids, epsilon=epsilon)
         key = " ".join(sentence)
         if kaldi is None and mine is None:
             continue
@@ -237,8 +265,9 @@ def main() -> int:
     parser.add_argument(
         "--skip-tlg",
         action="store_true",
-        help="compare LG only. remove_epsilon on a 43M-arc TLG has an "
-        "unmeasured cost, so this is the escape if it proves unaffordable",
+        help="compare LG only. The escape, kept now that the TLG half no "
+        "longer calls remove_epsilon: the Dijkstra is affordable where "
+        "that was not, but it is still the expensive half",
     )
     args = parser.parse_args()
 
