@@ -612,3 +612,141 @@ class TestTlgEquivalenceByOutput:
         four = weight_of_word_sequence(our_probe, [words["YES"]] * 4)
         assert one is not None and four is not None
         assert four > one * 2
+
+
+class TestWeightOfLabelSequence:
+    """
+    The probe that survives Kaldi's own LG, which the composition did not.
+
+    Three routes were tried on the real graph and the first two fail.
+    `k2.intersect` with `treat_epsilons_specially=False` treats label 0 as
+    an ordinary symbol, so every path carrying an input epsilon is
+    rejected -- on mini-librispeech that was *every* path, and the gate
+    reported `compared LG on 0 sequences`. With the flag True the
+    epsilons match correctly, but an n-gram back-off arc is an input
+    epsilon and those form cycles, so `k2.shortest_path` fails with
+    `dest_state > state_idx01 (17 vs. 17)`, an error that says nothing
+    about epsilons. Removing them first is the third route and the
+    dearest: `k2.remove_epsilon` on the 43M-arc TLG does not fit a 16GiB
+    runner.
+
+    So this is a Dijkstra over (state, position) pairs, and the property
+    it rests on is that the weights are non-negative -- every arc of a
+    graph built from `-log` probabilities costs nothing or more, so a
+    cycle can only make a path dearer. These tests put an epsilon
+    self-loop on the path deliberately, because that is the shape no
+    composition-and-shortest-path can answer.
+    """
+
+    @staticmethod
+    def cyclic():
+        """A B, reachable only through a state with an epsilon self-loop."""
+        import k2
+
+        return k2.Fsa.from_str(
+            "0 1 1 0 0.0\n"
+            "1 1 0 0 -0.25\n"  # an epsilon self-loop, cost 0.25
+            "1 2 0 0 -0.5\n"  # an epsilon arc onward, cost 0.5
+            "2 3 2 0 0.0\n"
+            "3 4 -1 0 0.0\n"
+            "4\n",
+            acceptor=False,
+        )
+
+    def test_it_reads_a_sequence_across_an_epsilon_cycle(self):
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        # 0.5 for the epsilon arc onward, and the self-loop not taken:
+        # going round it is never cheaper, which is the whole argument.
+        assert weight_of_label_sequence(self.cyclic(), [1, 2]) == pytest.approx(0.5)
+
+    def test_the_same_graph_defeats_shortest_path(self):
+        """
+        The premise, pinned. If a k2 release ever made `shortest_path`
+        tolerate this, the Dijkstra would be redundant rather than
+        necessary -- and that should be a failing test, not a thing
+        nobody notices.
+        """
+        import k2
+
+        lattice = k2.connect(
+            k2.intersect(
+                k2.arc_sort(self.cyclic()),
+                k2.arc_sort(k2.linear_fsa([1, 2])),
+                treat_epsilons_specially=True,
+            )
+        )
+        with pytest.raises(RuntimeError):
+            k2.shortest_path(k2.create_fsa_vec([lattice]), use_double_scores=True)
+
+    def test_a_sequence_it_cannot_read_is_absent(self):
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        # Both halves matter: a prefix must not be accepted, because the
+        # final arc is only taken once the sequence is exhausted, and the
+        # order must matter or the probe is comparing a bag of labels.
+        assert weight_of_label_sequence(self.cyclic(), [1]) is None
+        assert weight_of_label_sequence(self.cyclic(), [2, 1]) is None
+
+    def test_a_prefix_is_not_accepted_where_a_final_arc_is_reachable(self):
+        """
+        The hole the other rejection test could not see.
+
+        `test_a_sequence_it_cannot_read_is_absent` asserts a prefix is
+        rejected, but on that graph the super-final arc is only reachable
+        after the whole sequence, so dropping the `position == length`
+        check entirely still passed it -- a mutation that survived.
+        Here the graph is final *both* after A and after A B, so reading
+        A B must cost what A B costs and not what stopping early would.
+        """
+        import k2
+
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        graph = k2.Fsa.from_str(
+            "0 1 1 0 0.0\n"
+            "1 3 -1 0 0.0\n"  # final after A alone
+            "1 2 2 0 -0.5\n"
+            "2 3 -1 0 0.0\n"  # final after A B
+            "3\n",
+            acceptor=False,
+        )
+        assert weight_of_label_sequence(graph, [1]) == pytest.approx(0.0)
+        assert weight_of_label_sequence(graph, [1, 2]) == pytest.approx(0.5)
+
+    def test_the_epsilon_label_is_the_callers_choice(self):
+        """
+        Label 0 is `<blk>` and not `<eps>` on a k2 topology's input side,
+        so a probe that hardcoded 0 would skip blanks on one graph and
+        epsilons on another while looking identical.
+        """
+        import k2
+
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        # A, then label 2, then C. Whether the middle arc is skipped
+        # decides which sequence the graph reads, and nothing else about
+        # the graph changes.
+        graph = k2.Fsa.from_str(
+            "0 1 1 0 0.0\n" "1 2 2 0 -0.5\n" "2 3 3 0 0.0\n" "3 4 -1 0 0.0\n" "4\n",
+            acceptor=False,
+        )
+        assert weight_of_label_sequence(graph, [1, 2, 3]) == pytest.approx(0.5)
+        assert weight_of_label_sequence(graph, [1, 3]) is None
+        # Calling 2 the epsilon reverses both answers.
+        assert weight_of_label_sequence(graph, [1, 3], epsilon=2) == pytest.approx(0.5)
+        assert weight_of_label_sequence(graph, [1, 2, 3], epsilon=2) is None
+
+    def test_it_finds_the_cheapest_of_two_paths(self):
+        import k2
+
+        from BenNevis.decode.graph import weight_of_label_sequence
+
+        graph = k2.Fsa.from_str(
+            "0 1 1 0 -2.0\n"
+            "0 1 1 0 -0.75\n"  # the same label, cheaper
+            "1 2 -1 0 0.0\n"
+            "2\n",
+            acceptor=False,
+        )
+        assert weight_of_label_sequence(graph, [1]) == pytest.approx(0.75)

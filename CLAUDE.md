@@ -454,6 +454,33 @@ tolerances chosen per layer:
   no path, with it True it finds one, and a 0.25 perturbation behind the
   epsilon is still caught. The gate's refusal to pass on `compared == 0`
   is what turned this from a green report into a readable one.
+  **And fixing that exposed the next layer, which is why the probe is now
+  a search rather than a composition.** With the epsilons matched
+  properly the intersection succeeds and `k2.shortest_path` then fails
+  with `dest_state > state_idx01 (17 vs. 17)`, because an n-gram
+  back-off arc is an input epsilon and those form **cycles**. So all
+  three obvious routes fail on Kaldi's own LG: epsilons as ordinary
+  symbols rejects every path, epsilons matched gives a cyclic lattice,
+  and removing them first does not fit the runner.
+  `weight_of_label_sequence` is the fourth: a **Dijkstra over
+  (state, position) pairs**, which tolerates the cycles because every
+  arc of a graph built from `-log` probabilities costs nothing or more,
+  so going round a cycle can only make a path dearer. That property is
+  the one thing to check before reusing it on a graph from elsewhere.
+  It also takes the epsilon label as an argument rather than assuming 0,
+  because label 0 is `<blk>` and not `<eps>` on a k2 topology's input
+  side -- a probe hardcoding 0 would skip blanks on one graph and
+  epsilons on another while looking identical. And it makes the TLG half
+  reachable again without `remove_epsilon`, which is the expensive thing
+  `--skip-tlg` exists to avoid.
+  One test in that set is worth knowing about because it was written
+  after a mutation survived. `weight_of_label_sequence` must not accept a
+  **prefix** of the sequence, and the first rejection test could not see
+  it: on that graph the super-final arc was only reachable once the whole
+  sequence had been read, so deleting the `position == length` check
+  entirely still passed. The graph that catches it is final both after
+  `A` and after `A B`. A rejection test proves nothing unless the thing
+  it forbids was reachable.
   It is still **`continue-on-error`**: a check that cannot fail the build
   is a report rather than a gate, so turn it blocking once the LG half
   has produced one clean verdict on mini-librispeech. And it

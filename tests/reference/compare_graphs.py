@@ -49,7 +49,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -122,41 +122,25 @@ def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
     "agreed on nothing" from "agreed on everything" -- a gate that
     compared nothing must not pass.
     """
-    import k2
+    from BenNevis.decode.graph import weight_of_label_sequence
 
     failures: List[str] = []
     compared = 0
-    ours = k2.arc_sort(ours)
-    theirs = k2.arc_sort(theirs)
     for words, phone_sequence in drawn:
         if any(phone not in phones for phone in phone_sequence):
             continue
         ids = [phones[phone] for phone in phone_sequence]
-        linear = k2.arc_sort(k2.linear_fsa(ids))
-        weights: List[Optional[float]] = []
-        for graph in (theirs, ours):
-            # `treat_epsilons_specially=True`, and the whole gate turned
-            # on this. With False, label 0 is an ordinary symbol, so a
-            # single input epsilon anywhere on a path makes the linear
-            # probe reject it -- and Kaldi's LG has input epsilons by
-            # construction, because `fstrmepslocal` removes only the ones
-            # it can remove without growing the graph. Our side is
-            # epsilon-free, `compose_lg` ending in `remove_epsilon`, so
-            # on a corpus where the two sides differ in that respect
-            # Kaldi rejects every sequence and the gate compares nothing.
-            # yesno hid it: its LG has no input epsilons on the surviving
-            # paths, so False and True agree there and the gate looked
-            # verified.
-            lattice = k2.connect(
-                k2.intersect(graph, linear, treat_epsilons_specially=True)
-            )
-            if lattice.num_arcs == 0:
-                weights.append(None)
-                continue
-            best = k2.shortest_path(
-                k2.create_fsa_vec([lattice]), use_double_scores=True
-            )
-            weights.append(-float(best.scores.sum()))
+        # Searched rather than composed. `k2.intersect` cannot do this on
+        # Kaldi's LG either way: with `treat_epsilons_specially=False`
+        # label 0 is an ordinary symbol and every path with an input
+        # epsilon is rejected, which made the gate report `compared LG on
+        # 0 sequences`; with it True the epsilons match, but an n-gram
+        # back-off arc is an input epsilon and those form cycles, so
+        # `k2.shortest_path` fails with `dest_state > state_idx01`.
+        # `weight_of_label_sequence` is a Dijkstra over
+        # (state, position) pairs, which tolerates the cycles because the
+        # weights are non-negative.
+        weights = [weight_of_label_sequence(graph, ids) for graph in (theirs, ours)]
         kaldi, mine = weights
         key = " ".join(words)
         if kaldi is None and mine is None:
