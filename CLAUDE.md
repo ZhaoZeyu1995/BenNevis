@@ -582,6 +582,30 @@ inherit that. Its quantisation rule is
 `floor(w / delta + 0.5) * delta` in float32, which is what puts weights
 on the 1/1024 grid and reproduces yesno's 2358/1024 exactly from
 -log(0.1).
+**That cost has now been paid in full once, and it is large enough to
+change the priority.** Run 45511013199 reached stage 10 and decoded
+mini-librispeech's `dev_clean_2` with k2 against the 43,263,880-arc
+`TLG`: **900 of 1,089 utterances in 4h16m48s**, which is 17.1 seconds an
+utterance, and the run was cancelled at the 350-minute ceiling before it
+finished. Kaldi's stage 7 did the whole 1,089 with `decode-faster` at
+`nj=8`, and stages 6 to 9 together fit in the twelve minutes between the
+end of training and the start of stage 10. Building the graph is not the
+problem -- `build_decoding_graph` takes 12.2s and the whole stage-10
+chain from lexicon to graph takes 35s. The *search* is, and it is being
+run against a graph 3.40x the size of the one Kaldi's decoder loads.
+So minimisation stops being a tidiness question: **mini-librispeech
+cannot be decoded with k2 inside a CI run as things stand**, and that
+blocks the comparison stage 10 exists to make. Two things are worth
+separating before anything is optimised, because they are not the same
+fix: the graph is larger than it needs to be (minimisation, epsilon-pair
+merging), and the search is run one utterance at a time where Kaldi's
+runs eight jobs. The second is the cheaper to try, and it is already
+half done: `decode` takes a batch `(N, T, C)` and
+`intersect_dense_pruned` is built for one, but `decode_many` calls it
+with `scores.unsqueeze(0)` per utterance, so the batch dimension is
+always 1. Neither is measured against the other yet, and the order to
+measure them in is batching first, since it needs no new graph
+operation.
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first
