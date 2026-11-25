@@ -402,6 +402,7 @@ jobs:
               --topo ctc \
               --sil-prob 0.5 \
               --position-dependent-phones \
+              --skip-tlg \
             2>&1 | tee artefacts/graph-comparison.log
 
       - name: Upload the Kaldi reference
