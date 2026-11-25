@@ -213,6 +213,127 @@ class TestDecodeArchive:
         assert decode_archive(graph, [], {1: "YES"}) == []
 
 
+class TestDecodeArchiveBatches:
+    """
+    The batch dimension that was always there and always 1.
+
+    `decode` takes `(batch, frames, tokens)` and
+    `intersect_dense_pruned` is built for a batch, but `decode_archive`
+    called it with `scores.unsqueeze(0)` per utterance -- so run
+    45511013199 spent 4h16m48s on 900 of mini-librispeech's 1,089
+    utterances, 17.1 seconds each, against Kaldi's `decode-faster`
+    doing all of them at `nj=8` in a fraction of that.
+
+    What these pin is the part a batch can get wrong rather than the
+    speed, which no tier-2 graph can show: the answers must not depend
+    on how the utterances were grouped, and a short utterance's padding
+    must not be decoded as though it were audio.
+    """
+
+    def test_a_batch_gives_the_same_answers_as_one_at_a_time(self):
+        """
+        The property that matters. Lengths deliberately differ within
+        the batch, since equal lengths are the case padding cannot get
+        wrong.
+        """
+        graph = graph_from(ONE_PATH)
+        archive = [
+            ("utt1", peaked([1, 2])[0]),
+            ("utt2", peaked([1, 2])[0]),
+            ("utt3", peaked([1, 1, 2], num_tokens=3)[0]),
+            ("utt4", peaked([1, 2])[0]),
+            ("utt5", peaked([1, 2])[0]),
+        ]
+        idx2word = {1: "YES", 2: "NO"}
+        sequential = decode_archive(graph, archive, idx2word, batch_size=1)
+        for size in (2, 3, 5, 100):
+            assert (
+                decode_archive(graph, archive, idx2word, batch_size=size) == sequential
+            ), f"batch_size={size} disagrees with one at a time"
+
+    def test_the_padding_is_not_decoded(self):
+        """
+        The failure a batch invites, and it would look like a plausible
+        transcription rather than a crash. `ONE_PATH` accepts exactly
+        two frames, so a two-frame utterance batched with a five-frame
+        one decodes to its word only if its own frame count reached k2's
+        segments; were the padded length used instead, the graph could
+        not match five frames and the answer would be empty.
+        """
+        graph = graph_from(ONE_PATH)
+        archive = [
+            ("short", peaked([1, 2])[0]),
+            ("long", peaked([1, 2, 1, 2, 1])[0]),
+        ]
+        out = decode_archive(graph, archive, {1: "YES"}, batch_size=2)
+        assert out[0] == ("short", ["YES"]), "the short utterance lost its word"
+        assert out[1] == ("long", []), "the long one should match no path"
+
+    def test_it_calls_the_search_once_per_batch(self):
+        """
+        Pinned by counting, because the saving is invisible on a graph
+        small enough to test with: the point of the change is one call
+        for eight utterances rather than eight.
+        """
+        from BenNevis.decode import decoder as decoder_module
+
+        graph = graph_from(TWO_WORDS)
+        archive = [(f"utt{i}", peaked([1])[0]) for i in range(7)]
+        calls = []
+        original = decoder_module.decode
+
+        def counted(graph_arg, log_probs, lengths, **kwargs):
+            calls.append(int(log_probs.shape[0]))
+            return original(graph_arg, log_probs, lengths, **kwargs)
+
+        decoder_module.decode = counted
+        try:
+            out = decoder_module.decode_archive(
+                graph, archive, {1: "YES"}, batch_size=3
+            )
+        finally:
+            decoder_module.decode = original
+        assert calls == [3, 3, 1], f"batched as {calls}"
+        assert len(out) == 7
+
+    def test_a_batch_size_below_one_is_refused(self):
+        """
+        Rather than silently decoding nothing, which an archive of
+        several thousand utterances would report as every utterance
+        empty -- the same shape as a model that learned nothing.
+        """
+        graph = graph_from(TWO_WORDS)
+        for size in (0, -1):
+            with pytest.raises(ValueError, match="batch_size"):
+                decode_archive(
+                    graph, [("u", peaked([1])[0])], {1: "YES"}, batch_size=size
+                )
+
+    def test_a_token_count_that_differs_names_the_utterance(self):
+        """
+        A graph-and-model mismatch, and without this it surfaces as a
+        shape error inside torch's padding with no utterance named.
+        """
+        graph = graph_from(TWO_WORDS)
+        archive = [
+            ("first", peaked([1], num_tokens=3)[0]),
+            ("odd_one", peaked([1], num_tokens=4)[0]),
+        ]
+        with pytest.raises(ValueError, match="odd_one"):
+            decode_archive(graph, archive, {1: "YES"}, batch_size=2)
+
+    def test_wrong_dimensions_still_name_the_utterance_when_batching(self):
+        """
+        The isolation a batch gives up is memory, not diagnostics: the
+        shape check runs before anything is batched, so the utterance is
+        still named.
+        """
+        graph = graph_from(TWO_WORDS)
+        archive = [("fine", peaked([1])[0]), ("bad_utt", torch.zeros(3))]
+        with pytest.raises(ValueError, match="bad_utt"):
+            decode_archive(graph, archive, {1: "YES"}, batch_size=4)
+
+
 class TestAuxLabelsPerArc:
     """
     The other reduction of `aux_labels`, and the one `bin/align.py` needs.

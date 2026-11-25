@@ -792,11 +792,36 @@ fix: the graph is larger than it needs to be (minimisation, epsilon-pair
 merging), and the search is run one utterance at a time where Kaldi's
 runs eight jobs. The second is the cheaper to try, and it is already
 half done: `decode` takes a batch `(N, T, C)` and
-`intersect_dense_pruned` is built for one, but `decode_many` calls it
-with `scores.unsqueeze(0)` per utterance, so the batch dimension is
-always 1. Neither is measured against the other yet, and the order to
-measure them in is batching first, since it needs no new graph
+`intersect_dense_pruned` is built for one, but `decode_archive` called
+it with `scores.unsqueeze(0)` per utterance, so the batch dimension was
+always 1. (It is `decode_archive`, not `decode_many`, which this entry
+named for a while.) Neither is measured against the other yet, and the
+order to measure them in is batching first, since it needs no new graph
 operation.
+**The batching is done now, and what it cannot yet claim is the
+speedup.** `decode_archive` takes a `batch_size`, pads each batch to its
+longest utterance and gives k2 one call per batch; `run/decode_k2.py`
+defaults it to **8**, which is both what makes stage 10 plausible and
+what `decode_faster.sh` runs at `nj=8`, so the two decoders stay
+comparable. The padding is **not searched** -- each utterance carries
+its own frame count into k2's segments -- so mixing lengths in a batch
+costs tensor memory and no search time. What it costs is the isolation
+that was the original reason for one at a time: an utterance exhausting
+memory now takes its batch with it, though the shape and token-count
+checks still name the offending utterance, because they run before
+anything is batched.
+The tests pin what a batch can get *wrong*, not what it saves: that the
+answers do not depend on how the utterances were grouped, that a short
+utterance's padding is not decoded as audio -- mutation-verified by
+passing the padded length, which breaks exactly those two tests -- and
+that the search is called once per batch rather than once per utterance,
+counted rather than timed. **None of that is the measurement, and the
+measurement needs a trained model**: stage 10 runs only after stage 5
+onward, so the 17.1s an utterance can be compared with a batched figure
+only by a full mini-librispeech run of three to five hours. Until that
+run exists, treat this as a change of the right shape with an unmeasured
+effect -- and note that CI decodes on the **CPU**, where k2's gain from
+a batch is a question rather than a given.
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first

@@ -27,7 +27,7 @@ Functions
 decode
     One batch of log probabilities against a graph.
 decode_archive
-    An archive of them, utterance by utterance.
+    An archive of them, a batch at a time.
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
@@ -253,21 +253,81 @@ def decode(
     return words_from_best_path(best)
 
 
+def _pad_into_batch(
+    pending: List[Tuple[str, "torch.Tensor"]],
+    device: Optional[torch.device],
+) -> Tuple["torch.Tensor", "torch.Tensor"]:
+    """
+    One padded `(batch, frames, tokens)` tensor and its frame counts.
+
+    **The padding is never searched**, which is what makes batching
+    utterances of different lengths cheap rather than wasteful: k2 takes
+    a `(sequence, start frame, frame count)` segment per utterance, so
+    the intersection covers each one's own frames and the padded tail of
+    a short utterance costs memory in the tensor and nothing in the
+    search. Its *values* are therefore arbitrary, and zeros are used
+    rather than a large negative number to make it obvious that nothing
+    reads them -- if a future change does read them, a log probability
+    of 0.0 is a probability of 1 and the symptom will be loud.
+
+    Arguments
+    ---------
+    pending: List[Tuple[str, torch.Tensor]]
+        Utterance ids with their `(frames, tokens)` log probabilities,
+        all with the same token count.
+    device: Optional[torch.device]
+        Where the batch should live.
+
+    Returns
+    -------
+    Tuple[torch.Tensor, torch.Tensor]
+        The padded scores and the `(batch,)` int32 frame counts.
+    """
+    frames = max(scores.shape[0] for _uttid, scores in pending)
+    tokens = pending[0][1].shape[1]
+    batch = torch.zeros(len(pending), frames, tokens, dtype=pending[0][1].dtype)
+    for index, (_uttid, scores) in enumerate(pending):
+        batch[index, : scores.shape[0]] = scores
+    lengths = torch.tensor(
+        [scores.shape[0] for _uttid, scores in pending], dtype=torch.int32
+    )
+    if device is not None:
+        batch = batch.to(device)
+    return batch, lengths
+
+
 def decode_archive(
     graph: k2.Fsa,
     utterances: Iterable[Tuple[str, "torch.Tensor"]],
     idx2word: Dict[int, str],
     acoustic_scale: float = 1.0,
     device: Optional[torch.device] = None,
+    batch_size: int = 1,
     **search,
 ) -> List[Tuple[str, List[str]]]:
     """
-    Decode an archive of log probabilities, one utterance at a time.
+    Decode an archive of log probabilities, `batch_size` at a time.
 
-    One at a time rather than batched, deliberately: `decode-faster` is
-    sequential, so this keeps the comparison honest, and an utterance that
-    exhausts memory then names itself instead of taking a batch down with
-    it. Batching is a performance question for later, and a measured one.
+    **One at a time was the deliberate default and it is still the
+    default here, but it is no longer the only option, because the cost
+    has been measured.** Run 45511013199 decoded mini-librispeech's
+    `dev_clean_2` with `batch_size` effectively fixed at 1 and managed
+    900 of 1,089 utterances in 4h16m48s -- 17.1 seconds each -- before
+    the job hit its ceiling, while Kaldi's `decode-faster` did all 1,089
+    at `nj=8` inside the twelve minutes between training and stage 10.
+    `decode` and `intersect_dense_pruned` both take a batch, so the
+    search was being asked for one sequence at a time against a graph
+    3.36x the size of the one Kaldi's decoder loads.
+
+    What a batch costs and does not cost: the utterances are padded to
+    the longest in the batch, but each carries its own frame count into
+    k2's segments, so **the padding is not searched** and mixing lengths
+    is cheap. What it does cost is isolation -- the original docstring's
+    reason for one at a time was that an utterance exhausting memory
+    then names itself instead of taking a batch down with it, and that
+    is given up in proportion to the batch. The shape check below still
+    names the offending utterance, because it runs before anything is
+    batched.
 
     Arguments
     ---------
@@ -282,32 +342,66 @@ def decode_archive(
     device: Optional[torch.device]
         Where to run. k2 has no MPS backend, so a caller on an Apple
         machine wants the CPU here; left explicit rather than guessed.
+    batch_size: int
+        How many utterances to decode at once. 1 keeps the sequential
+        behaviour exactly.
     **search
         Passed to `decode`.
 
     Returns
     -------
     List[Tuple[str, List[str]]]
-        Utterance id and the words decoded for it.
+        Utterance id and the words decoded for it, in archive order --
+        which is not cosmetic, since the recipe merges this against
+        `ref.wrd.trn` by position.
+
+    Raises
+    ------
+    ValueError
+        If `batch_size` is below 1, if an utterance is not two
+        dimensional, or if one's token count differs from the others in
+        its batch. The last is a graph-and-model mismatch and would
+        otherwise surface as a padding error inside torch.
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be at least 1, got {batch_size}")
+
     results: List[Tuple[str, List[str]]] = []
-    for index, (uttid, scores) in enumerate(utterances):
-        if scores.dim() != 2:
-            raise ValueError(
-                f"{uttid}: expected (frames, tokens), got " f"{tuple(scores.shape)}"
-            )
-        batch = scores.unsqueeze(0)
-        if device is not None:
-            batch = batch.to(device)
-        lengths = torch.tensor([scores.shape[0]], dtype=torch.int32)
-        ids = decode(
+    pending: List[Tuple[str, "torch.Tensor"]] = []
+    # A list rather than a counter, so the progress line fires once per
+    # hundred utterances whatever the batch size divides into.
+    reported = [0]
+
+    def flush() -> None:
+        if not pending:
+            return
+        batch, lengths = _pad_into_batch(pending, device)
+        decoded = decode(
             graph,
             batch,
             lengths,
             acoustic_scale=acoustic_scale,
             **search,
-        )[0]
-        results.append((uttid, [idx2word[i] for i in ids if i in idx2word]))
-        if index and index % 100 == 0:
-            logging.info("decoded %d utterances", index)
+        )
+        for (uttid, _scores), ids in zip(pending, decoded):
+            results.append((uttid, [idx2word[i] for i in ids if i in idx2word]))
+        pending.clear()
+        if len(results) // 100 > reported[0]:
+            reported[0] = len(results) // 100
+            logging.info("decoded %d utterances", len(results))
+
+    for uttid, scores in utterances:
+        if scores.dim() != 2:
+            raise ValueError(
+                f"{uttid}: expected (frames, tokens), got {tuple(scores.shape)}"
+            )
+        if pending and scores.shape[1] != pending[0][1].shape[1]:
+            raise ValueError(
+                f"{uttid}: has {scores.shape[1]} tokens where "
+                f"{pending[0][0]} has {pending[0][1].shape[1]}"
+            )
+        pending.append((uttid, scores))
+        if len(pending) == batch_size:
+            flush()
+    flush()
     return results
