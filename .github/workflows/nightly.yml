@@ -379,15 +379,23 @@ jobs:
       # needed and the runner expands the variables as it does for every
       # other step here.
       #
-      # `continue-on-error` deliberately: the cost of `remove_epsilon` on
-      # a 43M-arc TLG is not yet measured, so until a run has shown what
-      # it takes, this reports rather than fails the job. **Turn it into a
-      # blocking gate once the cost is known** -- a check that cannot fail
-      # the build is a report, not a gate.
+      # **Blocking now**, which it was not for its first four runs. Run
+      # 45567166522 is the clean verdict that was the condition: our LG
+      # agreed with Kaldi's on all 24 lexicon-drawn sequences, in 148.9s,
+      # within 0.0009765625 per arc. The TLG half stays off behind
+      # `--skip-tlg` because `remove_epsilon` on 43M arcs does not fit
+      # the runner; the LG half is what this gate is.
+      #
+      # `set -eo pipefail` is not decoration. The command ends in
+      # `| tee`, so the pipeline's status is tee's and a non-zero exit
+      # from the gate would be swallowed -- removing `continue-on-error`
+      # alone would have produced a gate that still could not fail,
+      # which is the same shape as the `G.fst` gate that skipped
+      # unconditionally.
       - name: Compare the Python graphs against Kaldi's
         if: always() && env.RECIPE == 'egs/mini_librispeech/asr'
-        continue-on-error: true
         run: |
+          set -eo pipefail
           docker run --rm \
             -v "$PWD:/workspace" \
             -w /workspace \

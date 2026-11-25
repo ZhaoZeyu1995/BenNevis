@@ -481,9 +481,28 @@ tolerances chosen per layer:
   entirely still passed. The graph that catches it is final both after
   `A` and after `A B`. A rejection test proves nothing unless the thing
   it forbids was reachable.
-  It is still **`continue-on-error`**: a check that cannot fail the build
-  is a report rather than a gate, so turn it blocking once the LG half
-  has produced one clean verdict on mini-librispeech. And it
+  **And with all that, the gate has given its verdict: our LG is
+  equivalent to Kaldi's on mini-librispeech.** Run 45567166522 compared
+  all 24 lexicon-drawn sequences in 148.9s and agreed on every one,
+  within 0.0009765625 per arc. That is the measurement the big corpus
+  was built for, and what it establishes is that the **1.36x size
+  difference is only a size difference** -- the Python `LG` is the same
+  function as Kaldi's, undeterminised and unminimised though it is. So
+  minimisation is a cost question and nothing is owed on correctness
+  here.
+  The gate is **blocking** from that run on, and the second half of
+  making it so is easy to miss: the command ends in `| tee`, so without
+  `set -eo pipefail` the pipeline's status is tee's and removing
+  `continue-on-error` alone would have left a gate that still could not
+  fail. Same shape as the `G.fst` gate that skipped unconditionally and
+  the nightly summary whose `grep` failed a passing run -- a shell
+  detail deciding whether a check means anything.
+  Worth keeping in view: the gate found **three defects in its own
+  machinery** before it found anything about the graphs -- the quoted
+  shell, the epsilon flag, and `shortest_path` on cycles -- and reported
+  `success` through the first two because of `continue-on-error` and the
+  tee. A new gate's first few runs are testing the gate.
+  And it
   **rebuilds the lexicon**, so `--sil-prob 0.5` and
   `--position-dependent-phones` must match the recipe's `prepare_lang.sh`
   call exactly -- the same trap as stage 10, where a mismatch compares

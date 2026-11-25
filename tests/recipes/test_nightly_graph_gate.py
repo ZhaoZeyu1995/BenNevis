@@ -74,19 +74,39 @@ class TestTheGateIsWired:
         names = [step.get("name") for step in _steps()]
         assert names.index("Capture the Kaldi reference") < names.index(STEP)
 
-    def test_it_is_not_blocking_yet_and_says_so(self):
+    def test_it_is_blocking(self):
         """
-        Deliberately `continue-on-error` until the cost of
-        `remove_epsilon` on a 43M-arc TLG is measured. **A check that
-        cannot fail the build is a report, not a gate** -- so when it
-        becomes blocking, this test changes with it, which is the
-        reminder.
+        It was not, for its first four runs, and the condition for
+        changing that was one clean verdict on mini-librispeech. Run
+        45567166522 gave it: our LG agreed with Kaldi's on all 24
+        lexicon-drawn sequences within 0.0009765625 per arc. **A check
+        that cannot fail the build is a report, not a gate**, so if this
+        ever goes back to `continue-on-error` it should be a decision
+        with a reason beside it.
         """
-        step = _step(STEP)
-        assert step.get("continue-on-error") is True, (
-            "if the gate is now blocking, good -- update this test and the "
-            "comment above the step"
+        assert "continue-on-error" not in _step(STEP), (
+            "the gate has stopped being able to fail the build; say why "
+            "in the step's comment and here"
         )
+
+    def test_the_pipe_to_tee_cannot_swallow_a_failure(self):
+        """
+        The half of blocking that is easy to miss.
+
+        The command ends in `| tee artefacts/graph-comparison.log`, so
+        without `pipefail` the pipeline's status is tee's and a non-zero
+        exit from the gate is discarded -- removing `continue-on-error`
+        alone would have left a gate that still could not fail. This is
+        the same shape as the `G.fst` gate that skipped unconditionally
+        and the nightly summary whose `grep` failed a passing run: a
+        shell detail deciding whether a check means anything.
+        """
+        run = _step(STEP)["run"]
+        assert "| tee" in run, "if the tee has gone, this test can go too"
+        first = run.strip().splitlines()[0]
+        assert (
+            "pipefail" in first
+        ), f"pipefail must be set before the pipeline, not {first!r}"
 
     def test_the_tlg_half_is_skipped_and_the_cost_is_why(self):
         """
