@@ -89,6 +89,31 @@ def size(label: str, fsa) -> None:
     )
 
 
+def report(failures: List[str], half: str) -> None:
+    """
+    Print one half's mismatches as soon as that half is known.
+
+    Arguments
+    ---------
+    failures: List[str]
+        The mismatches found so far in this half.
+    half: str
+        Which half, for the summary line.
+
+    Notes
+    -----
+    Waiting until the end was a mistake worth not repeating: the TLG
+    half was killed inside a minute on mini-librispeech, taking the LG
+    result with it even though the LG half had already finished.
+    """
+    for failure in failures:
+        print(f"MISMATCH: {failure}", flush=True)
+    print(
+        f"  {half}: {len(failures)} mismatch(es)" if failures else f"  {half}: clean",
+        flush=True,
+    )
+
+
 def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
     """
     Compare LG on phone sequences the lexicon permits.
@@ -110,8 +135,20 @@ def compare_lg(ours, theirs, phones, drawn, delta) -> Tuple[int, List[str]]:
         linear = k2.arc_sort(k2.linear_fsa(ids))
         weights: List[Optional[float]] = []
         for graph in (theirs, ours):
+            # `treat_epsilons_specially=True`, and the whole gate turned
+            # on this. With False, label 0 is an ordinary symbol, so a
+            # single input epsilon anywhere on a path makes the linear
+            # probe reject it -- and Kaldi's LG has input epsilons by
+            # construction, because `fstrmepslocal` removes only the ones
+            # it can remove without growing the graph. Our side is
+            # epsilon-free, `compose_lg` ending in `remove_epsilon`, so
+            # on a corpus where the two sides differ in that respect
+            # Kaldi rejects every sequence and the gate compares nothing.
+            # yesno hid it: its LG has no input epsilons on the surviving
+            # paths, so False and True agree there and the gate looked
+            # verified.
             lattice = k2.connect(
-                k2.intersect(graph, linear, treat_epsilons_specially=False)
+                k2.intersect(graph, linear, treat_epsilons_specially=True)
             )
             if lattice.num_arcs == 0:
                 weights.append(None)
@@ -303,6 +340,11 @@ def main() -> int:
         our_lg, their_lg, phones, drawn, QUANTISATION_DELTA
     )
     say(f"compared LG on {compared_lg} sequences", started)
+    # Reported here rather than only at the end, because the TLG half is
+    # the expensive one and has already been killed mid-way once: a crash
+    # there took the LG verdict with it, and the LG verdict is the half
+    # that costs nothing.
+    report(failures, "LG")
 
     compared_tlg = 0
     if not args.skip_tlg:
@@ -328,11 +370,10 @@ def main() -> int:
             our_tlg, their_tlg, words, drawn, QUANTISATION_DELTA
         )
         say(f"compared TLG on {compared_tlg} sequences", started)
+        report(tlg_failures, "TLG")
         failures.extend(tlg_failures)
 
     print(flush=True)
-    for failure in failures:
-        print(f"MISMATCH: {failure}", flush=True)
 
     # A gate that compared nothing must not pass. Agreement on an empty
     # set is how the G.fst gate came to skip unconditionally.

@@ -88,6 +88,22 @@ class TestTheGateIsWired:
             "comment above the step"
         )
 
+    def test_the_tlg_half_is_skipped_and_the_cost_is_why(self):
+        """
+        `--skip-tlg` was the designed escape and it is now taken.
+
+        Run 45554380456 measured what it was waiting for:
+        `prepare_output_probe` on the 43,263,880-arc TLG stopped the step
+        dead inside a minute, with no traceback, which is what a SIGKILL
+        looks like. `remove_epsilon` on a graph that size does not fit
+        the runner, so the TLG half cannot run as written and the LG
+        half -- which costs five seconds -- must not be held hostage to
+        it. Turning this back on wants the Dijkstra over
+        (state, position) pairs instead, which tolerates cycles because
+        the weights are non-negative.
+        """
+        assert "--skip-tlg" in _step(STEP)["run"]
+
 
 @pytest.fixture(scope="module")
 def run_sh():

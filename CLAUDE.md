@@ -425,11 +425,38 @@ tolerances chosen per layer:
   with `fstprint`. The step is `always()`, because the graphs are built
   in stage 4 and a run that died in training still has graphs worth
   comparing -- which is the cheapest way to get this measurement.
-  Two things about it to keep in mind. It is **`continue-on-error` for
-  now**, because the cost of `remove_epsilon` on a 43M-arc `TLG` is
-  unmeasured; a check that cannot fail the build is a report rather than
-  a gate, so turn it blocking once a run has shown what it takes, and
-  `--skip-tlg` is the escape if that half proves unaffordable. And it
+  **The cost of `remove_epsilon` on a 43M-arc `TLG` is measured now, and
+  the answer is that it does not fit.** Run 45554380456 printed
+  `preparing the output probes (invert, remove epsilons)` and stopped
+  there, inside a minute, with no traceback -- which is what a SIGKILL
+  looks like, a Python exception having printed one the time before. So
+  `--skip-tlg` is taken rather than held in reserve, and turning the TLG
+  half back on wants the Dijkstra over (state, position) pairs instead of
+  `remove_epsilon`; it tolerates cycles because the weights are
+  non-negative. `tests/recipes/test_nightly_graph_gate.py` pins the flag
+  with the reason, so restoring it is a decision.
+  **That crash also hid the LG verdict, which is a defect in the gate
+  rather than in the graph.** Mismatches were printed only after both
+  halves had run, so a kill in the expensive half took the cheap half's
+  result with it. Each half now reports as it finishes.
+  **And the first LG verdict was `compared LG on 0 sequences`, because
+  Kaldi's LG has input epsilons and ours does not.** `compare_lg` passed
+  `treat_epsilons_specially=False`, under which label 0 is an ordinary
+  symbol, so a single input epsilon anywhere on a path makes a linear
+  probe reject it. Kaldi's LG keeps epsilons by construction --
+  `fstrmepslocal` removes only what it can remove without growing the
+  graph -- while `compose_lg` ends in `remove_epsilon`, so Kaldi rejected
+  every drawn sequence and the gate compared nothing. **yesno could not
+  have caught it**: its LG has no input epsilons on the surviving paths,
+  so both settings agree there and the gate looked verified on the one
+  corpus where both graphs are committed. Verified mechanically instead,
+  on a three-arc pair built by hand: with the flag False the probe finds
+  no path, with it True it finds one, and a 0.25 perturbation behind the
+  epsilon is still caught. The gate's refusal to pass on `compared == 0`
+  is what turned this from a green report into a readable one.
+  It is still **`continue-on-error`**: a check that cannot fail the build
+  is a report rather than a gate, so turn it blocking once the LG half
+  has produced one clean verdict on mini-librispeech. And it
   **rebuilds the lexicon**, so `--sil-prob 0.5` and
   `--position-dependent-phones` must match the recipe's `prepare_lang.sh`
   call exactly -- the same trap as stage 10, where a mismatch compares
@@ -563,16 +590,31 @@ the undeterminised LG we ship. It is still not implemented, but **the
 arithmetic has changed now that the counts are measured, and the figure
 this entry used to give was wrong.** Run 45501684352 recorded Kaldi's
 graphs: `LG` 1,383,213 states and **4,367,485 arcs**, `TLG` 3,469,109 and
-**12,711,953**. Against our 6,111,314 and 43,263,880 that is **1.40x on
-LG and 3.40x on TLG** -- not the "about 5%" claimed here before, which
-came from dividing `LG.fst.txt`'s 138,155,979 bytes by a guessed line
-length and was **33% too high**. `shapes` was added for exactly this
-reason and caught exactly this.
-So minimisation buys about **29% on LG** and more on TLG. It remains a
+**12,711,953** -- not the "about 5%" claimed here before, which came from
+dividing `LG.fst.txt`'s 138,155,979 bytes by a guessed line length and
+was **33% too high**. `shapes` was added for exactly this reason and
+caught exactly this.
+**Those arc counts are not comparable with k2's as they stand, and the
+ratio printed here was wrong for a second time because of it.** A k2 FSA
+represents a final state as an arc labelled **-1** into a single
+super-final state; OpenFST's text format writes a final state as a line
+of its own and counts no arc for it. So the capture's `arcs` for Kaldi
+exclude what k2's `num_arcs` includes, and the two must be put on one
+footing before being divided. The gate's own output is the arithmetic:
+it reported Kaldi's LG as 4,481,905 arcs against the capture's
+4,367,485, and the difference is exactly the capture's 114,420
+`finals`; the TLG pair is 12,878,151 against 12,711,953, a difference of
+exactly its 166,198. Like for like, then, we are **1.36x on LG and 3.36x
+on TLG**, not the 1.40x and 3.40x this entry gave. The error is small
+and the lesson is not: two numbers for the same graph differing by 2.6%
+is a counting convention, not noise, and the way it was caught was by
+having both counts in front of each other rather than by either looking
+implausible.
+So minimisation buys about **27% on LG** and more on TLG. It remains a
 *cost* question rather than a correctness one, since
 `intersect_dense_pruned` needs the graph neither deterministic nor
 minimal -- but it is a real cost on the graph the decoder loads, and the
-1.40x against 3.40x split puts most of it in the **topology
+1.36x against 3.36x split puts most of it in the **topology
 composition** rather than in the lexicon and grammar, which points at the
 second pipeline's epsilon-pair merging and minimisation rather than at
 determinization. `L_disambig` agrees with Kaldi to the arc, which checks
@@ -592,7 +634,7 @@ finished. Kaldi's stage 7 did the whole 1,089 with `decode-faster` at
 end of training and the start of stage 10. Building the graph is not the
 problem -- `build_decoding_graph` takes 12.2s and the whole stage-10
 chain from lexicon to graph takes 35s. The *search* is, and it is being
-run against a graph 3.40x the size of the one Kaldi's decoder loads.
+run against a graph 3.36x the size of the one Kaldi's decoder loads.
 So minimisation stops being a tidiness question: **mini-librispeech
 cannot be decoded with k2 inside a CI run as things stand**, and that
 blocks the comparison stage 10 exists to make. Two things are worth
@@ -1139,8 +1181,19 @@ touch the Actions budget — but 58 seconds is the number to beat.
   compared *by digest*, the content is not needed to answer whether a
   replacement reproduces it — only to see how it differs when it does not.
   Those entries are listed in the manifest's `large`, so a deliberately
-  absent file can be told from a lost one, and the uploaded workflow artefact
-  keeps the bytes for ninety days. Content is only ever needed for a
+  absent file can be told from a lost one.
+  **It had been written here that the uploaded workflow artefact keeps
+  the bytes for ninety days. It does not.** `store_exact` returns before
+  writing the file, so a `large` artefact's content is never put on disc
+  at all and the uploaded artefact has no more of it than the committed
+  capture does -- the digest and the shape are the whole record. This was
+  found by downloading a reference artefact to inspect Kaldi's `LG.fst`
+  and finding `graph/ctc/` held only `tokens.txt` and `k2/`. It is the
+  third invented reassurance found in this file, after the cache example
+  and the lost-runner log buffer, and the pattern in all three is the
+  same: the claim was the part of the entry nobody would check. If the
+  bytes are wanted, `fstprint` them in the job that has them.
+  Content is only ever needed for a
   *tolerance* comparison, which is why the feature matrices are stored whole
   and the FSTs are not.
   A **symbol table is kept whole however large it is**, because it is an

@@ -185,6 +185,84 @@ def tlgs(pieces):
     return ours, theirs, words, drawn
 
 
+class TestInputEpsilons:
+    """
+    The failure that made the gate compare nothing on mini-librispeech.
+
+    Kaldi's LG keeps input epsilons -- `fstrmepslocal` removes only the
+    ones it can remove without growing the graph -- while ours is
+    epsilon-free, because `compose_lg` ends in `remove_epsilon`. Under
+    `treat_epsilons_specially=False` label 0 is an ordinary symbol, so a
+    single epsilon on a path makes a linear probe reject it, Kaldi
+    rejects every sequence, and the run reports `compared LG on 0
+    sequences`.
+
+    yesno could not show this: its LG has no input epsilons on the
+    surviving paths, so both settings agree there and the gate looked
+    verified on the one corpus where both graphs are committed. These
+    tests use a hand-built pair instead, which is the only way to put an
+    epsilon where it matters.
+    """
+
+    @staticmethod
+    def _pair():
+        import k2
+
+        # Both score the phone sequence A B at zero. `theirs` reaches it
+        # through an epsilon arc, as Kaldi's does; `ours` does not.
+        theirs = k2.arc_sort(
+            k2.Fsa.from_str(
+                "0 1 1 0 0.0\n1 2 0 0 0.0\n2 3 2 0 0.0\n3 4 -1 0 0.0\n4\n",
+                acceptor=False,
+            )
+        )
+        ours = k2.arc_sort(
+            k2.Fsa.from_str(
+                "0 1 1 0 0.0\n1 2 2 0 0.0\n2 3 -1 0 0.0\n3\n",
+                acceptor=False,
+            )
+        )
+        return ours, theirs
+
+    def test_an_epsilon_on_kaldis_side_is_not_a_rejection(self):
+        from compare_graphs import compare_lg
+
+        from BenNevis.decode.graph import QUANTISATION_DELTA
+
+        ours, theirs = self._pair()
+        phones = {"<eps>": 0, "A": 1, "B": 2}
+        drawn = [(["word"], ["A", "B"])]
+        compared, failures = compare_lg(ours, theirs, phones, drawn, QUANTISATION_DELTA)
+        assert failures == []
+        assert compared == 1, (
+            "an input epsilon on Kaldi's side made the probe reject the "
+            "sequence, which is the mini-librispeech failure"
+        )
+
+    def test_a_real_disagreement_is_still_caught_across_an_epsilon(self):
+        """
+        The other direction, so the fix cannot be a blanket pass: the
+        epsilon must be stepped over without the weights behind it being
+        ignored.
+        """
+        import k2
+        from compare_graphs import compare_lg
+
+        from BenNevis.decode.graph import QUANTISATION_DELTA
+
+        ours, theirs = self._pair()
+        theirs.scores[1] += 0.25
+        compared, failures = compare_lg(
+            k2.arc_sort(ours),
+            k2.arc_sort(theirs),
+            {"A": 1, "B": 2},
+            [(["w"], ["A", "B"])],
+            QUANTISATION_DELTA,
+        )
+        assert compared == 1
+        assert len(failures) == 1 and "0.25" in failures[0]
+
+
 class TestCompareTlg:
     def test_the_real_graphs_agree(self, tlgs):
         from compare_graphs import compare_tlg
