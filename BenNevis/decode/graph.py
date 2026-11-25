@@ -50,7 +50,7 @@ Authors:
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import k2
 import torch
@@ -62,6 +62,7 @@ __all__ = [
     "build_decoding_graph",
     "prepare_output_probe",
     "weight_of_word_sequence",
+    "weight_of_label_sequence",
 ]
 
 #: OpenFST's `kDelta`, the grid `fstminimizeencoded` rounds weights to. A
@@ -273,6 +274,90 @@ def weight_of_word_sequence(
     best = k2.shortest_path(k2.create_fsa_vec([lattice]), use_double_scores=True)
     # k2's scores are negated costs, so the weight is their negative sum.
     return -float(best.scores.sum())
+
+
+def weight_of_label_sequence(
+    graph: k2.Fsa,
+    labels: List[int],
+    epsilon: int = 0,
+) -> Optional[float]:
+    """
+    The least weight of a path reading these input labels, over epsilons.
+
+    A Dijkstra over (state, position) pairs rather than a composition
+    followed by `k2.shortest_path`, and the reason is that the obvious
+    route does not survive a real graph. `k2.intersect` with
+    `treat_epsilons_specially=False` refuses a graph with input epsilons
+    at all, since label 0 is then an ordinary symbol that the linear
+    probe has no counterpart for; with it True the epsilons are matched
+    properly, but Kaldi's `LG` has **epsilon self-loops and cycles** --
+    an n-gram back-off arc is epsilon on the input side -- so the
+    intersection is cyclic and `k2.shortest_path` fails with
+    `dest_state > state_idx01`, which says nothing about epsilons.
+    Removing the epsilons first is the third route and the most
+    expensive: `k2.remove_epsilon` on a 43M-arc `TLG` does not fit a
+    16GiB runner.
+
+    This tolerates cycles because the weights are non-negative. Every
+    arc of a graph built from `-log` probabilities costs nothing or
+    more, so a cycle can only make a path dearer and Dijkstra's
+    settled-set argument holds. That is the one property to check before
+    reusing this on a graph from somewhere else.
+
+    Arguments
+    ---------
+    graph: k2.Fsa
+        The graph to search, with the sequence on its **input** side. A
+        word-sequence probe therefore passes `k2.invert(graph)`.
+    labels: List[int]
+        The label sequence, as ids in the graph's input symbol table.
+    epsilon: int
+        The label that consumes no position, 0 by default. Note label 0
+        is `<blk>` rather than `<eps>` on a k2 topology's input side, so
+        a probe of a token graph must say which it means.
+
+    Returns
+    -------
+    Optional[float]
+        The weight, or None if no path reads the sequence -- a fact about
+        the lexicon and grammar rather than about the weights, so callers
+        record it as absent rather than as infinity.
+    """
+    import heapq
+
+    arcs = graph.arcs.values()[:, :3].tolist()
+    # k2's scores are negated costs, so a cost is the negative score.
+    costs = (-graph.scores).tolist()
+    splits = graph.arcs.row_splits(1).tolist()
+    target = list(labels)
+    length = len(target)
+
+    best: Dict[Tuple[int, int], float] = {(0, 0): 0.0}
+    queue: List[Tuple[float, int, int]] = [(0.0, 0, 0)]
+    while queue:
+        cost, state, position = heapq.heappop(queue)
+        if cost > best.get((state, position), float("inf")):
+            continue
+        for index in range(splits[state], splits[state + 1]):
+            _, destination, label = arcs[index]
+            if label == -1:
+                # The arc into the super-final state, which accepts only
+                # once the whole sequence has been read.
+                if position == length:
+                    return cost + costs[index]
+                continue
+            if label == epsilon:
+                advanced = position
+            elif position < length and label == target[position]:
+                advanced = position + 1
+            else:
+                continue
+            key = (destination, advanced)
+            through = cost + costs[index]
+            if through < best.get(key, float("inf")):
+                best[key] = through
+                heapq.heappush(queue, (through, destination, advanced))
+    return None
 
 
 def build_decoding_graph(
