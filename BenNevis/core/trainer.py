@@ -24,7 +24,7 @@ from torchinfo import summary
 from kaldiio import WriteHelper
 from omegaconf import OmegaConf
 from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
-from BenNevis.utils.memory import MemoryReporter
+from BenNevis.utils.memory import MemoryReporter, trim_malloc
 from BenNevis.utils.platform import (
     link_or_copy,
     resolve_device,
@@ -1005,12 +1005,29 @@ class Trainer:
             # Beside the loss line, because a run that is killed leaves
             # only its log: three mini-librispeech runs were SIGKILLed on a
             # 15.6GiB runner with the trainer at 9.3GiB, and nothing in the
-            # log said what was holding it. The reading names the types
-            # that gained instances since the previous epoch, so a leak
-            # points at itself -- `Fsa` at the graph, `Tensor` at a
-            # retained autograd graph.
+            # log said what was holding it.
+            #
+            # The trim is the remedy as well as the reading, and the two
+            # are separated here on purpose. Nothing in this trainer
+            # leaks: run 45554764613 ended epoch 1 at 6030MiB and epoch 2
+            # at 6645MiB, and `malloc_trim(0)` took both back to the same
+            # 1058MiB, releasing 4972MiB and 5588MiB. Every byte of the
+            # growth was free heap glibc had not returned to the kernel,
+            # which it will not do of its own accord for a block in a
+            # secondary arena -- and a workload that allocates and frees
+            # large arrays across threads, as k2's intersection and
+            # torch's CPU kernels both do, fills those arenas. So the
+            # growth is bounded at one epoch's worth rather than
+            # accumulating towards the runner's limit.
+            #
+            # Every rank trims, not only the one that logs: rank 0 is the
+            # only process that reports, and a four-rank run where three
+            # of them never gave the heap back would be the same failure
+            # with three quarters of the evidence missing.
             if self.gpu_id == 0:
                 logging.info(memory.report(f"after epoch {self.epoch}", trim=True))
+            else:
+                trim_malloc()
 
             for lrs in self.schedulers:
                 lrs.step(valid_loss)
