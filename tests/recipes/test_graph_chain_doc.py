@@ -30,7 +30,10 @@ SCRIPT = REPO_ROOT / "BenNevis" / "run" / "prepare_graph.sh"
 DOC = REPO_ROOT / "docs" / "kaldi-graph-chain.md"
 
 #: Any `fst...` binary, as either script or document writes it.
-BINARY = re.compile(r"\b(fst[a-z]+)\b")
+#: `(?<![-\w])` so a *flag* whose name contains "fst" is not mistaken for
+#: a binary the script runs. `--compile-fsts` was read as a binary called
+#: `fsts`, and the document was then told to explain it.
+BINARY = re.compile(r"(?<![-\w])(fst[a-z]+)\b")
 
 #: Flags the document makes a claim about, so they cannot change quietly.
 FLAGS = ("--use-log=true", "--sort_type=ilabel")
