@@ -296,38 +296,44 @@ tolerances chosen per layer:
   **Removing dither cost one word error in total across all eight
   topologies**, and it moved downward, so the baseline survived the change
   intact.
-- **`torchaudio.compliance.kaldi.fbank` is close but not equivalent, and the
-  cause is narrowed rather than found.** Against undithered Kaldi it agrees
-  to 0.065 max and 0.012 mean in the log-mel domain, down from 1.45 and 0.038
-  with dither on — so dither was about 95% of the gap. What is left is
-  **zero-mean scatter of about 1.2% in linear energy**, and these have been
-  ruled out:
+- **`torchaudio.compliance.kaldi.fbank` is faithful to Kaldi, and the
+  "1.2% residual" this entry used to describe was the reference's 8-bit
+  compression.** `make_fbank.sh` writes compressed archives and
+  `CompressedMatrix` quantises each column to 8 bits under its default
+  `kSpeechFeature` scheme, so the captured features are Kaldi's output
+  **put on a grid** -- and anything computed from the waveform was being
+  compared against the grid rather than against Kaldi's arithmetic.
+  Measured on yesno, by `tools/fbank/probe.py`, which implements Kaldi's
+  filterbank from `feature-window.cc` and `mel-computations.cc` directly
+  and needs no Kaldi:
 
-  | Hypothesis | Verdict |
-  | --- | --- |
-  | Configuration | every Kaldi and torchaudio default already agrees — `use_power`, `use_log_fbank`, `htk_compat`, `raw_energy`, `low_freq`, `high_freq`, `povey`, preemphasis, `remove_dc_offset`, `round_to_power_of_two`, `snip_edges`. `energy_floor` differs but only matters with `use_energy=true` |
-  | Framing offset | offset 0 agrees twice as well as ±1, so framing is right |
-  | The `povey` window | the two definitions agree to 1.3e-16 |
-  | Filterbank weights | a fixed weight error would bias each mel bin consistently; per-bin mean differences are ±0.0004 |
-  | A normalisation factor | the mean difference of logs is −0.00007, so there is no offset to find |
-  | Quiet-bin cancellation | the scatter is flat across frame energies |
+  | comparison | mean | note |
+  | --- | --- | --- |
+  | that implementation vs `torchaudio` | **4e-6** | two independent readings of Kaldi's source agreeing |
+  | either vs the capture | **0.0117** | 1.17% in linear energy: the figure that was chased |
+  | the capture vs *the nearest grid point to it* | **6e-6** | float32 noise |
 
-  | The filterbank's conditioning | **tested and refuted**, see below |
+  and **53,428 of 53,440 entries have the captured value exactly equal to
+  the nearest grid point**; the twelve that do not sit within a rounding
+  tie of halfway. Half the median grid step is 0.0244, so uniform
+  rounding would average 0.0122 against the 0.0117 observed.
+  **The clue was in this file already.** The residual was recorded as
+  *independent of the sample rate and of how many FFT bins a mel bin
+  spans* -- 7.7e-2 max and 1.4e-2 mean on 16 kHz mini-librispeech against
+  6.5e-2 and 1.2e-2 on 8 kHz yesno -- and that was written up as
+  refuting the degenerate-filterbank hypothesis. Compression does not
+  care about the sample rate or the conditioning, which is exactly why
+  the two agreed; the observation was pointing at the answer and was read
+  as ruling something out. **A difference that does not move when
+  everything about the signal changes is a property of the measurement,
+  not of the signal.**
+  So the whole hypothesis table below was answering the wrong question,
+  and the next step it named -- capturing `compute-spectrogram-feats` to
+  localise the difference upstream or downstream of the mel projection --
+  **is not needed**. There is nothing to localise. For the record, what it
+  ruled out and how, since every line of it is still true of the
+  *comparison* even though the comparison was against a grid:
 
-  **It is not the degenerate filterbank.** That was the natural suspicion and
-  it is wrong: measured against mini-librispeech at 16 kHz, where the
-  filterbank is well conditioned, the gap is **7.7e-02 max and 1.4e-02
-  mean** — the same size as yesno's 6.5e-02 and 1.2e-02 at 8 kHz. So the
-  residual is independent of the sample rate and of how many FFT bins a mel
-  bin spans, which rules out the one explanation that had looked likely
-  enough to justify building a second corpus for.
-
-  What remains is the per-frame spectrum path, and localising it needs one of
-  Kaldi's intermediates rather than more guessing from outside.
-  `compute-spectrogram-feats` would give the power spectrum before the
-  filterbank, and capturing that for a few utterances would say in a single
-  run whether the difference is upstream or downstream of the mel
-  projection. That is the next cheap step if this is worth pursuing.
 - **The yesno filterbank is degenerate, and this is about the recipe rather
   than the migration.** 80 mel bins are requested over 20–4000 Hz, but a
   25 ms frame at 8 kHz is 200 samples, padded to a 256-point FFT, giving 128

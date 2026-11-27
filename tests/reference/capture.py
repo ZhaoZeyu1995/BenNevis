@@ -775,6 +775,11 @@ def capture_features(
         # which leaves a replacement for either stage with no input to be
         # driven with and nothing to compare against -- so the pair is the
         # point, and the same utterances are kept on both sides.
+        # Collected explicitly rather than read off the loop variable
+        # below: with neither archive present that loop `continue`s and
+        # leaves nothing bound, which is how the first version of the
+        # waveform capture crashed on a data directory with no features.
+        whole_keys: List[str] = []
         for kind, name in (("features", "feats.cmvn.scp"), ("raw", "feats.scp")):
             scp = data / name
             if not scp.is_file():
@@ -785,6 +790,8 @@ def capture_features(
             keys = sorted(features)
 
             whole = keys[:FULL_FEATURE_UTTERANCES]
+            if whole and not whole_keys:
+                whole_keys = list(whole)
             if whole:
                 arrays = {key: np.asarray(features[key]) for key in whole}
                 relative = f"{kind}/{dataset}.npz"
@@ -805,6 +812,20 @@ def capture_features(
 
             for key in keys:
                 manifest.stats[f"{kind}/{dataset}/{key}"] = array_stats(features[key])
+
+        # The **waveforms** for the utterances whose features are kept
+        # whole. Feature extraction is the one stage whose input was never
+        # captured, and the cost of that was not theoretical: the "1.2%
+        # linear-energy residual" between torchaudio and Kaldi was chased
+        # through six refuted hypotheses before anyone could compute a
+        # filterbank from the audio and find that the *reference* is
+        # quantised to 8 bits by `CompressedMatrix`. With the audio here,
+        # that comparison is a tier 1b test instead of a research project.
+        #
+        # Stored as the samples rather than as a file, so the capture does
+        # not depend on a corpus layout or on an audio decoder, and so the
+        # digest is of the numbers a feature extractor actually receives.
+        capture_waveforms(manifest, data, destination, dataset, whole_keys)
 
         cmvn = data / "cmvn.scp"
         if cmvn.is_file():
@@ -828,6 +849,82 @@ def capture_features(
                         "atol": FEATURE_TOLERANCE.atol,
                     },
                 }
+
+
+def capture_waveforms(
+    manifest: Manifest,
+    data: Path,
+    destination: Path,
+    dataset: str,
+    keys: List[str],
+) -> None:
+    """
+    The audio a feature extractor is given, for a few utterances.
+
+    `wav.scp` can name a file or a command ending in `|`, and may be
+    paired with a `segments` file; `kaldiio.load_scp` handles all three,
+    which is why it is used here rather than a wave reader. Without this
+    the capture records what came *out* of feature extraction and nothing
+    that went in, which is the gap that made the filterbank residual
+    unmeasurable -- see the comment at the call site.
+
+    Arguments
+    ---------
+    manifest: Manifest
+        The manifest to record into.
+    data: Path
+        The data directory.
+    destination: Path
+        The capture directory.
+    dataset: str
+        Its name, for the manifest keys.
+    keys: List[str]
+        The utterances to keep, which are the ones whose features are kept
+        whole -- the pair is the point.
+    """
+    import kaldiio
+    import numpy as np
+
+    scp = data / "wav.scp"
+    if not scp.is_file():
+        sys.stderr.write(f"capture: no {scp}, skipping waveforms\n")
+        return
+    segments = data / "segments"
+    try:
+        loader = kaldiio.load_scp(
+            str(scp), segments=str(segments) if segments.is_file() else None
+        )
+    except Exception as failure:  # pragma: no cover - corpus dependent
+        sys.stderr.write(f"capture: cannot read {scp}: {failure!r}\n")
+        return
+
+    arrays = {}
+    rates = {}
+    for key in keys:
+        if key not in loader:
+            sys.stderr.write(f"capture: no audio for {key}\n")
+            continue
+        rate, samples = loader[key]
+        arrays[key] = np.asarray(samples)
+        rates[key] = int(rate)
+    if not arrays:
+        return
+
+    relative = f"audio/{dataset}.npz"
+    target = destination / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(target, **arrays)
+    for key, value in arrays.items():
+        manifest.arrays[f"audio/{dataset}/{key}"] = {
+            "path": relative,
+            "key": key,
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sample_rate": rates[key],
+            # Exact: these are the samples themselves, not a computation
+            # over them, so any difference is a different recording.
+            "tolerance": {"rtol": 0.0, "atol": 0.0},
+        }
 
 
 def capture_transcriptions(
