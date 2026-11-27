@@ -1430,12 +1430,28 @@ touch the Actions budget — but 58 seconds is the number to beat.
   `tests/recipes/test_feature_dimension.py` now derives the expected
   `idim` from the recipe's own feature script and `--num-mel-bins`, which
   catches the class rather than the instance.
-  **The asymmetry that allowed it is worth fixing one day**: `odim` is
-  `null` in every model configuration and filled in from the language
-  directory, so a topology change cannot desynchronise it, while `idim`
-  is written out by hand. Deriving `idim` from the features would make
-  this impossible; that is a change to the configuration contract, so it
-  is recorded rather than done quietly.
+  **The asymmetry that allowed it is gone: `idim` is derived too.**
+  `odim` was always `null` and filled in from the language directory, so
+  a topology change could not desynchronise it, while `idim` was a number
+  per recipe. `run/train.py` now measures it with
+  `BenNevis.utils.data.feature_dim`, which reads one utterance of
+  `feats.cmvn.scp` -- lazily, so a five-hour corpus costs a seek -- and
+  every recipe says `idim: null`. An explicit number is still honoured
+  and still **checked** against the data, raising rather than failing in
+  the first forward pass, so pinning a dimension stays possible and
+  cannot be silently wrong.
+  Two things about the archive it measures. It is `feats.cmvn.scp`, the
+  one `Dataset` reads, not `feats.scp`: those happen to be the same width
+  today and would stop being so the moment normalisation changed it. And
+  it is skipped entirely when `load_feats` is false, because
+  `Wav2Vec2Model` takes the waveform and asking for a feature archive
+  would fail a perfectly good run.
+  **The test for this skipped everywhere for one commit and passed.** The
+  reader matched `idim:\s*(\d+)`, which stopped matching the moment the
+  configs became `idim: null`, so all seven parametrised cases skipped
+  and the suite was green while checking nothing -- the `G.fst` gate's
+  failure in #41, reproduced exactly. There is now a test that the reader
+  read something, which is the only shape of assertion that catches it.
   **What this costs is the WER ledger's comparability**, and it is
   recorded rather than absorbed. Every number in
   `tests/golden/wer/yesno.json` and in `egs/yesno/asr/README.md` was

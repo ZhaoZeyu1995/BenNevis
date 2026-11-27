@@ -2,7 +2,7 @@ module: BenNevis.models.rnnp
 name: Encoder
 kwargs:
   etype: bgrup
-  idim: 80  # 80 mel bins; pitch was dropped, see CLAUDE.md
+  idim: null  # determined by the features at training stage
   odim: null  # determined by lang at training stage
   elayers: 3
   eunits: 320
