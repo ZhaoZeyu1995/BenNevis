@@ -90,7 +90,9 @@ fi
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "$0: stage 3: topologies"
     for topo in ${topos}; do
-        run/prepare_topo.sh --topo ${topo} data/lang data/lang_${topo} || exit 1;
+        run/prepare_topo.sh \
+            --lexicon data/local/dict/lexicon.txt --sil-prob 0.0 \
+            --topo ${topo} data/lang data/lang_${topo} || exit 1;
     done
 fi
 

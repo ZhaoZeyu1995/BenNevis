@@ -111,7 +111,9 @@ fi
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "$0: stage 3: topologies"
     for topo in ${topos}; do
-        run/prepare_topo.sh --topo ${topo} ${lang} data/lang_${topo} || exit 1;
+        run/prepare_topo.sh \
+            --lexicon data/local/dict_nosp/lexicon.txt --sil-prob 0.5 --position-dependent-phones true \
+            --topo ${topo} ${lang} data/lang_${topo} || exit 1;
     done
 fi
 
