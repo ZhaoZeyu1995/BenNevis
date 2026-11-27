@@ -78,9 +78,9 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     fbankdir=fbank
     cmvndir=cmvn
     for x in train_yesno test_yesno; do 
-        steps/make_fbank_pitch.sh --nj ${nj} --write_utt2num_frames true \
+        steps/make_fbank.sh --nj ${nj} --write_utt2num_frames true \
             data/${x} exp/make_fbank/${x} data/${x}/${fbankdir} \
-            || { echo "$0: make_fbank_pitch.sh failed for ${x}" >&2; exit 1; }
+            || { echo "$0: make_fbank.sh failed for ${x}" >&2; exit 1; }
         steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} data/${x}/$cmvndir || exit 1;
         utils/fix_data_dir.sh data/${x} || exit 1;
         run/apply_cmvn.sh data/${x} || exit 1;

@@ -22,7 +22,21 @@
     "arose from two README files in the corpus being counted as waves, and",
     "prepare_data.sh now states the count explicitly so that filtering them",
     "out did not move an utterance across. 29 test utterances of eight words",
-    "each is the 232 above."
+    "each is the 232 above.",
+    "",
+    "**Every number here was measured on 83-dimensional features** -- 80",
+    "filterbank coefficients plus the three pitch dimensions",
+    "process-kaldi-pitch-feats produces. Pitch was dropped in the PR that",
+    "added this note, so the model's input is 80 wide now and these are a",
+    "record of a configuration the recipe no longer has.",
+    "",
+    "They are kept rather than cleared because they are the only",
+    "pre-refactor measurement that exists, and because the comparison that",
+    "matters is between the 83-dim and 80-dim eras: if yesno moves by more",
+    "than the gate allows, that is a real finding about pitch and not",
+    "noise. **max_wer has deliberately not been widened for the change.**",
+    "If an 80-dim run exceeds it, find out why -- which is what this file",
+    "is for."
   ],
   "model": "rnnp",
   "test_set": "test_yesno",
@@ -87,5 +101,10 @@
     "date": "2026-11-22",
     "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:8e57ab123343df7f57908cee5cb6f1251f4e8aed8d110d69ce6ffb5f80994779",
     "note": "CPU, torch 2.15, with --dither=0 in conf/fbank.conf. reference_wer is the author's pre-refactor CUDA run at torch 2.1, kept as the historical record. Removing dither moved one word error in total across all eight topologies, downward."
+  },
+  "features": {
+    "measured_at": "fbank+pitch, 83 dimensions",
+    "current": "fbank, 80 dimensions",
+    "note": "pitch was a GMM-era addition for tonal languages; yesno is Hebrew and the gain is marginal. See CLAUDE.md."
   }
 }

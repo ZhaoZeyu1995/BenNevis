@@ -23,7 +23,6 @@ fi
 binaries=(
     # feature extraction and CMVN
     compute-fbank-feats
-    compute-and-process-kaldi-pitch-feats
     compute-cmvn-stats
     apply-cmvn
     paste-feats
@@ -62,7 +61,7 @@ scripts=(
     "$kaldi_root/egs/wsj/s5/utils/fix_data_dir.sh"
     "$kaldi_root/egs/wsj/s5/utils/utt2spk_to_spk2utt.pl"
     "$kaldi_root/egs/wsj/s5/utils/run.pl"
-    "$kaldi_root/egs/wsj/s5/steps/make_fbank_pitch.sh"
+    "$kaldi_root/egs/wsj/s5/steps/make_fbank.sh"
     "$kaldi_root/egs/wsj/s5/steps/compute_cmvn_stats.sh"
 )
 

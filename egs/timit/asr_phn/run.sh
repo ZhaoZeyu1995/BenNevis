@@ -34,7 +34,7 @@ fi
 # Feature extraction
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     for x in train dev test; do
-        steps/make_fbank_pitch.sh --nj ${nj} --write_utt2num_frames true \
+        steps/make_fbank.sh --nj ${nj} --write_utt2num_frames true \
             data/${x} exp/make_fbank/${x} data/${x}/fbank
         steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} data/${x}/cmvn || exit 1;
         utils/fix_data_dir.sh data/${x}

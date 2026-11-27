@@ -1404,6 +1404,55 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
+- **Pitch is gone, and the features are 80 dimensions.**
+  `steps/make_fbank_pitch.sh` appended the three dimensions
+  `process-kaldi-pitch-feats` produces, making every recipe's input 83
+  wide. It was dropped deliberately: pitch is a GMM-era addition for
+  **tonal** languages, where F0 carries lexical information, and these
+  corpora are English and Hebrew; every modern end-to-end recipe uses
+  plain filterbank or the waveform, and this project's own `wav2vec2` and
+  `whisper` encoders never touch fbank at all.
+  **The practical reason it had to go is that nothing can replace it.**
+  `torchaudio.functional.compute_kaldi_pitch` was **removed in torchaudio
+  2.1** -- checked against the installed 2.11.1, where it is absent and
+  `detect_pitch_frequency` is a different algorithm producing a different
+  thing. So a Python feature extractor would have had to reimplement
+  `feat/pitch-functions.cc`, NCCF over lag candidates plus a Viterbi,
+  with no prospect of bit-exactness. Dropping it is what makes a Python
+  fbank the last feature problem rather than the first of two.
+  **Three recipes were already inconsistent and nothing noticed.**
+  `egs/librispeech/asr{1,2,3}` call `steps/make_fbank.sh`, which writes
+  80 coefficients and no pitch, while their model configuration said
+  `idim: 83` -- a run would have died at the first forward pass on a
+  shape mismatch, and the only reason nobody met it is that those recipes
+  have never run in CI. Note `conf` in asr2 and asr3 is a **symlink** to
+  asr1's, so the three share one file and one mistake.
+  `tests/recipes/test_feature_dimension.py` now derives the expected
+  `idim` from the recipe's own feature script and `--num-mel-bins`, which
+  catches the class rather than the instance.
+  **The asymmetry that allowed it is worth fixing one day**: `odim` is
+  `null` in every model configuration and filled in from the language
+  directory, so a topology change cannot desynchronise it, while `idim`
+  is written out by hand. Deriving `idim` from the features would make
+  this impossible; that is a change to the configuration contract, so it
+  is recorded rather than done quietly.
+  **What this costs is the WER ledger's comparability**, and it is
+  recorded rather than absorbed. Every number in
+  `tests/golden/wer/yesno.json` and in `egs/yesno/asr/README.md` was
+  measured at 83 dimensions; both now say so, and a `features` block
+  names which era each belongs to. **`max_wer` was deliberately not
+  widened.** If an 80-dimensional run exceeds the gate, that is a real
+  finding about pitch and the thing to do is find out why -- widening it
+  is how a ledger stops meaning anything.
+  **And it invalidates the captured reference, which is the gate working
+  rather than a problem.** The capture records `conf/pitch.conf`, and
+  `test_against_reference.py` fails with "recipe/conf/pitch.conf no
+  longer exists in the recipe" -- which is exactly what that check is for:
+  a reference taken under different settings is a record of something the
+  pipeline no longer does. The fix is its own error message's: re-run the
+  recipe, re-capture, commit the result. **Not** an edit to the test or
+  to the manifest.
+
 - **`prepare_lang.sh`'s tables are Python now, and all nine recorded ones
   are byte-exact first time.** `python3 -m BenNevis.lm prepare-lang` builds
   `phones.txt`, `words.txt`, `oov.{txt,int}`,
