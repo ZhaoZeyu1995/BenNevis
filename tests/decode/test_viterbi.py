@@ -391,3 +391,26 @@ class TestShards:
         shards = [lambda: iter(self.archive(2)), broken]
         with pytest.raises(RuntimeError, match="shard 1"):
             decode_shards(graph, shards, {1: "ONE", 2: "TWO"}, **UNPRUNED)
+
+    def test_a_failing_shard_is_named_the_same_way_without_fork(self, monkeypatch):
+        """
+        Windows has no `fork`, so `decode_shards` decodes the shards in
+        this process -- and used to let the shard's own exception through,
+        so the message named no shard there and did on Linux. Pinned
+        because the platform that takes this branch is the one nobody runs
+        locally.
+        """
+        import BenNevis.decode.viterbi as module
+
+        monkeypatch.setattr(
+            module.multiprocessing, "get_all_start_methods", lambda: ["spawn"]
+        )
+        graph = SearchGraph.from_fsa(graph_from(TWO_WORDS))
+
+        def broken():
+            raise RuntimeError("no features here")
+            yield  # pragma: no cover
+
+        shards = [lambda: iter(self.archive(2)), broken]
+        with pytest.raises(RuntimeError, match="shard 1"):
+            decode_shards(graph, shards, {1: "ONE", 2: "TWO"}, **UNPRUNED)

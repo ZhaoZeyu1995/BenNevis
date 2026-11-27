@@ -824,7 +824,10 @@ def decode_shards(
     Raises
     ------
     RuntimeError
-        If a shard's process fails, or writes nothing.
+        If a shard fails, naming which -- on every platform, including the
+        ones that cannot fork and decode the shards in this process. A
+        short archive scores as a run of deletions and reads as a bad
+        model, so this must never be allowed to pass for success.
     """
     search = dict(
         acoustic_scale=acoustic_scale,
@@ -841,10 +844,21 @@ def decode_shards(
             len(shards),
         )
         results: List[Tuple[str, List[str]]] = []
-        for shard in shards:
-            results.extend(
-                decode_archive(graph, shard(), idx2word, report_every=0, **search)
-            )
+        for index, shard in enumerate(shards):
+            try:
+                results.extend(
+                    decode_archive(graph, shard(), idx2word, report_every=0, **search)
+                )
+            except Exception as failure:
+                # Named the same way the forked path names it, so a failing
+                # shard reads the same on every platform. Windows took this
+                # branch and reported the shard's own exception instead,
+                # which is a difference nobody would notice until they were
+                # reading a Windows log to find out which shard broke.
+                raise RuntimeError(
+                    f"decoding failed in 1 of {len(shards)} shards: "
+                    f"shard {index} raised {failure!r}"
+                ) from failure
         return results
 
     context = multiprocessing.get_context("fork")
