@@ -1420,17 +1420,31 @@ touch the Actions budget — but 58 seconds is the number to beat.
   `feat/pitch-functions.cc`, NCCF over lag candidates plus a Viterbi,
   with no prospect of bit-exactness. Dropping it is what makes a Python
   fbank the last feature problem rather than the first of two.
-  **Three recipes were already inconsistent and nothing noticed.**
-  `egs/librispeech/asr{1,2,3}` call `steps/make_fbank.sh`, which writes
-  80 coefficients and no pitch, while their model configuration said
-  `idim: 83` -- a run would have died at the first forward pass on a
-  shape mismatch, and the only reason nobody met it is that those recipes
+  **What this costs is the WER ledger's comparability**, and it is
+  recorded rather than absorbed. Every number in
+  `tests/golden/wer/yesno.json` and in `egs/yesno/asr/README.md` was
+  measured at 83 dimensions; both now say so, and a `features` block
+  names which era each belongs to. **`max_wer` was deliberately not
+  widened.** If an 80-dimensional run exceeds the gate, that is a real
+  finding about pitch and the thing to do is find out why -- widening it
+  is how a ledger stops meaning anything.
+  **And it invalidates the captured reference, which is the gate working
+  rather than a problem.** The capture records `conf/pitch.conf`, and
+  `test_against_reference.py` fails with "recipe/conf/pitch.conf no
+  longer exists in the recipe" -- which is exactly what that check is for:
+  a reference taken under different settings is a record of something the
+  pipeline no longer does. The fix is its own error message's: re-run the
+  recipe, re-capture, commit the result. **Not** an edit to the test or
+  to the manifest.
+- **Three recipes configured an input width their own features did not
+  have, and nothing caught it.** `egs/librispeech/asr{1,2,3}` call
+  `steps/make_fbank.sh`, which writes 80 filterbank coefficients, while
+  their model configuration said `idim: 83` -- a shape mismatch at the
+  first forward pass. The only reason nobody met it is that those recipes
   have never run in CI. Note `conf` in asr2 and asr3 is a **symlink** to
-  asr1's, so the three share one file and one mistake.
-  `tests/recipes/test_feature_dimension.py` now derives the expected
-  `idim` from the recipe's own feature script and `--num-mel-bins`, which
-  catches the class rather than the instance.
-  **The asymmetry that allowed it is gone: `idim` is derived too.**
+  asr1's, so the three share one file and shared one mistake; a loop that
+  patches all three double-patches.
+  **A model's `idim` is derived from the features, not written out.**
   `odim` was always `null` and filled in from the language directory, so
   a topology change could not desynchronise it, while `idim` was a number
   per recipe. `run/train.py` now measures it with
@@ -1452,23 +1466,6 @@ touch the Actions budget — but 58 seconds is the number to beat.
   and the suite was green while checking nothing -- the `G.fst` gate's
   failure in #41, reproduced exactly. There is now a test that the reader
   read something, which is the only shape of assertion that catches it.
-  **What this costs is the WER ledger's comparability**, and it is
-  recorded rather than absorbed. Every number in
-  `tests/golden/wer/yesno.json` and in `egs/yesno/asr/README.md` was
-  measured at 83 dimensions; both now say so, and a `features` block
-  names which era each belongs to. **`max_wer` was deliberately not
-  widened.** If an 80-dimensional run exceeds the gate, that is a real
-  finding about pitch and the thing to do is find out why -- widening it
-  is how a ledger stops meaning anything.
-  **And it invalidates the captured reference, which is the gate working
-  rather than a problem.** The capture records `conf/pitch.conf`, and
-  `test_against_reference.py` fails with "recipe/conf/pitch.conf no
-  longer exists in the recipe" -- which is exactly what that check is for:
-  a reference taken under different settings is a record of something the
-  pipeline no longer does. The fix is its own error message's: re-run the
-  recipe, re-capture, commit the result. **Not** an edit to the test or
-  to the manifest.
-
 - **`prepare_lang.sh`'s tables are Python now, and all nine recorded ones
   are byte-exact first time.** `python3 -m BenNevis.lm prepare-lang` builds
   `phones.txt`, `words.txt`, `oov.{txt,int}`,

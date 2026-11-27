@@ -1,24 +1,26 @@
 """
-A recipe's configured `idim` must match the features its own stage makes.
+A model's input width is derived from the features, never written out.
 
-Tier 1: it reads the recipe's shell and YAML as text.
+Tier 1: it reads the recipes' shell and YAML as text.
 
-**This was already wrong in three recipes and nothing noticed.**
+**It used to be written out, and three recipes had it wrong.**
 `egs/librispeech/asr{1,2,3}` call `steps/make_fbank.sh`, which writes 80
-filterbank coefficients and no pitch, while their model configuration said
-`idim: 83`. A run would have died at the first forward pass on a shape
-mismatch -- 80 features into an 83-wide input layer -- and the only reason
-nobody met it is that those recipes have never been run in CI. Dropping
-pitch fixed them as a side effect, which is exactly why the fix is worth
-less than the test.
+filterbank coefficients, while their model configuration said `idim: 83`
+-- 80 features into an 83-wide input layer, a shape mismatch at the first
+forward pass. The only reason nobody met it is that those recipes have
+never been run in CI. Note `conf` in asr2 and asr3 is a **symlink** to
+asr1's, so the three shared one file and one mistake.
 
-The asymmetry that allows it is worth naming: `odim` is `null` in every
-model configuration and derived from the language directory at training
-time, so a topology change cannot desynchronise it. `idim` is written out
-by hand. Deriving it from the features would make this class of mistake
-impossible, and that is a change to the configuration contract rather
-than a test -- so it is recorded here and in CLAUDE.md instead of done
-quietly.
+`odim` never had the problem, because it is `null` in every model
+configuration and filled in from the language directory at training time,
+so a topology change cannot desynchronise it. `idim` is derived the same
+way now, from `feats.cmvn.scp`, which makes the mismatch impossible
+rather than merely detectable -- so what this file checks is that no
+number has crept back in.
+
+The runtime half, including that an explicit value is still honoured and
+still checked against the data, is in `tests/utils/test_feature_dim.py`;
+it lives in tier 1b because measuring an archive needs `kaldiio`.
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
@@ -31,16 +33,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: How many dimensions each feature extractor adds beyond the filterbank.
-#: `make_fbank_pitch.sh` appends the three that
-#: `process-kaldi-pitch-feats` produces -- the POV feature, the normalised
-#: log pitch and the delta pitch. No recipe uses it any more, and it is
-#: listed so that a recipe going back to it stays consistent rather than
-#: silently wrong.
-EXTRA_DIMENSIONS = {"make_fbank.sh": 0, "make_fbank_pitch.sh": 3}
-
-#: Kaldi's own default, for a recipe whose `fbank.conf` does not say.
-DEFAULT_MEL_BINS = 23
+#: Kaldi's filterbank stages, so that a recipe can be told to have one.
+#: Listed rather than globbed because a recipe gaining a third kind of
+#: feature extraction should be a deliberate edit here.
+FEATURE_SCRIPTS = ("make_fbank.sh", "make_fbank_pitch.sh")
 
 
 def recipes():
@@ -55,19 +51,11 @@ def feature_script(recipe: str) -> str:
     text = (REPO_ROOT / recipe / "run.sh").read_text(encoding="utf-8")
     found = {
         name
-        for name in EXTRA_DIMENSIONS
+        for name in FEATURE_SCRIPTS
         if re.search(rf"steps/{re.escape(name)}\b", text)
     }
     assert len(found) <= 1, f"{recipe} runs more than one of {found}"
     return found.pop() if found else ""
-
-
-def mel_bins(recipe: str) -> int:
-    path = REPO_ROOT / recipe / "conf" / "fbank.conf"
-    if not path.is_file():
-        return DEFAULT_MEL_BINS
-    match = re.search(r"^--num-mel-bins=(\d+)", path.read_text(encoding="utf-8"), re.M)
-    return int(match.group(1)) if match else DEFAULT_MEL_BINS
 
 
 def configured_idim(recipe: str):
@@ -141,31 +129,6 @@ def test_every_recipe_was_checked_or_skipped_for_a_stated_reason():
     assert len(with_features) >= 6, with_features
 
 
-def test_no_recipe_extracts_pitch_any_more():
-    """
-    Pitch was a GMM-era addition for tonal languages; these corpora are
-    English and Hebrew, and every modern end-to-end recipe uses plain
-    filterbank or the waveform. Pinned because going back to it silently
-    would change every model's input width and re-anchor the WER ledger
-    without saying so.
-    """
-    using = [r for r in recipes() if feature_script(r) == "make_fbank_pitch.sh"]
-    assert not using, f"{using} extract pitch; see CLAUDE.md on why it went"
-
-
-def test_no_recipe_still_carries_a_pitch_configuration():
-    """
-    `conf/pitch.conf` outlived its use in `egs/librispeech/asr*`, which
-    had already moved to `make_fbank.sh` -- a dead configuration file that
-    made the `idim: 83` above look deliberate.
-    """
-    stale = sorted(
-        p.relative_to(REPO_ROOT).as_posix()
-        for p in REPO_ROOT.glob("egs/*/*/conf/pitch.conf")
-    )
-    assert not stale, stale
-
-
 def test_odim_is_derived_rather_than_written_out():
     """
     The counterpart to `idim`, and the reason this test exists: `odim` is
@@ -185,3 +148,29 @@ def test_odim_is_derived_rather_than_written_out():
                 f"determined by the language directory at training time"
             )
     assert checked >= 6, checked
+
+
+def test_no_recipe_extracts_pitch_any_more():
+    """
+    Pitch was a GMM-era addition for tonal languages; these corpora are
+    English and Hebrew, and every modern end-to-end recipe uses plain
+    filterbank or the waveform. Pinned because going back to it silently
+    would change every model's input width -- which is now *derived*, so
+    it would change quietly rather than loudly -- and re-anchor the WER
+    ledger without saying so.
+    """
+    using = [r for r in recipes() if feature_script(r) == "make_fbank_pitch.sh"]
+    assert not using, f"{using} extract pitch; see CLAUDE.md on why it went"
+
+
+def test_no_recipe_still_carries_a_pitch_configuration():
+    """
+    `conf/pitch.conf` outlived its use in `egs/librispeech/asr*`, which
+    had already moved to `make_fbank.sh` -- a dead configuration file that
+    made the `idim: 83` those recipes carried look deliberate.
+    """
+    stale = sorted(
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in REPO_ROOT.glob("egs/*/*/conf/pitch.conf")
+    )
+    assert not stale, stale
