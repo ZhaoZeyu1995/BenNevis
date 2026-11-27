@@ -59,7 +59,16 @@ fi
 mkdir -p ${tmp}
 
 echo "$0: Making T.fst in ${des}..."
-run/prepare_topo.sh --topo ${topo} $src $des || exit 1;
+# --compile-fsts true because this script composes against $des/T.fst,
+# where the Python lane reads neither T.fst nor k2/T.fst and lets stage 3
+# skip them when OpenFST is absent.
+run/prepare_topo.sh --compile-fsts true --topo ${topo} $src $des || exit 1;
+
+if [ ! -f $des/T.fst ]; then
+    echo "$0: $des/T.fst was not written, so TLG.fst cannot be composed." >&2
+    echo "$0: This stage is Kaldi's decoding lane and needs OpenFST." >&2
+    exit 1
+fi
 
 echo "$0: Preparing decoding graph TLG.fst in ${des}..."
 fsttablecompose $des/L_disambig.fst $des/G.fst | fstdeterminizestar --use-log=true | \

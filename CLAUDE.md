@@ -1404,6 +1404,36 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
+- **Stage 3 needed Kaldi for an argument parser and an artefact, and does
+  not any more.** `prepare_topo.sh` sourced **Kaldi's
+  `utils/parse_options.sh`** to read its own flags, and `utils/` is a
+  symlink into `tools/kaldi`, so the script could not parse `--topo`
+  without a Kaldi checkout; and it ran `fstcompile` unconditionally for
+  `T.fst` and `k2/T.fst`, which **nothing in the Python lane reads** --
+  `T.fst` is for Kaldi's `prepare_graph.sh`, and `k2/T.fst` only for
+  `Lang.load_topo`'s legacy fallback. So a stage whose every output had
+  become Python still failed without Kaldi. It is `run/prepare_topo.py`
+  now, with the shell file reduced to a shim that `exec`s it and sources
+  neither `path.sh` nor `parse_options.sh`; `--compile-fsts auto` writes
+  the two FSTs when OpenFST is on PATH and says what it skipped when it is
+  not, `true` requires it, and `prepare_graph.sh` passes `true` and fails
+  pointing here when `T.fst` is missing.
+  **All six of `BenNevis/run/*.sh` still source `utils/parse_options.sh`
+  and seven source `path.sh`**, so this is one of six, and the pattern for
+  the rest is set: a Python entry point plus a shim, which also makes the
+  thing testable in tier 1 rather than only in tier 3.
+  Two things that came out of doing it. The symbol tables are now written
+  by two entry points -- this and `python3 -m BenNevis.topos` -- which is
+  exactly how two implementations of one thing come to disagree, and what
+  they would disagree about is **the network's output indices**, which a
+  checkpoint is only valid while they stay put. So
+  `tests/recipes/test_prepare_topo.py` asserts every table is
+  **byte-identical** to the other CLI's, for five topologies. And the
+  graph-chain document's test began demanding that the document explain a
+  binary called `fsts`: its extractor matched `fst[a-z]+` anywhere, so the
+  flag `--compile-fsts` read as an invocation. A test that scrapes a
+  script for command names has to exclude flags.
+
 - **The remaining POSIX-only sites.** `Lang.load_lexicon` **no longer
   shells out, and that was the last thing on the training path that did.**
   This entry used to say that getting off `fstprint` "needs the

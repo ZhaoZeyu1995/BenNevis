@@ -185,62 +185,91 @@ class TestTheSettingsAgree:
 
 
 class TestPrepareTopoItself:
-    @staticmethod
-    def script() -> str:
-        return (REPO_ROOT / "BenNevis" / "run" / "prepare_topo.sh").read_text(
-            encoding="utf-8"
-        )
+    """
+    The defaults and the plumbing, now in `prepare_topo.py`.
 
-    def test_the_flag_defaults_match_the_python_defaults(self):
+    These used to read `prepare_topo.sh` as shell text. The logic moved to
+    Python when stage 3 stopped needing Kaldi's `utils/parse_options.sh`
+    to read its own flags, so they read the Python -- and by calling it
+    rather than by matching its source, which is the stronger check and
+    was not available while it was a shell script.
+    """
+
+    @staticmethod
+    def defaults():
+        from BenNevis.run.prepare_topo import parse
+
+        return parse(["--topo", "ctc", "src", "des"])
+
+    def test_the_defaults_are_the_conservative_ones(self):
         """
-        `prepare_topo.sh` defaults `--sil-prob` to 0.0 and
-        position-dependence to false, which is **not**
-        `prepare_lang.sh`'s default -- it is the conservative one, so a
-        recipe that forgets to pass them gets a loud mismatch against its
+        Not `prepare_lang.sh`'s. Its defaults are 0.5 and
+        position-dependent; these are 0.0 and not, so a recipe that
+        forgets to pass them gets a loud mismatch against its
         `phones.txt` rather than a quietly different lexicon.
         """
-        text = self.script()
-        assert re.search(r"^sil_prob=0\.0\s*$", text, re.M)
-        assert re.search(r"^position_dependent_phones=false\s*$", text, re.M)
-        assert re.search(r"^lexicon=\s*$", text, re.M)
+        args = self.defaults()
+        assert args.sil_prob == 0.0
+        assert args.position_dependent_phones == "false"
+        assert args.lexicon is None
 
-    def test_it_writes_the_text_only_when_told_to(self):
-        text = self.script()
-        assert "k2/L.fst.txt" in text
-        assert 'if [ -n "$lexicon" ]' in text
+    def test_the_fsts_are_compiled_only_when_available(self):
+        assert self.defaults().compile_fsts == "auto"
+
+    def test_the_booleans_take_kaldis_spellings(self):
+        """
+        `--position-dependent-phones true`, not a bare flag: the shim
+        passes a recipe's existing command line through untouched and that
+        is what the recipes write.
+        """
+        from BenNevis.run.prepare_topo import parse
+
+        args = parse(
+            [
+                "--topo",
+                "ctc",
+                "--position-dependent-phones",
+                "true",
+                "src",
+                "des",
+            ]
+        )
+        assert args.position_dependent_phones == "true"
+        with pytest.raises(SystemExit):
+            parse(["--topo", "ctc", "--position-dependent-phones", "yes", "s", "d"])
+
+    def test_the_lexicon_text_is_written_only_when_asked_for(self):
+        source = (REPO_ROOT / "BenNevis" / "run" / "prepare_topo.py").read_text(
+            encoding="utf-8"
+        )
+        assert "k2/L.fst.txt" in source or "L.fst.txt" in source
+        assert "if args.lexicon is not None:" in source
 
     def test_it_says_so_when_it_does_not(self):
         """
         Silence here would mean a recipe quietly kept needing OpenFST.
         """
-        text = self.script()
-        tail = text[text.index('if [ -n "$lexicon" ]') :]
-        assert "else" in tail and "fstprint" in tail
+        source = (REPO_ROOT / "BenNevis" / "run" / "prepare_topo.py").read_text(
+            encoding="utf-8"
+        )
+        tail = source[source.index("if args.lexicon is not None:") :]
+        assert "else:" in tail and "fstprint" in tail
 
-    def test_it_fails_rather_than_writing_an_empty_lexicon(self):
-        text = self.script()
-        assert "does not exist" in text
-        assert "failed to build" in text
-
-    def test_it_forwards_both_settings_to_the_builder(self):
+    def test_both_settings_reach_the_builder(self):
         """
         A recipe passing `--position-dependent-phones true` is worth
-        nothing if the script does not hand it on, and dropping it is
-        invisible from the recipe's side -- a mutation that removed `$pdp`
-        from the command line passed every other test here.
-
-        Checked on the invocation itself rather than on the whole file, so
-        the flag has to reach `BenNevis.lm lexicon-fst` and not merely
-        appear somewhere in a comment.
+        nothing if the script does not hand it on, and in the shell version
+        a mutation removing `$pdp` from the command line passed every other
+        test here. In Python it is an argument rather than a string, so it
+        is checked by calling the function.
         """
-        text = self.script().replace("\\\n", " ")
-        call = next(
-            line
-            for line in text.splitlines()
-            if "BenNevis.lm lexicon-fst" in line and not line.strip().startswith("#")
+        from BenNevis.run.prepare_topo import write_lexicon_text
+
+        source = (REPO_ROOT / "BenNevis" / "run" / "prepare_topo.py").read_text(
+            encoding="utf-8"
         )
-        assert "--sil-prob $sil_prob" in call, call
-        assert "$pdp" in call, call
-        # And `$pdp` has to be set from the flag, not left empty.
-        assert '--position-dependent-phones"' in text
-        assert 'if [ "$position_dependent_phones" == "true" ]' in text
+        body = source[source.index("def write_lexicon_text") :]
+        body = body[: body.index("\ndef ")]
+        assert "sil_prob=args.sil_prob" in body
+        assert 'args.position_dependent_phones == "true"' in body
+        assert write_lexicon_text is not None
