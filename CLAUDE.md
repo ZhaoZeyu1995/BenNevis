@@ -1404,6 +1404,36 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
+- **Three recipes configured an input width their own features did not
+  have, and nothing caught it.** `egs/librispeech/asr{1,2,3}` call
+  `steps/make_fbank.sh`, which writes 80 filterbank coefficients, while
+  their model configuration said `idim: 83` -- a shape mismatch at the
+  first forward pass. The only reason nobody met it is that those recipes
+  have never run in CI. Note `conf` in asr2 and asr3 is a **symlink** to
+  asr1's, so the three share one file and shared one mistake; a loop that
+  patches all three double-patches.
+  **A model's `idim` is derived from the features, not written out.**
+  `odim` was always `null` and filled in from the language directory, so
+  a topology change could not desynchronise it, while `idim` was a number
+  per recipe. `run/train.py` now measures it with
+  `BenNevis.utils.data.feature_dim`, which reads one utterance of
+  `feats.cmvn.scp` -- lazily, so a five-hour corpus costs a seek -- and
+  every recipe says `idim: null`. An explicit number is still honoured
+  and still **checked** against the data, raising rather than failing in
+  the first forward pass, so pinning a dimension stays possible and
+  cannot be silently wrong.
+  Two things about the archive it measures. It is `feats.cmvn.scp`, the
+  one `Dataset` reads, not `feats.scp`: those happen to be the same width
+  today and would stop being so the moment normalisation changed it. And
+  it is skipped entirely when `load_feats` is false, because
+  `Wav2Vec2Model` takes the waveform and asking for a feature archive
+  would fail a perfectly good run.
+  **The test for this skipped everywhere for one commit and passed.** The
+  reader matched `idim:\s*(\d+)`, which stopped matching the moment the
+  configs became `idim: null`, so all seven parametrised cases skipped
+  and the suite was green while checking nothing -- the `G.fst` gate's
+  failure in #41, reproduced exactly. There is now a test that the reader
+  read something, which is the only shape of assertion that catches it.
 - **`prepare_lang.sh`'s tables are Python now, and all nine recorded ones
   are byte-exact first time.** `python3 -m BenNevis.lm prepare-lang` builds
   `phones.txt`, `words.txt`, `oov.{txt,int}`,

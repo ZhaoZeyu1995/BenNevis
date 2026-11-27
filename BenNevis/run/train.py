@@ -24,25 +24,28 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2024
 """
 
-import torch
 import logging
 import os
+from typing import List, Tuple
+
 import hydra
 import omegaconf
-from typing import Tuple, List
-from torch.utils.data.distributed import DistributedSampler
+import torch
 import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
+
+from BenNevis.core.dataset import CollateFunc, Dataset
 from BenNevis.core.lang import Lang
-from BenNevis.core.dataset import Dataset, CollateFunc
-from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
 from BenNevis.core.trainer import Trainer
-from BenNevis.utils.random import setup_seed
+from BenNevis.samplers.dynamic import DistributedSyncDynamicBatchSampler
+from BenNevis.utils.data import feature_dim
 from BenNevis.utils.misc import dynamic_import
 from BenNevis.utils.platform import (
     describe_platform,
     resolve_device,
     resolve_dist_backend,
 )
+from BenNevis.utils.random import setup_seed
 
 
 def get_opt(
@@ -268,6 +271,30 @@ def main(cfg):
     cfg.data["load_feats"] = (
         True if cfg.model["name"] not in ["Wav2Vec2Model"] else False
     )
+    # `idim` is derived from the features, the way `odim` is derived from
+    # the language directory. It used to be a number in each recipe's
+    # conf/model/*.yaml, and three of them had it wrong: librispeech
+    # asr1/2/3 said 83 while running steps/make_fbank.sh, which writes 80.
+    # That is a shape mismatch at the first forward pass, and nothing
+    # caught it because those recipes have never run in CI.
+    #
+    # An explicit value is still honoured and still **checked**, so that a
+    # configuration pinning a dimension cannot silently disagree with the
+    # data it will be trained on.
+    if cfg.data["load_feats"] and "idim" in cfg.model["kwargs"]:
+        measured = feature_dim(cfg.data["train_ds"])
+        configured = cfg.model["kwargs"]["idim"]
+        if configured is None:
+            cfg.model["kwargs"]["idim"] = measured
+            if local_rank == 0:
+                logging.info(f"Features are {measured}-dimensional")
+        elif int(configured) != measured:
+            raise ValueError(
+                f"the model is configured with idim {configured} but "
+                f"{cfg.data['train_ds']} holds {measured}-dimensional "
+                f"features; the first forward pass would fail on a shape "
+                f"mismatch. Set idim to null to derive it."
+            )
     model = model_class(
         **cfg.model["kwargs"],
     )
