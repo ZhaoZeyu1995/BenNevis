@@ -134,7 +134,44 @@ def main(argv=None) -> int:
         "beside the lexicon when not given",
     )
 
+    prepare = commands.add_parser(
+        "prepare-lang",
+        help="a language directory from a dictionary, as prepare_lang.sh does",
+    )
+    prepare.add_argument("dict_dir", type=Path, help="the dictionary directory")
+    prepare.add_argument("oov_word", help="the out-of-vocabulary word, e.g. <UNK>")
+    prepare.add_argument("out_dir", type=Path, help="where to write it")
+    prepare.add_argument(
+        "--sil-prob",
+        type=float,
+        default=0.5,
+        help="the optional-silence probability, for the lexicon FSTs. "
+        "prepare_lang.sh's own default, unlike the stage-3 flag",
+    )
+    prepare.add_argument(
+        "--position-dependent-phones",
+        choices=("true", "false"),
+        default="true",
+        help="prepare_lang.sh's default is true, and so is this",
+    )
+
     args = parser.parse_args(argv)
+
+    if args.command == "prepare-lang":
+        import logging
+
+        from BenNevis.lm.prepare import prepare_lang
+
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        prepare_lang(
+            args.dict_dir,
+            args.oov_word,
+            args.out_dir,
+            position_dependent_phones=args.position_dependent_phones == "true",
+            sil_prob=args.sil_prob,
+        )
+        return 0
+
     if args.command != "lexicon-fst":  # pragma: no cover - argparse enforces
         parser.error(f"unknown command {args.command}")
 
