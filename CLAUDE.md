@@ -97,6 +97,39 @@ budget — eight epochs is 160 minutes at the fast end and 276 at the slow one,
 so a 350-minute ceiling fits the first comfortably and the second only if
 nothing else goes wrong. A run that needs the corpus downloaded as well does
 not fit at all.
+**The slow end is now the measured norm rather than the bad case, and the
+runner's vendor predicts it.** Run 45715720923 took **34m05s** an epoch,
+making eight epochs **272 minutes** of a 348-minute budget, and it was an
+Intel Xeon 6975P-C; the 34m30s run was an Intel 6973P-C and both fast runs
+were AMD EPYC. Two of each is not a law, but when a mini-librispeech run's
+first epoch lands near 34 minutes the arithmetic for the rest of the job
+should assume it will not recover. The rest of that run is cheap and
+stable: stages 0 to 4 cost **2.8 minutes** and stages 6 to 9 **7.8**, so
+budget about eleven minutes for everything that is not training or stage
+10. What does not fit is stage 10 — see the decode figures below — and
+**the answer taken was fewer epochs, not a longer ceiling**: at four
+epochs training is 136 minutes at the slow end, which leaves about 200 for
+a stage 10 that needs 117.
+**Validation loss was still falling at epoch 8, and that does not change
+the conclusion.** It read 4.5234, 2.8455, 2.2957, 2.0596, 1.9322, 1.8689,
+1.8364, **1.8100**, with the last three improvements 0.063, 0.032 and
+0.026 — flattening rather than bottomed, and 1.8100 against the
+twelve-epoch run's 1.8028 at the same epoch, so eight epochs reproduces
+that run's best model. Four epochs does **not**: 2.0596 is a visibly worse
+model, and a four-epoch run buys the decoder comparison at the cost of the
+WER being a poor one. That is an acceptable trade only because both
+decoders read the same checkpoint — the comparison is between searches,
+not between models — and it would be the wrong trade for anything entered
+in the WER ledger.
+**And the first WER on mini-librispeech is recorded: 49.7%.** Kaldi's
+`decode-faster` scored all 1,089 utterances of `dev_clean_2` at 49.7% on
+the eight-epoch `ctc` model — 51.0 correct, 24.9 substitutions, **24.1
+deletions**, 0.8 insertions, 98.3% sentence error. The deletion rate
+thirty times the insertion rate is an undertrained CTC model preferring
+blank, which is what five hours of audio and eight epochs of `rnnp` gives.
+It is a baseline for the decoder comparison and **not** a ledger entry:
+`tests/golden/wer/` still has no mini-librispeech file, and the first
+number to go in one should come from a run whose point was the model.
 
 Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
 `.github/workflows/nightly.yml`. It is the **only** coverage the entry points
@@ -822,6 +855,23 @@ only by a full mini-librispeech run of three to five hours. Until that
 run exists, treat this as a change of the right shape with an unmeasured
 effect -- and note that CI decodes on the **CPU**, where k2's gain from
 a batch is a question rather than a given.
+**That question is answered now, and the answer is 2.65x.** Run
+45715720923 decoded with `batch_size=8` against the same 43,263,880-arc
+`TLG` on the same runner class and the same CPU: **600 utterances in
+1h04m35s, which is 6.46 seconds each**, against the unbatched 17.1. So a
+full 1,089 would take 1h57m where it had taken an extrapolated five
+hours, and batching is the cheaper of the two fixes by a wide margin.
+Three things it does not settle. **The rate is not flat** — the six
+progress lines give 5.12, 4.93, 5.98, 5.81, 9.67 and 7.13 seconds an
+utterance, so the last third cost nearly twice the first, and whether
+that is utterance length or something accumulating is unmeasured.
+**Kaldi is still 19x faster**: its stage 7 did the whole 1,089 in
+**6m10s** at `nj=8`, against a graph 3.36x smaller, so minimisation and
+epsilon-pair merging remain on the table rather than discharged by this.
+And **the comparison stage 10 exists for is still not made** — that run
+was cancelled at the ceiling having reached 600 of 1,089, so there is a
+Kaldi WER and no k2 WER, which is the second time in a row that the
+measurement was lost to training rather than to decoding.
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first
@@ -1028,6 +1078,15 @@ touch the Actions budget — but 58 seconds is the number to beat.
   evidence missing. The baseline reading before training deliberately
   does not trim -- there is nothing to give back yet, and trimming there
   would make the first epoch's growth unreadable.
+  **Eight full epochs have now exercised it, and the bound holds.** Run
+  45715720923 read 5054, 8161, 7649, 7596, 7449, 7282, 7113 and 7315MiB
+  resident and **1077, 1076, 1074, 1073, 1072, 1073, 1072 and 1072MiB
+  after the trim** -- the same figure to within 5MiB across all eight,
+  releasing up to 7085MiB at once, with tracked objects flat at 961,478
+  from epoch 2 on. The three runs before this fix were SIGKILLed in
+  epochs 4, 4 and 7; this one finished training and was cancelled for
+  time in stage 10 instead, which is the failure mode it was meant to
+  trade down to.
   Three things not to mislearn from this.
   **The loss path was measured clean and that was correct**: 2,000 steps
   of `GraphLoss` with the real `compile_training_graph`, fixed and varying
@@ -1492,6 +1551,14 @@ touch the Actions budget — but 58 seconds is the number to beat.
   carries the same story in its shape: a lost runner leaves `Run the
   recipe` with `completed_at: null`, every later step never started, and a
   `conclusion` the steps themselves do not account for.
+  **A ceiling cancellation has the opposite shape, and that is the cheap
+  way to tell them apart.** Run 45715720923 shows it: `Run the recipe`
+  `cancelled` with a real `completed_at`, the elapsed time within two
+  minutes of the configured ceiling, and **every later step run and
+  succeeded** -- the capture, the graph comparison and both uploads. So
+  `gh run view --json jobs` settles which of the two happened without
+  reading a log or an annotation, and a ceiling cancellation still yields
+  its artefacts while a lost runner yields nothing.
 - **It is the *live* job log that is limited to about 2MB, not the finished
   one — and `wget`'s progress dots will spend that limit before a recipe
   starts.** This was recorded wrongly here twice before it was measured
