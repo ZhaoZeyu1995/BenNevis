@@ -14,6 +14,17 @@ directly, which is the only check that can tell whether two differently
 pruned searches agree -- and it is how this gets judged, since nothing in
 tier 1 or 2 can.
 
+**Two searches live behind `--search`, and the default is no longer k2's.**
+`intersect_dense_pruned` could not decode mini-librispeech inside a CI run:
+three attempts in a row lost the measurement, the last SIGKILLed at 14,988
+MiB with 1,000 of 1,089 utterances done. `--search viterbi` is Kaldi's own
+token passing written in torch -- see `BenNevis.decode.viterbi` for why
+that was the fix and what was measured on the way -- and it decodes the
+same graph in under a gigabyte at Kaldi's own beam. `--search k2` keeps the
+older route, because it is the one the yesno equivalence was established
+with and two searches checking each other is the only comparison either of
+them has.
+
 Usage
 -----
     python3 run/decode_k2.py <data_dir> <lang_dir> <predict_dir> <decode_dir> \
@@ -46,6 +57,47 @@ def main(argv=None) -> int:
         "--position_dependent_phones", action="store_true", default=False
     )
     parser.add_argument("--acoustic_scale", type=float, default=1.0)
+    parser.add_argument(
+        "--search",
+        choices=("viterbi", "k2"),
+        default="viterbi",
+        help="which search. `viterbi` is Kaldi's token passing written in "
+        "torch, which decodes mini-librispeech's dev_clean_2 in about "
+        "0.6 to 2.0 seconds an utterance against "
+        "`intersect_dense_pruned`'s 5.2, at the same WER or better, and "
+        "in under a gigabyte rather than fifteen. `k2` is the older route, "
+        "kept because it is what the yesno equivalence was established "
+        "with and because the two searches checking each other is the "
+        "only comparison either of them has",
+    )
+    # Kaldi's token passing. The defaults are `run/decode_faster.sh`'s own,
+    # not this file's preference, so stage 10 and stage 7 differ in their
+    # *search* and in nothing else -- which is the whole point of having
+    # both. `tests/recipes/test_decode_k2_settings.py` reads them out of
+    # both files and fails if they drift apart.
+    parser.add_argument("--beam", type=float, default=32.0)
+    parser.add_argument("--max_active", type=int, default=5000)
+    parser.add_argument("--min_active", type=int, default=20)
+    parser.add_argument(
+        "--nj",
+        type=int,
+        default=1,
+        help="how many processes to decode in, for `--search viterbi`. "
+        "The recipe passes its own ${nj}, which is what decode_faster.sh "
+        "gets, so the two stages are given the same machine. Forked, so "
+        "the children share the prepared graph by copy-on-write rather "
+        "than each holding a gigabyte of their own",
+    )
+    parser.add_argument(
+        "--factor_threshold",
+        type=int,
+        default=8,
+        help="the smallest group of arcs sharing an input label that is "
+        "worth factoring into a non-emitting group; see "
+        "BenNevis.decode.viterbi. A number larger than any group turns "
+        "factoring off, which is 9x slower and gives the same answer",
+    )
+    # `intersect_dense_pruned`. Kept for `--search k2`.
     parser.add_argument("--search_beam", type=float, default=20.0)
     parser.add_argument("--output_beam", type=float, default=8.0)
     parser.add_argument("--min_active_states", type=int, default=30)
@@ -54,11 +106,12 @@ def main(argv=None) -> int:
         "--batch_size",
         type=int,
         default=8,
-        help="how many utterances to decode at once. 8 rather than 1 "
-        "because run 45511013199 spent 4h16m48s on 900 of 1,089 "
-        "utterances with a batch of one, which is what stood between "
-        "stage 10 and finishing inside a CI run; 8 is also what "
-        "decode_faster.sh runs at nj=8, so the two stay comparable",
+        help="how many utterances to decode at once, for `--search k2` "
+        "only: the token-passing search is frame synchronous over one "
+        "utterance's own active set, so a batch buys it nothing. 8 rather "
+        "than 1 because run 45511013199 spent 4h16m48s on 900 of 1,089 "
+        "utterances with a batch of one, and run 45715720923 measured the "
+        "batch at 2.65x; 8 is also what decode_faster.sh runs at nj=8",
     )
     args = parser.parse_args(argv)
 
@@ -70,7 +123,6 @@ def main(argv=None) -> int:
     import kaldiio
     import torch
 
-    from BenNevis.decode.decoder import decode_archive
     from BenNevis.decode.pipeline import (
         build_graph,
         read_symbol_table,
@@ -109,17 +161,85 @@ def main(argv=None) -> int:
             # torch warns once per process about non-writable tensors.
             yield uttid, torch.from_numpy(array.copy())
 
-    hypotheses = decode_archive(
-        graph,
-        utterances(),
-        idx2word,
-        acoustic_scale=args.acoustic_scale,
-        batch_size=args.batch_size,
-        search_beam=args.search_beam,
-        output_beam=args.output_beam,
-        min_active_states=args.min_active_states,
-        max_active_states=args.max_active_states,
-    )
+    def shards(count):
+        """
+        `count` callables, each yielding one contiguous block of the scp.
+
+        Contiguous rather than round-robin, because the blocks are
+        concatenated in order afterwards and the recipe merges the result
+        against `ref.wrd.trn` by position -- the same reason
+        `split_scp.pl` splits the way it does.
+
+        Each callable reads its own features, in its own process. The
+        parent only ever holds the scp's lines: mini-librispeech's 1,089
+        utterances are 1.6GB of log probabilities, which is not something
+        to materialise in order to hand it to a child.
+        """
+        entries = []
+        for line in scp.read_text(encoding="utf-8").splitlines():
+            fields = line.split(None, 1)
+            if len(fields) == 2:
+                entries.append((fields[0], fields[1]))
+        count = max(1, min(count, len(entries)))
+        size = -(-len(entries) // count)
+        blocks = [entries[i : i + size] for i in range(0, len(entries), size)]
+
+        def reader(block):
+            def read():
+                for uttid, location in block:
+                    yield uttid, torch.from_numpy(kaldiio.load_mat(location).copy())
+
+            return read
+
+        return [reader(block) for block in blocks]
+
+    if args.search == "viterbi":
+        import gc
+
+        from BenNevis.decode.viterbi import SearchGraph
+        from BenNevis.decode.viterbi import decode_shards
+        from BenNevis.utils.memory import trim_malloc
+
+        search_graph = SearchGraph.from_fsa(
+            graph, factor_threshold=args.factor_threshold
+        )
+        logging.info(
+            "prepared for token passing: %d states, %d emitting and %d "
+            "non-emitting arcs",
+            search_graph.num_states,
+            search_graph.num_emitting_arcs,
+            search_graph.num_non_emitting_arcs,
+        )
+        # The composed FSA is a gigabyte and nothing reads it again; the
+        # trim is there because preparing the graph leaves several times
+        # that in free heap glibc does not hand back on its own, which is
+        # the same lesson the trainer learned in #84.
+        del graph
+        gc.collect()
+        trim_malloc()
+        hypotheses = decode_shards(
+            search_graph,
+            shards(args.nj),
+            idx2word,
+            acoustic_scale=args.acoustic_scale,
+            beam=args.beam,
+            max_active=args.max_active,
+            min_active=args.min_active,
+        )
+    else:
+        from BenNevis.decode.decoder import decode_archive
+
+        hypotheses = decode_archive(
+            graph,
+            utterances(),
+            idx2word,
+            acoustic_scale=args.acoustic_scale,
+            batch_size=args.batch_size,
+            search_beam=args.search_beam,
+            output_beam=args.output_beam,
+            min_active_states=args.min_active_states,
+            max_active_states=args.max_active_states,
+        )
     logging.info("decoded %d utterances", len(hypotheses))
 
     output = decode_dir / f"aw_{args.acoustic_scale}"

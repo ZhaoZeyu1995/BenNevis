@@ -194,6 +194,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
                 --lexicon data/local/dict/lexicon.txt \
                 --arpa input/task.arpabo \
                 --topo ${topo} \
+                --nj ${nj} \
                 || { echo "$0: decode_k2.py failed for ${topo}/${x}" >&2; exit 1; }
         done
     done

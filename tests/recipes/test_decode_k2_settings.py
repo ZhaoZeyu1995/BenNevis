@@ -173,3 +173,70 @@ class TestTheSettingsAgree:
         """
         body = stage_ten(run_sh(recipe))
         assert "exit 1" in body, recipe
+
+
+class TestTheTwoSearchesArePrunedTheSame:
+    """
+    Stage 10's token-passing defaults must be `decode_faster.sh`'s.
+
+    The two stages exist to compare *searches* on one checkpoint, so every
+    other knob has to agree or the comparison measures the settings
+    instead. `decode_faster.sh` sets the beam to 32 and `max_active` to
+    5000, and `BenNevis.decode.viterbi` takes the same two parameters with
+    the same meaning -- so the defaults in `run/decode_k2.py` are read out
+    of the shell script here rather than restated.
+
+    This does not apply to `--search k2`: `intersect_dense_pruned` prunes
+    with two beams and a floor and a cap on active *states*, which do not
+    correspond to Kaldi's one beam and one cap, and pretending they did is
+    what the module docstring warns against.
+    """
+
+    @staticmethod
+    def shell_default(name: str) -> str:
+        text = (REPO_ROOT / "BenNevis" / "run" / "decode_faster.sh").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(rf"^{name}=['\"]?([0-9.]+)['\"]?\s*$", text, re.M)
+        assert match, f"decode_faster.sh no longer sets {name}"
+        return match.group(1)
+
+    @staticmethod
+    def python_default(name: str) -> str:
+        text = (REPO_ROOT / "BenNevis" / "run" / "decode_k2.py").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            rf'add_argument\(\s*"--{name}",\s*type=\w+,\s*default=([0-9.]+)',
+            text,
+        )
+        assert match, f"decode_k2.py no longer has a --{name} default"
+        return match.group(1)
+
+    def test_the_beam_matches(self):
+        assert float(self.python_default("beam")) == float(self.shell_default("beam"))
+
+    def test_max_active_matches(self):
+        assert int(float(self.python_default("max_active"))) == int(
+            float(self.shell_default("max_active"))
+        )
+
+    def test_the_acoustic_scale_matches(self):
+        assert float(self.python_default("acoustic_scale")) == float(
+            self.shell_default("acoustic_scale")
+        )
+
+    def test_token_passing_is_the_default_search(self):
+        """
+        Pinned because the reason is a measurement, not a preference:
+        `intersect_dense_pruned` lost the mini-librispeech comparison three
+        runs in a row, the last by SIGKILL at 14,988 MiB with 1,000 of
+        1,089 utterances decoded.
+        """
+        text = (REPO_ROOT / "BenNevis" / "run" / "decode_k2.py").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r'add_argument\(\s*"--search",.*?default="([a-z0-9]+)"', text, re.S
+        )
+        assert match and match.group(1) == "viterbi"
