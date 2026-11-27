@@ -222,6 +222,7 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
                 --lexicon data/local/dict_nosp/lexicon.txt \
                 --arpa data/local/lm/lm_tgsmall.arpa.gz \
                 --topo ${topo} \
+                --nj ${nj} \
                 --sil_prob 0.5 \
                 --position_dependent_phones \
                 || { echo "$0: decode_k2.py failed for ${topo}/${x}" >&2; exit 1; }

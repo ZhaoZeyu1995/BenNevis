@@ -13,6 +13,12 @@ So the convenience names resolve on first use through `__getattr__`. A
 caller who wants `format_trn` gets it without k2; a caller who wants
 `decode` gets the import error they would have got anyway.
 
+`viterbi.decode_archive` is deliberately **not** re-exported here, because
+`decoder.decode_archive` already has that name and two functions with one
+name in a package is how a caller ends up using the search they did not
+mean to. The two searches are chosen by importing the module that holds
+one, and `SearchGraph` in a signature is what says which it is.
+
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
@@ -33,6 +39,8 @@ __all__ = [
     "weight_of_word_sequence",
     "weight_of_label_sequence",
     "LabelProbe",
+    "SearchGraph",
+    "ViterbiDecoder",
 ]
 
 #: Which submodule each exported name lives in, so `__getattr__` can find
@@ -48,6 +56,8 @@ _SOURCES = {
     "aux_labels_per_arc": "decoder",
     "decode": "decoder",
     "decode_archive": "decoder",
+    "SearchGraph": "viterbi",
+    "ViterbiDecoder": "viterbi",
     "build_graph": "pipeline",
     "format_trn": "pipeline",
     "write_trn": "pipeline",

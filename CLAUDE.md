@@ -872,6 +872,111 @@ And **the comparison stage 10 exists for is still not made** — that run
 was cancelled at the ceiling having reached 600 of 1,089, so there is a
 Kaldi WER and no k2 WER, which is the second time in a row that the
 measurement was lost to training rather than to decoding.
+**It was lost a third time, and that is what settled the diagnosis.** Run
+45918000128 ran four epochs instead of eight and was **SIGKILLed in stage
+10 with 1,000 of 1,089 utterances decoded**, 321 minutes into a 350-minute
+budget — so it had the time and not the memory. The decoder's resident size
+over the whole stage does **not** trend upward: 354 samples, min 4,236MiB,
+median 7,468, p90 10,347, max **14,988**, oscillating between about 5 and
+10GiB from the first minute. So that was a per-batch peak rather than a
+leak, it came within **231MiB** of death at 05:04 and survived, and at
+06:03 it did not. Kaldi scored the same four-epoch checkpoint at **68.1%**
+(32.2 correct, 25.1 sub, **42.6 del**, 0.4 ins), against 49.7% at eight
+epochs; neither is a ledger entry.
+
+**The 19x was never k2's CPU implementation. It was the graph, and the
+answer is a decoder rather than a smaller graph.** Three measurements in
+sequence, each of which killed a plausible fix:
+
+- **The two pruning knobs do nothing.** `output_beam` 8 to 2 is worth
+  **-0.7%** and `max_active` 10000 to 5000 is worth **9%**, on the real
+  43,263,880-arc `TLG` at 1,100 frames. There is no setting of them that
+  closes a factor of nineteen, and `output_beam` was the one with a
+  reason to work, being k2's lattice beam where `decode-faster` keeps no
+  lattice at all.
+- **Keeping the language model's back-off arcs as epsilons does nothing
+  either.** That was the hypothesis with the best story — `decode-faster`
+  has `ProcessNonemitting` and ours cannot, so `compose_lg` must call
+  `remove_epsilon`, which expands a back-off arc into one arc per
+  reachable word. Built and measured: **43,611,556 arcs against
+  43,263,880**, with 352 states still holding 51.5% of them. Costs 12%,
+  not 8x. The entry below already said as much and it was still worth
+  building to be sure.
+- **The out-degree the search actually meets is 168.** Not the graph's own
+  mean of 9.31, and not Kaldi's 3.66. Profiling one utterance: a mean of
+  2,012 active states a frame and **338,909 candidate arcs**, peaking at
+  4.2 million. State 0 carries **208,941 arcs over 106 distinct input
+  labels** — 1,950 parallel arcs per label — and **366 states like it hold
+  52.5% of the whole graph**. They are the word-boundary states, and the
+  cause is `make_lexicon_fst.py`'s flower: a chain per pronunciation, so
+  the loop state has one arc per entry. `L_disambig` has a max out-degree
+  of 206,525 and `G` of 200,002 before anything is composed. Only
+  determinisation fixes that, and `k2.determinize` costs 56 minutes and
+  returns 3.4x the arcs. Distinct `(state, label)` pairs number
+  **13,846,519 of 43,263,880**, so a determinised graph would be about
+  32% of this one — which is Kaldi's 12.88M, confirming the diagnosis from
+  the other side.
+
+So `BenNevis/decode/viterbi.py` is Kaldi's `FasterDecoder` written in torch
+tensor operations, and **label factoring** gets most of what
+determinisation would without a subset construction: where a state has
+*k* > 1 arcs sharing an input label, they become one emitting arc into a
+new state carrying the group's minimum, plus *k* non-emitting arcs
+carrying the residuals. Exact, because `min + (w - min) == w`, and the
+surviving token set is identical — a token at the new state costs the
+group's minimum, so it survives exactly when a member would have, and the
+non-emitting pass then prices each member under the same cutoff. What it
+buys is that those *k* arcs are reached only once the label has survived
+the beam **with its acoustic score applied**, and at a word boundary a
+handful of 106 first phones are acoustically plausible in a given frame.
+
+| search | ms a frame | WER |
+| --- | --- | --- |
+| `intersect_dense_pruned`, search 20 / output 8 | 8.60 | 41.0% |
+| the same, `output_beam` 2 | 8.66 | 41.0% |
+| the same, `max_active` 5000 | 7.86 | 39.5% |
+| token passing, **no** factoring, beam 16 | 4.90 | 45.0% |
+| token passing, factored, beam 20 / max_active 7000 | **0.98** | 41.0% |
+| token passing, factored, beam 32 / max_active 5000 | 3.38 | 38.0% |
+
+Candidate arcs a frame: **338,909 before, 12,737 emitting plus 10,742
+non-emitting after** — against Kaldi's own ~18,300. So at equal WER this
+is **6.4x** k2's search, and at Kaldi's own beam of 32 it is 2.4x faster
+*and* more accurate. Memory is the other half: the `SearchGraph` holds
+**934MiB** against the source FSA's 1,101, and the only thing allocated
+per utterance is the back-pointer table, 91MiB at 1,500 frames and
+`max_active` 7000 — where `intersect_dense_pruned` wanted 14,988.
+
+Four things are worth keeping in view.
+**The factoring threshold is a memory knob and nothing else.** Thresholds
+2, 4, 8 and 16 gave the same WER and the same substitution, deletion and
+insertion counts to the error on the real graph; 8 is the default because
+at 8 only 100,141 new states cover 55.2% of the arcs and the arc count
+grows 0.2%, where at 2 it takes 2,848,972 states to cover 74.9% and costs
+6.6%.
+**The correctness standard here is an oracle, not an agreement.**
+`k2.intersect_dense` is exhaustive and `k2.shortest_path` exact, so on a
+graph small enough to intersect the best path is known: 293 random graphs
+at three thresholds each agree on **both the cost and the word sequence**.
+That is a stronger standard than `test_decoder.py` holds
+`intersect_dense_pruned` to, which is only fair, since that module is
+being compared with itself.
+**`--nj` matters and threads do not.** Four torch threads against one was
+measured at **1.44x** on tensors of ten thousand elements, where four
+processes are 3.3x — so `decode_shards` forks, which also means the
+children share the 934MiB graph by copy-on-write. `share_memory_()` would
+work and is deliberately not used: it needs `/dev/shm`, 64MB inside
+Docker by default, and the nightly runs the recipe inside Docker. Every
+`nj` from 1 to 8 gave byte-identical hypotheses, which is what makes the
+flag safe.
+**The remaining gap is still the graph, and the next cheap step is
+measured.** At beam 32 the non-emitting pass **evaluates 58,234 arcs a
+frame and keeps 15,358** — 26.4%. Each group's residuals are
+non-negative and already sorted, so a `searchsorted` against
+`cutoff - cost` would expand only the prefix within the beam and cut that
+3.8x. After that the honest remainder is determinisation: Kaldi evaluates
+~18,300 arcs a frame where this evaluates 56,416 at the same beam, which
+is the 3x the flower still costs.
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first

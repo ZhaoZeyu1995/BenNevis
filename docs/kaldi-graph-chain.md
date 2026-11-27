@@ -301,6 +301,65 @@ is a real cost, and three things now bear on it:
 - **What it costs at decoding time**, in memory and in speed, which nothing
   has measured.
 
+## What the 3.4x actually costs at decoding time, measured
+
+The section above left this as "what it costs at decoding time, in memory
+and in speed, which nothing has measured". It is measured now, and it
+changes the verdict in two ways: the quantity that matters is
+**determinisation** rather than minimisation, and the fix was a decoder
+rather than a graph.
+
+Profiling one 1,092-frame utterance against the real `TLG`:
+
+| | |
+| --- | --- |
+| active states a frame | mean 2,012, median 308, max 7,202 |
+| candidate arcs a frame | mean **338,909**, median 251,508, max 4,228,548 |
+| out-degree of the states actually visited | **168** |
+| out-degree of the graph as a whole | 9.31 |
+| out-degree of Kaldi's `TLG` | 3.66 |
+
+The search spends its time in a few very wide states. State 0 has
+**208,941 outgoing arcs over 106 distinct input labels**, which is 1,950
+parallel arcs per label, and **366 states like it hold 52.5% of all
+43,263,880 arcs**. The cause is upstream of any composition:
+`L_disambig`'s max out-degree is **206,525** and `G`'s is **200,002**,
+because `make_lexicon_fst.py` builds a flower -- a chain per pronunciation
+off one loop state -- and `arpa2fst`'s unigram state offers every word.
+`fstdeterminizestar` is what turns the flower into a trie.
+
+Two candidate fixes were built and measured, and both failed:
+
+- **Keeping the back-off arcs as epsilons** instead of calling
+  `k2.remove_epsilon`, with T's input labels shifted up by one so 0 is
+  free for epsilon. Result: **43,611,556 arcs against 43,263,880**, 352
+  states still holding 51.5% of them, max out-degree 206,523. The
+  back-off expansion is worth 12%, which this document already said, and
+  building it confirmed that the 8x is not there.
+- **Tuning `intersect_dense_pruned`.** `output_beam` 8 to 2 is worth
+  -0.7% and `max_active` 10000 to 5000 is worth 9%.
+
+What `distinct (state, label)` says is that determinisation is the whole
+difference: **13,846,519 pairs of 43,263,880 arcs**, so a determinised
+graph is about 32% of this one, which is Kaldi's 12,878,151 arrived at
+from the other side.
+
+**Label factoring** then gets most of it without a subset construction,
+and is described in `BenNevis/decode/viterbi.py`: a group of *k* arcs
+sharing an input label becomes one emitting arc into a new state holding
+the group's minimum plus *k* non-emitting arcs holding the residuals.
+Candidate arcs a frame fall from 338,909 to **12,737 emitting plus 10,742
+non-emitting**, against Kaldi's ~18,300, and the decode from 8.60 ms a
+frame to 0.98 at equal WER.
+
+So the arithmetic for determinisation has changed again. It is no longer
+worth 19x -- factoring has taken that -- and it is worth about **3x**:
+Kaldi evaluates some 18,300 arcs a frame at beam 32 where the factored
+graph evaluates 56,416. That is a real cost on the graph the decoder
+loads, and it is now the *only* remaining reason to want
+`DeterminizeStar`, which is worth knowing before anyone spends a week on
+the 1,134 lines below.
+
 ## Reimplementing `DeterminizeStar`
 
 `determinize-star-inl.h` is 1,134 lines. The shape:
