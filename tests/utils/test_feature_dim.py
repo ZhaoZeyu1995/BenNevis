@@ -107,13 +107,20 @@ class TestTheArchiveItMeasuresIsTheOneTrainingReads:
         measured `feats.scp` instead it would report the dimension of the
         un-normalised features, which happens to be the same number today
         and would stop being so the moment normalisation changed the width.
+
+        Read as **text**, not imported. `BenNevis.core.dataset` imports
+        `Lang`, which imports k2, and tier 1b has torch without k2 -- so
+        `inspect.getsource` on the module, which is what this did first,
+        fails there and passes on any machine with k2 installed. That is
+        the hazard CLAUDE.md records about `BenNevis.decode.__init__`,
+        met again from the test side.
         """
-        import inspect
+        from pathlib import Path
 
-        from BenNevis.core import dataset
-
+        root = Path(__file__).resolve().parent.parent.parent
+        source = (root / "BenNevis" / "core" / "dataset.py").read_text(encoding="utf-8")
         assert FEATURES_SCP == "feats.cmvn.scp"
-        assert FEATURES_SCP in inspect.getsource(dataset)
+        assert FEATURES_SCP in source
 
 
 class TestTrainHonoursAndChecksAnExplicitValue:
