@@ -18,7 +18,22 @@
 # fifteen generator scripts; all of that now lives in the spec.
 #
 # Usage:
-# run/prepare_topo.sh --topo [topo] <src_lang_dir> <des_lang_dir>
+# run/prepare_topo.sh --topo [topo] [--lexicon <lexicon.txt>] \
+#     [--sil-prob P] [--position-dependent-phones true|false] \
+#     <src_lang_dir> <des_lang_dir>
+#
+# --lexicon writes k2/L.fst.txt, which is what takes OpenFST off the
+# training path: Lang.load_lexicon used to read the lexicon FST by shelling
+# out to `fstprint $des/L.fst`, and compile_training_graph needs the result,
+# so a first training run required OpenFST however much else had been
+# ported. Rebuilding it in Python is safe because it is byte-exact against
+# Kaldi's -- gated by digest in tests/reference/test_corpora.py for both
+# corpora. The settings must match the prepare_lang.sh call that built the
+# directory, and tests/recipes/test_lexicon_settings.py checks that they do.
+#
+# It is optional because seven recipes call this script and only yesno and
+# mini_librispeech have had their settings checked; the others keep the
+# fstprint fallback, which warns.
 # Run `python3 -m BenNevis.topos list` for the available topologies.
 # e.g.
 # run/prepare_topo.sh --topo mmictc data/lang data/lang_mmictc
@@ -30,6 +45,9 @@
 echo "$0 $@"  # Print the command line for logging
 
 topo=
+lexicon=
+sil_prob=0.0
+position_dependent_phones=false
 
 . ./utils/parse_options.sh
 
@@ -97,3 +115,26 @@ python3 -m BenNevis.topos fst $topo $des/k2/phones.txt --variant k2 |\
 
 # The specification itself, which is what `Lang` expands at training time.
 python3 -m BenNevis.topos spec $topo > $des/k2/topo.yaml
+
+# k2/L.fst.txt, which is what `Lang` reads instead of running `fstprint` on
+# the compiled L.fst. Byte-identical to Kaldi's, so this is Kaldi's lexicon
+# FST computed in Python rather than an approximation of it -- see the
+# header. Without it training still works and still needs OpenFST once.
+if [ -n "$lexicon" ]; then
+    if [ ! -f "$lexicon" ]; then
+        echo "$0: --lexicon $lexicon does not exist" >&2
+        exit 1
+    fi
+    pdp=
+    if [ "$position_dependent_phones" == "true" ]; then
+        pdp="--position-dependent-phones"
+    fi
+    python3 -m BenNevis.lm lexicon-fst \
+        "$lexicon" $des/words.txt $des/phones.txt \
+        --sil-prob $sil_prob $pdp > $des/k2/L.fst.txt \
+        || { echo "$0: failed to build $des/k2/L.fst.txt" >&2; exit 1; }
+    echo "$0: wrote $des/k2/L.fst.txt ($(wc -l < $des/k2/L.fst.txt) lines)"
+else
+    echo "$0: no --lexicon, so $des/k2/L.fst.txt was not written and"
+    echo "$0: training will read L.fst through fstprint once, needing OpenFST"
+fi

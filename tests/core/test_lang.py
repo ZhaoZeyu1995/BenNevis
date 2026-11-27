@@ -5,6 +5,8 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import io
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -137,3 +139,109 @@ class TestConstruction:
     def test_missing_directory_fails(self, tmp_path):
         with pytest.raises((FileNotFoundError, OSError)):
             Lang(str(tmp_path / "nope"))
+
+
+class TestTheLexiconLoadsWithoutOpenFst:
+    """
+    The last thing on the training path that needed OpenFST.
+
+    `load_lexicon` read the lexicon FST by shelling out to
+    `fstprint {lang_dir}/L.fst`, and `compile_training_graph` genuinely
+    needs the result -- so a first training run required OpenFST and
+    Kaldi's compiled `L.fst` however much else had been ported. The
+    language directory now carries `k2/L.fst.txt`, written in Python by
+    `prepare_topo.sh --lexicon`, the same way it already carries
+    `k2/topo.yaml`.
+    """
+
+    #: Kaldi's `L.fst`: phones in, words out. The fixture's `L_inv.pt` is
+    #: this inverted, which is what `Lang` holds.
+    LEXICON_FST = "0 0 1 1 0.0\n0 0 2 2 0.0\n0 0 3 3 0.0\n0 0.0\n"
+
+    @staticmethod
+    def without_cache(lang_dir, text=None):
+        """The fixture's directory with `L_inv.pt` removed."""
+        (lang_dir / "k2" / "L_inv.pt").unlink()
+        if text is not None:
+            (lang_dir / "k2" / "L.fst.txt").write_text(text, encoding="utf-8")
+        return lang_dir
+
+    def test_it_reads_the_text_the_preparation_wrote(self, lang_dir):
+        directory = self.without_cache(lang_dir, self.LEXICON_FST)
+        obj = Lang(str(directory), load_topo=True, load_lexicon=True)
+        assert obj.L_inv.num_arcs > 0
+        # Phones on the output side once inverted, which is the orientation
+        # `compile_training_graph` composes against.
+        assert sorted(set(obj.L_inv.labels.tolist())) == [-1, 1, 2, 3]
+
+    def test_nothing_on_the_training_path_shells_out(self, lang_dir, monkeypatch):
+        """
+        The claim, asserted rather than described: with the text present,
+        `Lang` must not run a shell at all. `os.popen` is made to raise, so
+        a fallback would fail loudly instead of quietly working on a
+        machine that happens to have OpenFST -- which is the only kind of
+        machine this has ever been run on.
+        """
+        import os as os_module
+        import subprocess
+
+        directory = self.without_cache(lang_dir, self.LEXICON_FST)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("the training path shelled out")
+
+        monkeypatch.setattr(os_module, "popen", forbidden)
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        monkeypatch.setattr(subprocess, "Popen", forbidden)
+        monkeypatch.setattr(subprocess, "check_output", forbidden)
+
+        obj = Lang(str(directory), load_topo=True, load_lexicon=True)
+        # And the thing training actually asks for, since loading alone
+        # would not prove the graph can be compiled.
+        graph = obj.compile_training_graph([[1, 2]], torch.device("cpu"))
+        assert graph.shape[0] > 0
+
+    def test_the_cache_still_wins(self, lang_dir):
+        """
+        `k2/L_inv.pt` is checked first, so a directory that has been
+        trained from once does not re-read the text.
+        """
+        (lang_dir / "k2" / "L.fst.txt").write_text("", encoding="utf-8")
+        obj = Lang(str(lang_dir), load_topo=True, load_lexicon=True)
+        assert obj.L_inv.num_arcs > 0
+
+    def test_it_writes_the_cache_from_the_text(self, lang_dir):
+        directory = self.without_cache(lang_dir, self.LEXICON_FST)
+        Lang(str(directory), load_topo=True, load_lexicon=True)
+        assert (directory / "k2" / "L_inv.pt").is_file()
+
+    def test_the_fallback_warns_and_is_reachable(self, lang_dir, monkeypatch, caplog):
+        """
+        Five of seven recipes still take this route, so it has to work and
+        has to say that it did.
+        """
+        import os as os_module
+
+        directory = self.without_cache(lang_dir)
+        monkeypatch.setattr(
+            os_module, "popen", lambda cmd: io.StringIO(self.LEXICON_FST)
+        )
+        with caplog.at_level("WARNING"):
+            obj = Lang(str(directory), load_topo=True, load_lexicon=True)
+        assert obj.L_inv.num_arcs > 0
+        assert "fstprint" in caplog.text
+
+    def test_an_empty_fstprint_is_an_error_not_an_empty_lexicon(
+        self, lang_dir, monkeypatch
+    ):
+        """
+        OpenFST missing from PATH makes `os.popen` yield nothing, and an
+        empty lexicon would train against an empty graph -- a run that
+        burns hours and converges to nonsense rather than one that fails.
+        """
+        import os as os_module
+
+        directory = self.without_cache(lang_dir)
+        monkeypatch.setattr(os_module, "popen", lambda cmd: io.StringIO(""))
+        with pytest.raises(RuntimeError, match="produced nothing"):
+            Lang(str(directory), load_topo=True, load_lexicon=True)

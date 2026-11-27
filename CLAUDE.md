@@ -1404,12 +1404,41 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
-- **The remaining POSIX-only sites.** `Lang.load_lexicon` shells out to
-  `fstprint | awk`; the `awk` half is now `BenNevis.decode.graph`'s
-  `load_openfst_text`, but the `fstprint` half needs the binary `L.fst`, and
-  getting off that means a language directory carrying `k2/L.fst.txt` the way
-  it already carries `k2/topo.yaml` — which needs the dictionary at
-  preparation time, so it is a larger piece of goal 2.
+- **The remaining POSIX-only sites.** `Lang.load_lexicon` **no longer
+  shells out, and that was the last thing on the training path that did.**
+  This entry used to say that getting off `fstprint` "needs the
+  dictionary at preparation time, so it is a larger piece of goal 2". It
+  stopped being larger the moment `build_lexicon_fst_text` became
+  byte-exact, which it now is for both corpora -- the blocker had been
+  discharged by other work and the entry had not noticed. `prepare_topo.sh --lexicon` writes
+  `k2/L.fst.txt` with `python3 -m BenNevis.lm lexicon-fst`, and
+  `load_lexicon` reads it, falling back to `fstprint` with a warning for a
+  directory prepared before this — the same arrangement `load_topo` has
+  for `k2/topo.yaml`. Measured on mini-librispeech's 206,510-entry
+  lexicon: **1,539,598 lines in 1.3 seconds, byte-identical to the digest
+  the capture recorded for Kaldi's `L.fst`**, and 1.2 seconds to read back
+  into k2 at 649MiB, once, before it is cached as `k2/L_inv.pt`.
+  Three things about it are worth knowing.
+  **The flag is optional, and that is a deliberate gap rather than an
+  oversight.** Seven recipes call `prepare_topo.sh` and only yesno and
+  mini-librispeech have had their settings checked against their own
+  `prepare_lang.sh` call; the other five keep the fallback.
+  `tests/recipes/test_lexicon_settings.py` pins which recipes are in which
+  group, so converting one without listing it fails.
+  **Its defaults are the conservative ones, not Kaldi's.**
+  `prepare_topo.sh` defaults `--sil-prob` to 0.0 and position-dependence
+  to false where `prepare_lang.sh` defaults to 0.5 and true, so a recipe
+  that forgets to pass them gets a loud mismatch against its `phones.txt`
+  rather than a quietly different lexicon — this is the stage-10 settings
+  trap one stage earlier, and with a worse blast radius, since stage 3
+  feeds every **training** run rather than one decode.
+  **A mutation that dropped the flag from the shell command survived the
+  first version of those tests.** Checking that the recipe passes
+  `--position-dependent-phones true` says nothing about whether the script
+  forwards it, so the test now reads the `BenNevis.lm lexicon-fst`
+  invocation itself. Same shape as every other "wrong rather than broken"
+  entry here: the recipe looked right from both ends and the middle was
+  dropping it.
   `run/predict.py`'s `cat | awk` merge **is now Python**
   (`BenNevis.utils.merge`, fifteen tier 1 tests), and replacing it fixed a
   latent bug rather than only porting one: a shell glob is lexicographic, so

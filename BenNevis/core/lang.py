@@ -241,8 +241,29 @@ class Lang(object):
 
     def load_lexicon(self):
         """
-        Load lang_dir/k2/L_inv.pt.
-        Generate one based on {lang_dir}/L.fst if there is not one already.
+        The lexicon FSA, and its inverse, which training composes against.
+
+        Three sources, in order, and the middle one is why the training
+        path no longer needs OpenFST:
+
+        1. `k2/L_inv.pt`, the cache this writes on first use;
+        2. **`k2/L.fst.txt`**, written by `prepare_topo.sh --lexicon` from
+           the dictionary, in Python;
+        3. `fstprint {lang_dir}/L.fst`, which needs OpenFST on PATH and a
+           POSIX shell, and warns.
+
+        The third was the only route until `k2/L.fst.txt` existed, and
+        `compile_training_graph` genuinely needs what it returns -- so a
+        first training run required OpenFST and Kaldi's compiled `L.fst`
+        however much else had been ported. It is kept for a language
+        directory prepared before this, which is the same arrangement
+        `load_topo` has for `k2/topo.yaml`.
+
+        **Rebuilding rather than converting is safe because it is
+        byte-exact**: `build_lexicon_fst_text` reproduces Kaldi's `L.fst`
+        for both corpora, and `tests/reference/test_corpora.py` gates that
+        by digest. The text is therefore Kaldi's lexicon FST, computed in
+        Python.
 
         self.L: k2.Fsa
             The lexicon FSA.
@@ -254,19 +275,45 @@ class Lang(object):
             logging.info(f"Loading L_inv from {self._lang_dir}/k2/L_inv.pt")
             self.L_inv = k2.arc_sort(k2.Fsa.from_dict(torch.load(L_inv_fst)))
             self.L = k2.arc_sort(self.L_inv.invert())
-        else:
-            logging.info(
-                f"Loading {self._lang_dir}/L.fst and generating {self._lang_dir}/k2/L_inv.pt."
-            )
+            return
 
+        text_path = os.path.join(self._lang_dir, "k2", "L.fst.txt")
+        if os.path.exists(text_path):
+            logging.info(f"Loading the lexicon from {text_path}")
+            with open(text_path, encoding="utf-8") as handle:
+                openfst_txt = handle.read()
+        else:
+            logging.warning(
+                f"{self._lang_dir}/k2/L.fst.txt is missing, so the lexicon "
+                f"is being read from the compiled {self._lang_dir}/L.fst "
+                f"with `fstprint`. That needs OpenFST on PATH and a POSIX "
+                f"shell, and is the last thing on the training path that "
+                f"does. Re-run prepare_topo.sh with --lexicon to have the "
+                f"directory carry the text instead."
+            )
             cmd = (
                 f"""fstprint {self._lang_dir}/L.fst | """
                 f"""awk -F '\t' '{{if (NF==4) {{print $0 FS "0.0"; }} else {{print $0;}}}}'"""
             )
             openfst_txt = os.popen(cmd).read()
-            self.L = k2.arc_sort(k2.Fsa.from_openfst(openfst_txt, acceptor=False))
-            self.L_inv = k2.arc_sort(self.L.invert())
-            torch.save(self.L_inv.as_dict(), L_inv_fst)
+            if not openfst_txt.strip():
+                raise RuntimeError(
+                    f"`fstprint {self._lang_dir}/L.fst` produced nothing. "
+                    f"Either OpenFST is not on PATH or the FST is missing; "
+                    f"an empty lexicon would train against an empty graph "
+                    f"rather than fail here."
+                )
+        # `from_openfst` wants five fields an arc, and both `fstprint` and
+        # the Python builder omit a weight that is the semiring One -- which
+        # for `--sil_prob 0.0` is every weight in the file.
+        # `load_openfst_text` fills those in and arc-sorts; it also handles
+        # the one-field final-state line, which the `awk` this replaces did
+        # not.
+        from BenNevis.decode.graph import load_openfst_text
+
+        self.L = load_openfst_text(openfst_txt, acceptor=False)
+        self.L_inv = k2.arc_sort(self.L.invert())
+        torch.save(self.L_inv.as_dict(), L_inv_fst)
 
     def compile_training_graph(
         self,
