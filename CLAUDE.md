@@ -1404,6 +1404,55 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
+- **`prepare_lang.sh`'s tables are Python now, and all nine recorded ones
+  are byte-exact first time.** `python3 -m BenNevis.lm prepare-lang` builds
+  `phones.txt`, `words.txt`, `oov.{txt,int}`,
+  `phones/{silence,disambig,optional_silence,wdisambig_phones,
+  wdisambig_words}.int` and `phones/align_lexicon.{txt,int}` from a Kaldi
+  dictionary, plus the two lexicon FSTs through the existing builders.
+  Checked against mini-librispeech's capture: **nine files identical,
+  364 phones and 200,007 words**, and both FSTs still matching their
+  recorded digests -- which matters because they are now built against
+  *these* tables, so a wrong table would show up as a wrong FST.
+  Four of `prepare_lang.sh`'s decisions are not guessable from the shell
+  and three of them decide the integers.
+  **A silence phone keeps its bare form and a non-silence phone does
+  not.** The suffix lists are `"" "" "_B" "_E" "_I" "_S"` for silence and
+  `"" "_B" "_E" "_I" "_S"` for non-silence, and the *first field is the
+  map's key* -- so silence expands to five versions including the
+  unsuffixed one and non-silence to four. That is why
+  mini-librispeech's `phones.txt` reads `SIL SIL_B SIL_E SIL_I SIL_S` and
+  has no bare `AA`.
+  **The order is silence, then non-silence, then disambiguation**, each
+  flattened by input line and then by field -- and
+  `nonsilence_phones.txt` groups a phone with its stress variants on one
+  line, `AA AA0 AA1 AA2`, so the grouping is part of the answer.
+  **`words.txt` reserves `#0`, `<s>` and `</s>` after the last word**, and
+  `prepare_lang.sh` *exits* if `<s>` or `</s>` is in the lexicon rather
+  than renumbering.
+  And `align_lexicon.txt` is built from the **position-suffixed** lexicon,
+  each line `word word phones...` with the word repeated, plus an
+  `<eps> <eps> <silphone>` entry.
+  **What is not produced is everything only GMM training reads** --
+  `phones/sets.txt`, `roots.txt`, `extra_questions.txt`, `word_boundary.*`
+  and `topo`. BenNevis trains no GMM, and writing files nothing reads
+  would be four more things to keep correct.
+  **Two gaps in the capture, not in the code, and they meet badly.**
+  yesno's capture predates the dictionary being recorded, so there is no
+  input to rebuild its tables from; mini-librispeech's has the dictionary
+  but **not `phones/align_lexicon.int`**. So the one file the *training*
+  path reads is ungated on the one corpus that could gate it. Its
+  structure is checked instead -- the word repeated, every integer
+  resolving through the two byte-exact tables -- and it belongs on the
+  list with `utt2spk` for the next capture.
+  One test-cost note worth keeping: the first version of the gate ran
+  `prepare_lang` in a function-scoped fixture, so mini-librispeech's
+  206,510 entries were rebuilt four times and **tier 1 went from ten
+  seconds to twenty-six**. It is memoised per corpus now, and skips the
+  FSTs because `tests/reference/test_corpora.py` already gates both by
+  digest. Memoised rather than a class-scoped fixture, which cannot
+  depend on a function-scoped parameter.
+
 - **Stage 3 needed Kaldi for an argument parser and an artefact, and does
   not any more.** `prepare_topo.sh` sourced **Kaldi's
   `utils/parse_options.sh`** to read its own flags, and `utils/` is a
