@@ -978,6 +978,36 @@ non-negative and already sorted, so a `searchsorted` against
 ~18,300 arcs a frame where this evaluates 56,416 at the same beam, which
 is the 3x the flower still costs.
 
+**And the comparison stage 10 exists for is finally made.** Run
+46049745072, four epochs of `ctc` on master, all stages, success:
+
+| | Kaldi `decode-faster` | Python + token passing |
+| --- | --- | --- |
+| WER | 67.6% | **65.96%** |
+| sub / del / ins | 25.2 / 42.2 / 0.3 | 26.1 / **39.7** / 0.15 |
+| utterances | 1,089 | **1,089** |
+| wall time at nj=8 | **8m46s** | 29m21s |
+| peak decoder RSS | — | **1,818 MiB** |
+
+So on the same checkpoint the Python lane is **1.6 points better**, and
+the shape of the difference is the interesting part: it **deletes less**
+— 39.7 against 42.2 — and substitutes slightly more. Two plausible
+causes, neither measured: our graph keeps full precision where
+`fstminimizeencoded` quantises every arc to 1/1024, and the two searches
+prune differently. It is **3.35x slower** rather than the 29x the k2
+route was, and it peaks at **1,818 MiB against the 14,988 that SIGKILLed
+k2** — which is why this run finished at all.
+Four things to hold onto. The run was **slow throughout**, 35.5 minutes
+an epoch, so the 8m46s is this runner's `decode-faster` and not the
+6m10s recorded earlier on a faster one; the ratio is the comparable
+figure, not either absolute. **Neither WER is a ledger entry** — four
+epochs is a deliberately undertrained model, 42% deletions, and
+`tests/golden/wer/` still has no mini-librispeech file. The 67.6% here
+against 68.1% on run 45918000128 is the same configuration twice, which
+is a useful consistency check on the Kaldi side. And the remaining 3.35x
+is still the flower: Kaldi evaluates some 18,300 arcs a frame where this
+evaluates more, which only determinisation closes.
+
 **All of that is done, and one of the three was a defect rather than an
 optimisation.** Profiling the shipped decoder rather than theorising about
 it found, in order of what it was worth:
