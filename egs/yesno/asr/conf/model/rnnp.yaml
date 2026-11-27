@@ -2,7 +2,7 @@ module: BenNevis.models.rnnp
 name: Encoder
 kwargs:
   etype: blstmp
-  idim: 83
+  idim: null  # determined by the features at training stage
   odim: null  # determined by lang at training stage
   elayers: 2
   eunits: 128
