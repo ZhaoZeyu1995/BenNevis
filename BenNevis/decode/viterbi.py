@@ -170,6 +170,7 @@ class SearchGraph:
     eps_dst: torch.Tensor
     eps_cost: torch.Tensor
     eps_arc: torch.Tensor
+    eps_key: torch.Tensor
     final_cost: torch.Tensor
     aux_row_splits: Optional[torch.Tensor]
     aux_values: torch.Tensor
@@ -392,10 +393,13 @@ def _factor(
     # the grouping of the *next* preparation of this graph is the same.
     order = torch.argsort(emit_src, stable=True)
 
-    eps_src = num_states + rank[groups[member_factored]]
-    eps_dst = dst[member_factored]
-    eps_cost = cost[member_factored] - group_min[groups[member_factored]]
-    eps_arc = source_arc[member_factored]
+    # The members of a group, **sorted by their residual**, which is what
+    # lets the search expand only a prefix of them -- see `_prefix_limits`.
+    group_of_member = groups[member_factored]
+    eps_src = num_states + rank[group_of_member]
+    eps_cost = cost[member_factored] - group_min[group_of_member]
+    key = _residual_key(eps_src, eps_cost)
+    inside = torch.argsort(key)
 
     return dict(
         num_states=total_states,
@@ -404,11 +408,87 @@ def _factor(
         emit_label=emit_label[order].int(),
         emit_cost=emit_cost[order].float(),
         emit_arc=emit_arc[order].int(),
-        eps_row_splits=_row_splits(eps_src, total_states),
-        eps_dst=eps_dst.int(),
-        eps_cost=eps_cost.float(),
-        eps_arc=eps_arc.int(),
+        eps_row_splits=_row_splits(eps_src[inside], total_states),
+        eps_dst=dst[member_factored][inside].int(),
+        eps_cost=eps_cost[inside].float(),
+        eps_arc=source_arc[member_factored][inside].int(),
+        eps_key=key[inside],
     )
+
+
+#: Steps per nat in the key the non-emitting prefix is found by. Coarse on
+#: purpose: a coarser key only ever selects a *superset* of the arcs within
+#: the beam, and the exact float comparison follows, so this trades nothing
+#: but a few wasted comparisons.
+_KEY_SCALE = 64
+
+#: Residuals above this many nats are clamped together. A residual is how
+#: much dearer a member of a group is than its cheapest, so one this large
+#: is outside any beam anyone decodes with; clamping keeps the key small
+#: and, being monotone, keeps it sorted.
+_KEY_CEILING = 1024
+
+
+def _residual_key(src: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+    """
+    A single sorted key over all non-emitting arcs, state major.
+
+    `torch.searchsorted` wants one sorted sequence, and the residuals are
+    sorted only *within* a state -- so the state index is folded into the
+    key above the residual. That makes the whole array non-decreasing and
+    one `searchsorted` can answer every active token's question at once.
+    """
+    quantised = torch.clamp(
+        (residual * _KEY_SCALE).floor().long(), 0, _KEY_CEILING * _KEY_SCALE
+    )
+    return src * (_KEY_CEILING * _KEY_SCALE + 1) + quantised
+
+
+def _prefix_limits(
+    graph: "SearchGraph", active: torch.Tensor, budget: torch.Tensor
+) -> torch.Tensor:
+    """
+    How many of each state's non-emitting arcs can be within the cutoff.
+
+    A token at cost *c* under a cutoff *k* can only use an arc whose
+    residual is at most *k - c*, and the residuals are sorted -- so the
+    answer is a prefix, and the prefix length is one `searchsorted`
+    against the key. The quantised budget is rounded **up** so the prefix
+    is a superset of the arcs that will survive the exact comparison; it
+    is never short, which would silently lose paths.
+
+    This is the whole of the second optimisation, and the measurement that
+    asked for it: at beam 32 the closure was evaluating 162,533 arcs a
+    frame and keeping 24% of them.
+    """
+    quantised = torch.clamp(
+        (budget * _KEY_SCALE).ceil().long(), 0, _KEY_CEILING * _KEY_SCALE
+    )
+    width = _KEY_CEILING * _KEY_SCALE + 1
+    bound = torch.searchsorted(graph.eps_key, active * width + quantised, right=True)
+    starts = graph.eps_row_splits[active]
+    return torch.clamp(bound - starts, min=0)
+
+
+def _arcs_within(
+    row_splits: torch.Tensor, active: torch.Tensor, counts: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    `_arcs_of`, but taking only the first `counts[i]` arcs of each state.
+
+    Used for the non-emitting pass, where the arcs of a state are sorted
+    by residual so a prefix is all that can survive the cutoff.
+    """
+    total = int(counts.sum())
+    if total == 0:
+        empty = torch.zeros(0, dtype=torch.int64)
+        return empty, empty
+    token = torch.repeat_interleave(
+        torch.arange(active.numel(), dtype=torch.int64), counts
+    )
+    shift = row_splits[active] - (torch.cumsum(counts, 0) - counts)
+    arc = shift[token] + torch.arange(total, dtype=torch.int64)
+    return arc, token
 
 
 def _row_splits(src: torch.Tensor, num_states: int) -> torch.Tensor:
@@ -438,9 +518,10 @@ def _arcs_of(
     token = torch.repeat_interleave(
         torch.arange(active.numel(), dtype=torch.int64), counts
     )
-    base = torch.repeat_interleave(starts, counts)
-    offset = torch.repeat_interleave(torch.cumsum(counts, 0) - counts, counts)
-    arc = base + (torch.arange(total, dtype=torch.int64) - offset)
+    # `base - offset` is one value per token, so it is a gather rather than
+    # two more `repeat_interleave`s -- which were 10% of the whole search.
+    shift = starts - (torch.cumsum(counts, 0) - counts)
+    arc = shift[token] + torch.arange(total, dtype=torch.int64)
     return arc, token
 
 
@@ -467,6 +548,10 @@ class ViterbiDecoder:
     acoustic_scale: float
         What the log probabilities are multiplied by, as Kaldi's
         `--acoustic-scale`.
+    beam_delta: float
+        Kaldi's `--beam-delta`, which it calls an obscure setting: how much
+        slack the adaptive beam gets over whichever cutoff `max_active` or
+        `min_active` forced.
     max_epsilon_rounds: int
         How many times the non-emitting closure may iterate in one frame.
         Factoring introduces exactly one level, so one round settles it;
@@ -480,6 +565,7 @@ class ViterbiDecoder:
         max_active: int = DEFAULT_MAX_ACTIVE,
         min_active: int = DEFAULT_MIN_ACTIVE,
         acoustic_scale: float = 1.0,
+        beam_delta: float = 0.5,
         max_epsilon_rounds: int = 16,
     ) -> None:
         if beam <= 0:
@@ -498,6 +584,7 @@ class ViterbiDecoder:
         self.max_active = max_active
         self.min_active = min_active
         self.acoustic_scale = acoustic_scale
+        self.beam_delta = beam_delta
         self.max_epsilon_rounds = max_epsilon_rounds
         self._best = torch.full((graph.num_states,), _INF, dtype=torch.float64)
         self._arc = torch.full((graph.num_states,), _NO_ARC, dtype=torch.int64)
@@ -506,13 +593,29 @@ class ViterbiDecoder:
         #: reduce, and the one to watch if a graph changes shape.
         self.counters = dict(frames=0, emitting=0, non_emitting=0, rounds=0)
 
-    def _cutoff(self, cost: torch.Tensor) -> float:
+    def _cutoff(self, cost: torch.Tensor) -> Tuple[float, float]:
         """
         Kaldi's `GetCutoff`, in its own order.
 
         `max_active` first, and if it binds tighter than the beam it wins;
         then `min_active`, and if it is looser than the beam it wins. The
         order matters when both would apply.
+
+        **Two values, because Kaldi's `GetCutoff` returns two.** One is the
+        cutoff for the tokens in hand; the other is the `adaptive_beam`
+        that `ProcessEmitting` then prunes the *next* frame's candidates
+        with, at `best_new + adaptive_beam`. They are not the same number
+        and the coupling is the point: when `max_active` tightens the
+        cutoff the candidate beam tightens with it, and when `min_active`
+        loosens it the candidate beam loosens too, both by `beam_delta`.
+        Splitting them -- applying only the plain beam to candidates --
+        was tried here and makes `min_active` inert.
+
+        Returns
+        -------
+        Tuple[float, float]
+            The cutoff on the costs given, and the beam to prune the next
+            frame's candidates with.
 
         **One token apart from Kaldi, deliberately.** `GetCutoff` takes
         `tmp_array_[max_active]` after an `nth_element`, which is the
@@ -525,16 +628,54 @@ class ViterbiDecoder:
         token at the cap.
         """
         count = cost.numel()
-        cutoff = float(cost.min()) + self.beam
+        best = float(cost.min())
+        cutoff = best + self.beam
         if count > self.max_active:
             kth = float(torch.kthvalue(cost, self.max_active).values)
             if kth < cutoff:
-                return kth
+                return kth, kth - best + self.beam_delta
         if count > self.min_active > 0:
             kth = float(torch.kthvalue(cost, self.min_active).values)
             if kth > cutoff:
-                return kth
-        return cutoff
+                return kth, kth - best + self.beam_delta
+        return cutoff, self.beam
+
+    def _cap(
+        self,
+        active: torch.Tensor,
+        cost: torch.Tensor,
+        history: List[Tuple[torch.Tensor, torch.Tensor, bool]],
+    ) -> Tuple[torch.Tensor, torch.Tensor, float]:
+        """
+        Apply the cutoff to the token list, which is where Kaldi applies it.
+
+        **This was wrong and the profile is what showed it.**
+        `FasterDecoder` calls `GetCutoff` on `toks_` at the *start* of a
+        frame, so `max_active` bounds the token list *after* the
+        non-emitting closure has added to it. This applied it to the
+        emitting candidates instead, and the consequence was large: at beam
+        32 the emitting pass left 3,837 tokens, the closure took that to
+        **18,038**, and nothing capped them -- so `--max-active 5000` was
+        letting 3.6 times its own limit into the next frame. With factoring
+        that is not a detail, because the closure's job is to add a token
+        per member of every group it reaches.
+
+        The last generation in `history` is aligned with `active` by
+        construction, so dropping tokens means indexing that generation by
+        the same mask -- otherwise the next generation's parent indices
+        would point into a list that no longer exists, which is a
+        back-pointer bug and would read as a plausible-but-wrong
+        transcription.
+        """
+        if active.numel() <= 1:
+            return active, cost, self.beam
+        cutoff, adaptive = self._cutoff(cost)
+        keep = cost <= cutoff
+        if bool(keep.all()):
+            return active, cost, adaptive
+        parent, arc, non_emitting = history[-1]
+        history[-1] = (parent[keep], arc[keep], non_emitting)
+        return active[keep], cost[keep], adaptive
 
     def _recombine(
         self, dst: torch.Tensor, cost: torch.Tensor, arc: torch.Tensor
@@ -596,6 +737,9 @@ class ViterbiDecoder:
         # the generation before, and on which arc. A frame is one emitting
         # generation and however many non-emitting ones it took to settle.
         history: List[Tuple[torch.Tensor, torch.Tensor, bool]] = []
+        # The start state alone needs no cutoff, so the first frame's
+        # candidates are pruned with the plain beam.
+        adaptive = self.beam
 
         for frame in range(log_probs.shape[0]):
             acoustic = -(log_probs[frame].double() * self.acoustic_scale)
@@ -608,7 +752,10 @@ class ViterbiDecoder:
                 + g.emit_cost[arc].double()
                 + acoustic[g.emit_label[arc].long()]
             )
-            cutoff = self._cutoff(candidate)
+            # Only the beam here. `max_active` belongs to the token list and
+            # is applied below, which is where Kaldi applies it -- see
+            # `_cap`.
+            cutoff = float(candidate.min()) + adaptive
             alive = candidate <= cutoff
             arc, token, candidate = arc[alive], token[alive], candidate[alive]
             if arc.numel() == 0:
@@ -622,6 +769,7 @@ class ViterbiDecoder:
             history.append((token[chosen].int(), arc[chosen].int(), False))
             self.counters["frames"] += 1
             active, cost = self._close(active, cost, cutoff, history)
+            active, cost, adaptive = self._cap(active, cost, history)
 
         if not history:
             return []
@@ -659,27 +807,72 @@ class ViterbiDecoder:
         g = self.graph
         if g.num_non_emitting_arcs == 0:
             return active, cost
+        # A frontier, as `ProcessNonemitting` keeps a queue: after the first
+        # round only a state whose cost *improved* can give anything new, so
+        # re-expanding the whole token list repeats work that is guaranteed
+        # to lose the recombination. It was doing exactly that -- 1,670
+        # expansions for 1,092 frames, and the extra 578 found nothing,
+        # because the states factoring introduces stay active and get
+        # expanded again every frame.
+        frontier, frontier_cost = active, cost
+        # Where each frontier token sits in the token list, because the
+        # history records parents as indices into that list. Carried rather
+        # than looked up: `active` is `dst[chosen]` in arc order and so is
+        # **not** sorted, and a `searchsorted` here gave wrong parents --
+        # which the oracle caught and no hand-written graph did.
+        frontier_index = torch.arange(active.numel(), dtype=torch.int64)
         for _round in range(self.max_epsilon_rounds):
-            arc, token = _arcs_of(g.eps_row_splits, active)
+            # The out-degrees first, since they are two gathers: most
+            # second rounds end here, without paying for a `searchsorted`
+            # over the whole non-emitting arc list.
+            starts = g.eps_row_splits[frontier]
+            counts = g.eps_row_splits[frontier + 1] - starts
+            if int(counts.sum()) == 0:
+                return active, cost
+            # Only the prefix of each state's arcs that can be within the
+            # cutoff, found by one `searchsorted` against the sorted
+            # residuals. Expanding all of them and pruning afterwards was
+            # what this did first, and at beam 32 that evaluated 162,533
+            # arcs a frame to keep 24% of them.
+            limits = torch.minimum(
+                counts, _prefix_limits(g, frontier, cutoff - frontier_cost)
+            )
+            arc, token = _arcs_within(g.eps_row_splits, frontier, limits)
             if arc.numel() == 0:
                 return active, cost
             self.counters["non_emitting"] += int(arc.numel())
-            candidate = cost[token] + g.eps_cost[arc].double()
+            candidate = frontier_cost[token] + g.eps_cost[arc].double()
+            # The prefix is a superset, because the key is quantised and
+            # rounded outwards, so the exact comparison still decides.
             alive = candidate <= cutoff
             if not bool(alive.any()):
                 return active, cost
             arc, token, candidate = arc[alive], token[alive], candidate[alive]
             self.counters["rounds"] += 1
+            # The frontier's tokens are a subset of `active`, so a candidate
+            # has to compete with the whole token list and not just with the
+            # frontier -- a non-emitting arc may reach a state the emitting
+            # pass already reached more cheaply.
             held = active.numel()
             dst = torch.cat([active, g.eps_dst[arc].long()])
             merged = torch.cat([cost, candidate])
             from_arc = torch.cat([torch.full((held,), -1, dtype=torch.int64), arc])
-            parent = torch.cat([torch.arange(held, dtype=torch.int64), token])
+            parent = torch.cat(
+                [torch.arange(held, dtype=torch.int64), frontier_index[token]]
+            )
             chosen = self._recombine(dst, merged, from_arc)
-            if int(chosen[held:].sum()) == 0:
+            won = chosen.clone()
+            won[:held] = False
+            if int(won.sum()) == 0:
                 return active, cost
+            # Positions in the token list this round is about to become,
+            # for the next round's parents.
+            rank = torch.cumsum(chosen.long(), 0) - 1
             active, cost = dst[chosen], merged[chosen]
             history.append((parent[chosen].int(), from_arc[chosen].int(), True))
+            # Only what improved can give anything in the round after.
+            frontier, frontier_cost = dst[won], merged[won]
+            frontier_index = rank[won]
         logging.warning(
             "the non-emitting closure did not settle in %d rounds; the graph "
             "has a chain of non-emitting arcs longer than this search expects",

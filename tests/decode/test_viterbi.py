@@ -248,27 +248,107 @@ class TestPruning:
         assert decode_once(text, [1, 3], beam=1.0) != [2]
         assert decode_once(text, [1, 3], beam=4.0) == [2]
 
-    def test_max_active_keeps_at_most_that_many(self):
-        graph = SearchGraph.from_fsa(graph_from(PARALLEL), factor_threshold=10**9)
-        decoder = ViterbiDecoder(graph, beam=1e9, max_active=1, min_active=0)
-        # Only the cheapest survives the cap, which is the cheapest arc.
-        assert decoder.decode(peaked([1])) == [2]
-
-    def test_min_active_widens_the_beam(self):
+    def test_max_active_caps_the_tokens_carried_between_frames(self):
         """
-        Kaldi's `--min-active` loosens a cutoff rather than leave too few
-        tokens.
-
-        Three candidates at 0.0, 9.0 and 10.0 above the best. A beam of 1.0
-        keeps only the first, so the path through state 2 is gone and token
-        3 cannot be taken in the next frame; `min_active` 2 raises the
-        cutoff to the second cheapest and brings it back.
+        Four tokens after the first frame and a cap of one, so the second
+        frame can only continue from the cheapest -- state 2, whose arc
+        costs 0.25. State 3's continuation accepts token 4 and is cut, so a
+        decoder that capped nothing would answer `[3, 7]`.
         """
-        text = (
-            "0 1 1 1 0.0\n0 2 1 2 9.0\n0 3 1 3 10.0\n" "1 4 2 0 0.0\n2 4 3 0 0.0\n4\n"
-        )
-        assert decode_once(text, [1, 3], beam=1.0, min_active=2) == [2]
-        assert decode_once(text, [1, 3], beam=1.0, min_active=0) != [2]
+        text = PARALLEL + "3 5 4 7 0.0\n2 6 4 8 0.0\n5\n6\n"
+        assert decode_once(text, [1, 4], max_active=1) == [2, 8]
+        assert decode_once(text, [1, 4], max_active=10) == [2, 8]
+
+    def test_the_cap_is_applied_after_the_non_emitting_closure(self):
+        """
+        Where Kaldi applies it, and this had it wrong.
+
+        The closure adds a token per member of every factored group it
+        reaches, so applying `max_active` to the emitting candidates
+        instead let 3.6 times the cap into the next frame on the real
+        graph -- 18,038 tokens against a cap of 5,000. Asserted on the
+        counters rather than on a WER, because a WER would move for a
+        dozen reasons.
+        """
+        graph = SearchGraph.from_fsa(graph_from(PARALLEL), factor_threshold=2)
+        assert graph.num_non_emitting_arcs == 4
+        text = PARALLEL + "3 5 4 7 0.0\n2 6 4 8 0.0\n5\n6\n"
+        factored = SearchGraph.from_fsa(graph_from(text), factor_threshold=2)
+        capped = ViterbiDecoder(factored, beam=1e9, max_active=1, min_active=0)
+        capped.decode(peaked([1, 4]))
+        loose = ViterbiDecoder(factored, beam=1e9, max_active=100, min_active=0)
+        loose.decode(peaked([1, 4]))
+        # The second frame expands from one token rather than from four, so
+        # it touches strictly fewer arcs.
+        assert capped.counters["emitting"] < loose.counters["emitting"]
+
+
+class TestTheCutoffIsKaldis:
+    """
+    `GetCutoff` returns a cutoff *and* an adaptive beam, and both matter.
+
+    Unit-tested rather than driven through the search, because
+    `min_active` almost never binds in this decoder and contriving a
+    scenario where it does would be testing the contrivance. The reason it
+    rarely binds is worth writing down: a frame's token costs span at most
+    the previous frame's adaptive beam, so `best + beam` normally keeps all
+    of them. It is a safety net, as Kaldi's own help text says -- "don't
+    prune if #active less than this".
+    """
+
+    @staticmethod
+    def decoder(**options):
+        settings = dict(beam=10.0, max_active=100, min_active=0, beam_delta=0.5)
+        settings.update(options)
+        return ViterbiDecoder(SearchGraph.from_fsa(graph_from(ONE_PATH)), **settings)
+
+    def test_the_plain_beam_when_neither_cap_binds(self):
+        cost = torch.tensor([0.0, 1.0, 2.0], dtype=torch.float64)
+        cutoff, adaptive = self.decoder()._cutoff(cost)
+        assert cutoff == pytest.approx(10.0)
+        assert adaptive == pytest.approx(10.0)
+
+    def test_max_active_tightens_both(self):
+        cost = torch.tensor([0.0, 1.0, 2.0, 3.0], dtype=torch.float64)
+        cutoff, adaptive = self.decoder(max_active=2)._cutoff(cost)
+        # The second cheapest is 1.0, which is tighter than 0.0 + 10.
+        assert cutoff == pytest.approx(1.0)
+        assert adaptive == pytest.approx(1.0 - 0.0 + 0.5)
+
+    def test_min_active_loosens_both(self):
+        cost = torch.tensor([0.0, 20.0, 30.0], dtype=torch.float64)
+        cutoff, adaptive = self.decoder(min_active=2)._cutoff(cost)
+        # The beam would keep one; min_active 2 raises it to the second.
+        assert cutoff == pytest.approx(20.0)
+        assert adaptive == pytest.approx(20.0 - 0.0 + 0.5)
+
+    def test_the_two_caps_can_never_both_bind(self):
+        """
+        Which is why the order they are tested in is unobservable.
+
+        Kaldi short-circuits on `max_active` before it computes the
+        `min_active` cutoff, and that reads like a precedence rule worth
+        pinning. It is not reachable: `min_active <= max_active` is
+        required, so the `min_active`-th cheapest cost is at most the
+        `max_active`-th, and `max_active` binds only when its cost is
+        *below* the beam cutoff while `min_active` binds only when its own
+        is *above* it. A test that tried to exercise the precedence had to
+        set `min_active` above `max_active`, which is refused.
+        """
+        with pytest.raises(ValueError, match="above max_active"):
+            self.decoder(max_active=2, min_active=3)
+        cost = torch.tensor([0.0, 20.0, 30.0, 40.0], dtype=torch.float64)
+        # min_active below max_active: min_active wins, because max_active's
+        # cost of 20.0 is looser than the beam and so does not bind.
+        cutoff, adaptive = self.decoder(max_active=3, min_active=2)._cutoff(cost)
+        assert cutoff == pytest.approx(20.0)
+        assert adaptive == pytest.approx(20.5)
+
+    def test_neither_applies_below_its_count(self):
+        cost = torch.tensor([0.0, 1.0], dtype=torch.float64)
+        cutoff, adaptive = self.decoder(max_active=2, min_active=2)._cutoff(cost)
+        assert cutoff == pytest.approx(10.0)
+        assert adaptive == pytest.approx(10.0)
 
     @pytest.mark.parametrize(
         "options, message",
@@ -414,3 +494,75 @@ class TestShards:
         shards = [lambda: iter(self.archive(2)), broken]
         with pytest.raises(RuntimeError, match="shard 1"):
             decode_shards(graph, shards, {1: "ONE", 2: "TWO"}, **UNPRUNED)
+
+
+class TestTheNonEmittingPrefix:
+    """
+    The closure must expand only the arcs that can be within the cutoff.
+
+    A factored group's members are stored in residual order, so a token
+    under a cutoff can only use a prefix of them. Counted rather than
+    timed, because the saving is the point and a timing cannot be
+    asserted: on the real graph at beam 32 the closure went from
+    evaluating 162,533 arcs a frame to 18,912, with the same WER.
+    """
+
+    #: Six arcs sharing label 1, residuals 0, 1, 2, 3, 4 and 5 above the
+    #: cheapest, so a cutoff admits a known prefix of them.
+    SPREAD = (
+        "0 1 1 1 0.0\n0 2 1 2 1.0\n0 3 1 3 2.0\n"
+        "0 4 1 4 3.0\n0 5 1 5 4.0\n0 6 1 6 5.0\n"
+        "1\n2\n3\n4\n5\n6\n"
+    )
+
+    def counted(self, beam):
+        graph = SearchGraph.from_fsa(graph_from(self.SPREAD), factor_threshold=2)
+        assert graph.num_non_emitting_arcs == 6, "nothing was factored"
+        decoder = ViterbiDecoder(graph, beam=beam, max_active=10**9, min_active=0)
+        decoder.decode(peaked([1], num_tokens=3))
+        return decoder.counters["non_emitting"]
+
+    def test_a_tight_cutoff_expands_fewer_arcs(self):
+        assert self.counted(0.5) < self.counted(2.5) < self.counted(100.0)
+
+    def test_a_wide_cutoff_expands_all_of_them(self):
+        assert self.counted(100.0) == 6
+
+    def test_the_prefix_never_drops_a_reachable_arc(self):
+        """
+        The quantised key rounds outwards so the prefix is a superset; a
+        prefix one arc short would lose a path, which is the failure this
+        forbids. Checked by making each member in turn the only one that
+        can continue.
+        """
+        for member, (state, word) in enumerate(
+            [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)], start=0
+        ):
+            text = self.SPREAD + f"{state} 7 4 9 0.0\n7\n"
+            graph = SearchGraph.from_fsa(graph_from(text), factor_threshold=2)
+            decoder = ViterbiDecoder(graph, beam=1e9, max_active=10**9, min_active=0)
+            got = decoder.decode(peaked([1, 4], num_tokens=5))
+            assert got == [word, 9], f"member {member} was lost"
+
+    def test_an_arc_exactly_on_the_cutoff_is_kept(self):
+        """
+        The prefix must never be *short*, and only a boundary shows it.
+
+        The test above uses an enormous beam, so an off-by-one in the
+        quantised budget was invisible to it -- a mutation that subtracted
+        one key step survived the whole suite and the oracle. Here the beam
+        is exactly a member's residual, so the arc sits on the cutoff and
+        has to be admitted: `<=`, not `<`.
+        """
+        # Residual 2.0 above the group's cheapest, and only that member
+        # continues into a second frame.
+        text = self.SPREAD + "3 7 4 9 0.0\n7\n"
+        graph = SearchGraph.from_fsa(graph_from(text), factor_threshold=2)
+        decoder = ViterbiDecoder(graph, beam=2.0, max_active=10**9, min_active=0)
+        assert decoder.decode(peaked([1, 4], num_tokens=5)) == [3, 9]
+        # And one key step tighter must lose it, or the beam is not binding
+        # and the assertion above proves nothing.
+        tighter = ViterbiDecoder(
+            graph, beam=2.0 - 1.0 / 32, max_active=10**9, min_active=0
+        )
+        assert tighter.decode(peaked([1, 4], num_tokens=5)) != [3, 9]

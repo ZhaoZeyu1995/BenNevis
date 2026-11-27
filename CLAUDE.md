@@ -977,6 +977,63 @@ non-negative and already sorted, so a `searchsorted` against
 3.8x. After that the honest remainder is determinisation: Kaldi evaluates
 ~18,300 arcs a frame where this evaluates 56,416 at the same beam, which
 is the 3x the flower still costs.
+
+**All of that is done, and one of the three was a defect rather than an
+optimisation.** Profiling the shipped decoder rather than theorising about
+it found, in order of what it was worth:
+
+- **`max_active` was being applied to the wrong set.** `GetCutoff` runs on
+  `toks_` at the *start* of a frame, so Kaldi's cap bounds the token list
+  **after** `ProcessNonemitting` has added to it. This capped the emitting
+  candidates instead, and with factoring that is not a detail: the
+  emitting pass left 3,837 tokens, the closure took that to **18,038**,
+  and nothing capped them — so `--max-active 5000` was admitting 3.6
+  times its own limit. Fixing it took the emitting arcs from 56,984 a
+  frame to **13,382**. It also means `max_active` now means what Kaldi's
+  does, which matters more than the speed.
+- **`GetCutoff` returns two numbers and only one was being used.** The
+  other is `adaptive_beam`, which `ProcessEmitting` prunes the next
+  frame's candidates with, at `best_new + adaptive_beam`: tighter by
+  `beam_delta` when `max_active` bound, looser when `min_active` did.
+  Splitting them makes `min_active` inert, which is how this was found.
+- **The closure expanded every member of every group it reached.** The
+  residuals are non-negative and now stored *sorted*, so one
+  `searchsorted` against a state-major quantised key gives the prefix that
+  can be within the cutoff: 162,533 arcs a frame became **18,912**. The
+  key is quantised coarsely and rounded outwards so the prefix is a
+  superset, and the exact float comparison still decides.
+- **The second non-emitting round could never add anything.** The states
+  factoring introduces stay active, so re-expanding the whole token list
+  repeated work guaranteed to lose recombination — 1,670 expansions for
+  1,092 frames, of which 578 found nothing. A frontier of what improved
+  fixes it, which is what `ProcessNonemitting`'s `queue_` is.
+- Two of three `repeat_interleave`s in the ragged expansion are a gather,
+  since `base - offset` is one value per token. Worth 10%.
+
+| beam | max_active | ms a frame | s an utterance | WER |
+| --- | --- | --- | --- | --- |
+| 32 | 5000 | 1.70 | 1.02 | 38.0% |
+| **24** | 5000 | **1.00** | 0.60 | **38.0%** |
+| 20 | 7000 | 0.69 | 0.41 | 41.0% |
+| 16 | 7000 | 0.47 | 0.28 | 46.5% |
+
+So **beam 32 went from 3.38 to 1.70 ms a frame with the WER unchanged**,
+and `--nj 8` does the full 1,089 utterances in **six minutes** against
+Kaldi's 6m10s on a CI runner — which is the first time the two are the
+same order of magnitude. Against the original k2 search it is 8.60 ms a
+frame to 1.70 at a better WER.
+**Beam 24 looks free and the default has not been changed to it.** It
+gives the same WER as 32 at 1.7x the speed and lands at 14,012 candidate
+arcs a frame, *below* Kaldi's ~18,300 — but that is measured on
+calibrated synthetic acoustics, and tuning a default on those is the
+thing this file warns about everywhere else. The real run decides it.
+**And a mutation survived the suite here, which is worth recording.**
+Rounding the prefix's quantised budget inwards loses arcs on the cutoff,
+and every test plus the 293-graph oracle passed with it, because they all
+used a beam wide enough that a one-step error was invisible. The test
+that catches it sets the beam to *exactly* a member's residual. Same
+lesson as the prefix rejection test in the graph probe: a boundary is only
+tested at the boundary.
 **`compose_lg` now skips determinization altogether, and that is measured
 rather than conceded**: `k2.determinize` costs 3358s on mini-librispeech
 and returns 3.4 times the arcs, against 19s for Kaldi's whole first
