@@ -210,16 +210,53 @@ def kaldi_stage2(
     stats = scratch / "cmvn.scp"
     normalised = scratch / "feats.cmvn.scp"
 
-    run(
+    # `compute-fbank-feats` has **no `--compress` option**: compression is
+    # `copy-feats`' job, which is why `make_fbank.sh` pipes one into the
+    # other. Writing the flag on the extractor -- which the first version
+    # of this did, from assumption rather than from the script -- exits
+    # 255 with "Invalid option --compress=true" and took the first
+    # nightly this gate ever ran in. A new gate's first few runs are
+    # testing the gate, for the third time now.
+    extract = subprocess.Popen(
         [
             find_tool("compute-fbank-feats"),
             f"--config={conf}",
-            "--compress=true",
             f"scp:{data / 'wav.scp'}",
+            "ark:-",
+        ],
+        cwd=recipe,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    compress = subprocess.Popen(
+        [
+            find_tool("copy-feats"),
+            "--compress=true",
+            "ark:-",
             f"ark,scp:{scratch / 'feats.ark'},{feats}",
         ],
-        recipe,
+        cwd=recipe,
+        stdin=extract.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    # So that the extractor sees a closed pipe if the compressor dies,
+    # rather than blocking on a reader that has gone.
+    extract.stdout.close()
+    _out, compress_err = compress.communicate()
+    _unused, extract_err = extract.communicate()
+    # Both statuses, not just the last: a shell pipeline would report the
+    # compressor's alone, which is what `set -o pipefail` exists for and
+    # the trap this repository has met in the nightly's `| tee` and in
+    # `prepare_graph.sh`'s unreachable `exit`.
+    for name, status, err in (
+        ("compute-fbank-feats", extract.returncode, extract_err),
+        ("copy-feats", compress.returncode, compress_err),
+    ):
+        if status != 0:
+            raise RuntimeError(
+                f"{name} exited {status}\n{err.decode('utf-8', 'replace')[-2000:]}"
+            )
     run(
         [
             find_tool("compute-cmvn-stats"),

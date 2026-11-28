@@ -22,6 +22,7 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nightly.yml"
 SCRIPT = REPO_ROOT / "tests" / "reference" / "compare_features.py"
 STEP = "Compare the Python features against Kaldi's"
+
+# Verified to import with torch, numpy, k2 and kaldiio all blocked, so
+# this stays a tier 1 module: the script reaches for them lazily.
+sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
+import compare_features  # noqa: E402
 
 
 def steps():
@@ -129,10 +135,6 @@ class TestItKeepsWhatItMeasured:
 
 class TestTheScriptRefusesToMeasureNothing:
     def test_discovery_finds_a_prepared_data_directory(self, tmp_path):
-        import sys
-
-        sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
-        import compare_features
 
         recipe = tmp_path / "recipe"
         prepared = recipe / "data" / "train_x"
@@ -157,10 +159,6 @@ class TestTheScriptRefusesToMeasureNothing:
         A comparison over nothing passes, which is how the `G.fst` gate
         in #41 came to be a test that could not fail.
         """
-        import sys
-
-        sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
-        import compare_features
 
         recipe = tmp_path / "recipe"
         (recipe / "data").mkdir(parents=True)
@@ -179,10 +177,139 @@ class TestTheScriptRefusesToMeasureNothing:
         same failure as the first two captures, which contained no FSTs
         at all and said nothing about it.
         """
-        import sys
-
-        sys.path.insert(0, str(REPO_ROOT / "tests" / "reference"))
-        import compare_features
 
         monkeypatch.setattr(compare_features, "find_tool", lambda name: None)
         assert compare_features.main(["--recipe", str(tmp_path)]) == 1
+
+
+class TestItDrivesKaldiTheWayMakeFbankDoes:
+    """
+    The argument lists, because getting one wrong cost a whole nightly.
+
+    `compute-fbank-feats` has **no `--compress` option** -- compression is
+    `copy-feats`' job, which is why `make_fbank.sh` pipes one into the
+    other:
+
+        compute-fbank-feats --config=... scp:... ark:- \\
+          | copy-feats --compress=true ark:- ark,scp:...
+
+    The first version of this harness put `--compress=true` on the
+    extractor, from assumption rather than from the script. It exits 255
+    with "Invalid option --compress=true", and because this gate is
+    `always()` and blocking it failed run 46155782177 -- a nightly whose
+    recipe had succeeded and whose language-directory gate had passed.
+    **A new gate's first few runs are testing the gate**, for the third
+    time in this repository.
+
+    Checked by recording the argument lists rather than by running
+    Kaldi, so it runs in tier 1 where the mistake was made rather than
+    only in the nightly that pays for it.
+    """
+
+    @staticmethod
+    def record(monkeypatch, tmp_path):
+        """
+        Run `kaldi_stage2` with every subprocess replaced, returning the
+        argument lists it would have run.
+        """
+        import subprocess as real_subprocess
+
+        calls = []
+
+        class Pipe:
+            """Stands in for a `Popen`, recording its argv."""
+
+            def __init__(self, argv, **kwargs):
+                calls.append(list(argv))
+                self.returncode = 0
+                self.stdout = kwargs.get("stdout") and _Closeable()
+
+            def communicate(self):
+                return b"", b""
+
+        class _Closeable:
+            def close(self):
+                return None
+
+        monkeypatch.setattr(compare_features.subprocess, "Popen", Pipe)
+        monkeypatch.setattr(
+            compare_features, "run", lambda argv, cwd: calls.append(list(argv))
+        )
+        monkeypatch.setattr(
+            compare_features, "find_tool", lambda name: f"/kaldi/{name}"
+        )
+        monkeypatch.setattr(
+            compare_features.subprocess,
+            "CompletedProcess",
+            real_subprocess.CompletedProcess,
+        )
+
+        compare_features.kaldi_stage2(
+            tmp_path / "recipe",
+            Path("data/train"),
+            tmp_path / "scratch",
+            tmp_path / "conf" / "fbank.conf",
+        )
+        return calls
+
+    @staticmethod
+    def find(calls, tool):
+        for argv in calls:
+            if argv and argv[0].endswith(tool):
+                return argv
+        raise AssertionError(f"{tool} was never run; got {[a[0] for a in calls]}")
+
+    def test_the_extractor_is_not_given_compress(self, monkeypatch, tmp_path):
+        """
+        The exact defect. `compute-fbank-feats` rejects the option and
+        exits 255.
+        """
+        calls = self.record(monkeypatch, tmp_path)
+        argv = self.find(calls, "compute-fbank-feats")
+        assert not [a for a in argv if "compress" in a], argv
+
+    def test_the_compression_is_copy_feats_job(self, monkeypatch, tmp_path):
+        calls = self.record(monkeypatch, tmp_path)
+        argv = self.find(calls, "copy-feats")
+        assert "--compress=true" in argv, argv
+
+    def test_the_two_are_piped(self, monkeypatch, tmp_path):
+        """
+        `ark:-` out of the extractor and into the compressor, which is
+        what `make_fbank.sh` does. Writing an archive to disc in between
+        would work and is not what is being reproduced.
+        """
+        calls = self.record(monkeypatch, tmp_path)
+        assert "ark:-" in self.find(calls, "compute-fbank-feats")
+        assert "ark:-" in self.find(calls, "copy-feats")
+
+    def test_the_extractor_reads_the_recipes_configuration(self, monkeypatch, tmp_path):
+        """
+        The same `conf/fbank.conf` our own extractor reads, so the two
+        cannot be given different settings -- which is the whole premise
+        of the comparison.
+        """
+        calls = self.record(monkeypatch, tmp_path)
+        argv = self.find(calls, "compute-fbank-feats")
+        assert any(a.startswith("--config=") and "fbank.conf" in a for a in argv), argv
+
+    def test_the_statistics_are_per_speaker(self, monkeypatch, tmp_path):
+        """
+        `--spk2utt`, as `steps/compute_cmvn_stats.sh` passes. Per
+        utterance would be a different normaliser and the comparison
+        would fail for the harness's reason rather than the code's.
+        """
+        calls = self.record(monkeypatch, tmp_path)
+        argv = self.find(calls, "compute-cmvn-stats")
+        assert any(a.startswith("--spk2utt=") for a in argv), argv
+
+    def test_the_normalisation_matches_the_recipes(self, monkeypatch, tmp_path):
+        """
+        `--norm-vars=true`, which is what `run/apply_cmvn.sh` has always
+        passed and so what every WER in the ledger was measured under.
+        Kaldi's own default is false.
+        """
+        calls = self.record(monkeypatch, tmp_path)
+        argv = self.find(calls, "apply-cmvn")
+        assert "--norm-vars=true" in argv, argv
+        assert any(a.startswith("--utt2spk=") for a in argv), argv

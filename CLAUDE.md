@@ -2007,6 +2007,53 @@ cannot be asserted in tier 1b and the failure modes can.
   checkout. `local/prepare_dict.sh` for yesno is already pure `cp` and
   `grep`.
 
+- **The first nightly on the Python pipeline: the recipe passed, the WERs
+  did not move, and the new feature gate failed on its own bug.** Run
+  46155782177, yesno, all stages, against run 46139958942 on `ff0088f`
+  three hours earlier as the Kaldi-pipeline baseline:
+
+  | | 2state | 2state-1 | 3s-skip | 3s-skip-1 | 3s-skip-2 | ctc | mmictc | mmictc-1 |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | Kaldi prep | 0.43 | 0.43 | 0.00 | 0.43 | 0.86 | 0.00 | 0.43 | 0.86 |
+  | Python prep | 0.43 | 0.43 | 0.43 | 0.00 | 0.86 | 0.00 | 0.86 | 0.86 |
+
+  **Eight word errors became nine, of 1,856**, and the movements go in
+  *both* directions -- one topology better, two worse. That is the
+  signature of run-to-run training variation rather than of a pipeline
+  difference, and it is corroborated independently: two consecutive
+  *Kaldi*-pipeline runs already differed on two topologies' hypotheses,
+  which is how the re-capture came to have two differing digests. Every
+  topology stayed inside the gate that was deliberately never widened,
+  and both decoders agreed error for error on all eight -- the fourth
+  checkpoint set on which that holds.
+  So the answer to "did Pythonising the preparation cost accuracy" is
+  **no, within the noise the corpus can resolve**. yesno's 232 reference
+  words make one error 0.43%, so this corpus cannot say anything finer
+  than one error; mini-librispeech's 20,138 words can, and that
+  measurement is the one still owed.
+  **The feature gate failed, and it was the gate rather than the
+  features.** `compute-fbank-feats` has **no `--compress` option** --
+  compression is `copy-feats`' job, which is why `make_fbank.sh` pipes
+  one into the other -- and the harness put the flag on the extractor,
+  written from assumption rather than from the script. It exits 255 with
+  `Invalid option --compress=true`. Because the gate is `always()` and
+  blocking, a run whose recipe had succeeded and whose
+  language-directory gate had *passed* was reported as a failure.
+  **A new gate's first few runs are testing the gate**, for the third
+  time here: the graph gate found three defects in its own machinery
+  before it found anything about the graphs, and reported success through
+  two of them.
+  The lesson that generalises is narrower and sharper: **this one was
+  checkable in tier 1 and was not checked there.** The argument lists are
+  built in Python, so recording them under a replaced `subprocess.Popen`
+  pins the pipeline's shape without Kaldi -- `--compress` on
+  `copy-feats` and not on the extractor, `ark:-` between them,
+  `--spk2utt` on the statistics, `--norm-vars=true` on the
+  normalisation. Those tests exist now and the mutation that reinstates
+  the bug fails one of them. A harness that drives an external tool
+  should have its argv asserted wherever the mistake is made, not only
+  in the nightly that pays for it.
+
 - **The stages are tested as a chain now, because testing them one at a
   time let a regression through.** `tests/recipes/test_stages_compose.py`
   runs the real entry points over a synthetic three-utterance corpus --
