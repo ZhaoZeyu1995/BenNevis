@@ -317,6 +317,42 @@ def main() -> int:
     graph_dir = args.recipe / args.graph_dir
     lexicon_path = args.recipe / args.lexicon
     arpa_path = args.recipe / args.arpa
+
+    # Checked rather than assumed, and the reason is this step's own
+    # `always()`. It runs after a failed recipe on purpose -- the graphs
+    # are built in stage 4 and a run that died in training still has them
+    # -- but a run that died *before* stage 4 has none, and then reading
+    # `words.txt` raised a bare FileNotFoundError traceback on top of the
+    # real failure. Run 46164030031 is the example: stage 2 exited 1, and
+    # this step then added eight lines of pathlib stack to the diagnosis.
+    # The status is unchanged -- a gate that cannot compare has not
+    # passed -- but what it prints now names the cause.
+    missing = [
+        path
+        for path in (
+            graph_dir / "words.txt",
+            graph_dir / "phones.txt",
+            lexicon_path,
+            arpa_path,
+        )
+        if not path.is_file()
+    ]
+    if missing:
+        print(
+            "FAILED: nothing to compare -- these inputs do not exist:",
+            flush=True,
+        )
+        for path in missing:
+            print(f"  {path}", flush=True)
+        print(
+            "FAILED: the graphs are built in stage 4 and the lexicon and "
+            "model in stages 0 and 1, so a recipe that stopped before "
+            "them leaves this gate nothing to do. Read the recipe step's "
+            "own failure first; this one is downstream of it.",
+            flush=True,
+        )
+        return 1
+
     words = read_table(graph_dir / "words.txt")
     phones = read_table(graph_dir / "phones.txt")
     first_disambig = min(value for key, value in phones.items() if key.startswith("#"))
