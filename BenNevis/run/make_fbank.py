@@ -2,16 +2,19 @@
 """
 Filterbank features for a data directory, without Kaldi.
 
-The Python counterpart of `steps/make_fbank.sh`. Added **beside** it
-rather than in place of it, and the recipes still call Kaldi's: switching
-would change the features, hence the CMVN statistics, hence every WER, and
-that is a measured decision rather than a detail. What this provides is
-the ability to make that measurement.
+The Python counterpart of `steps/make_fbank.sh`, and **what every recipe
+calls now**. It was added beside Kaldi's in #102 and left unused, because
+switching changes the features, hence the CMVN statistics, hence every
+WER. What made the switch safe is `--compress`: the recipes pass it, so
+the archive stays on the same 8-bit grid Kaldi's was, which is the grid
+every number in both WER ledgers was measured on. Writing uncompressed is
+a separate measured decision and not a tidy-up.
 
 Two differences from `make_fbank.sh` worth knowing before comparing
 anything:
 
-**It writes uncompressed by default, and Kaldi's writes compressed.**
+**It writes uncompressed by default, and Kaldi's writes compressed** --
+so the recipes pass `--compress` and a bare invocation does not.
 `CompressedMatrix` quantises each column to 8 bits under its default
 `kSpeechFeature` scheme, which is a mean error of about 0.012 in the log
 mel domain -- the whole of the "1.2% residual" CLAUDE.md chased through
@@ -76,6 +79,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         "data directory",
     )
     parser.add_argument(
+        "--ark-dir",
+        type=Path,
+        default=None,
+        help="where to write feats.ark, defaulting beside feats.scp. The "
+        "recipes keep the archive in data/<set>/fbank and the scp in "
+        "data/<set>, which is what make_fbank.sh does",
+    )
+    parser.add_argument(
         "--compress",
         action="store_true",
         default=False,
@@ -123,16 +134,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     out = args.output or data
     out.mkdir(parents=True, exist_ok=True)
+    ark_dir = args.ark_dir or out
+    ark_dir.mkdir(parents=True, exist_ok=True)
+    # Absolute, because the scp is read by later stages that do not
+    # necessarily run from the recipe directory -- which is the trap that
+    # cost a five-hour capture, from the other side.
+    ark = (ark_dir / "feats.ark").resolve()
 
     frames = {}
+    failed = []
     written = 0
     with kaldiio.WriteHelper(
-        f"ark,scp:{out / 'feats.ark'},{out / 'feats.scp'}",
+        f"ark,scp:{ark},{out / 'feats.scp'}",
         compression_method=2 if args.compress else None,
     ) as writer:
         for uttid in loader:
-            rate, samples = loader[uttid]
-            features = fbank(samples, sample_rate=rate, **options)
+            try:
+                rate, samples = loader[uttid]
+                features = fbank(samples, sample_rate=rate, **options)
+            except Exception as failure:
+                # One unreadable utterance must not cost the corpus, and
+                # this is how `make_fbank.sh` behaves: it logs the
+                # failure, leaves the utterance out of feats.scp, and
+                # `fix_data_dir` drops it from the rest of the directory
+                # afterwards. Exactly the shape of the bug that cost run
+                # 46100161743's capture, one stage along -- so the gap
+                # between `wav.scp` and `feats.scp` is deliberate and is
+                # what the next stage exists to reconcile.
+                failed.append(uttid)
+                logging.warning("cannot compute features for %s: %r", uttid, failure)
+                continue
             writer(uttid, features.numpy())
             frames[uttid] = features.shape[0]
             written += 1
@@ -149,6 +180,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         (out / "utt2num_frames").write_text(
             "".join(f"{utt} {count}\n" for utt, count in frames.items()),
             encoding="utf-8",
+        )
+    if failed:
+        logging.warning(
+            "%d of %d utterances could not be read: %s%s. Run "
+            "run/fix_data_dir.py to drop them from the data directory",
+            len(failed),
+            written + len(failed),
+            ", ".join(failed[:5]),
+            " ..." if len(failed) > 5 else "",
         )
     logging.info(
         "wrote %d utterances, %d frames, to %s",

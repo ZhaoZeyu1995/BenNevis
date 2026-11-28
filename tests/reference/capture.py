@@ -175,6 +175,41 @@ TOOL_LOCATIONS = {
 }
 
 
+def feature_extractor(recipe: Path) -> str:
+    """
+    Which implementation produced the recipe's features.
+
+    Arguments
+    ---------
+    recipe: Path
+        The recipe directory, which must hold `run.sh`.
+
+    Returns
+    -------
+    str
+        "bennevis" if stage 2 runs `run/make_fbank.py`, "kaldi" if it
+        runs one of Kaldi's `steps/make_fbank*.sh`, "unknown" otherwise.
+
+    Notes
+    -----
+    Determined from `run.sh` rather than from a flag, because a flag is
+    something a workflow can forget to update when a recipe converts --
+    and the consequence of getting this wrong is a reference that reads
+    as Kaldi's while being ours, which makes a gate pass while comparing
+    nothing. Matched on the whole script because stage 2 is the only
+    place any of these appear.
+    """
+    run = recipe / "run.sh"
+    if not run.is_file():
+        return "unknown"
+    text = run.read_text(encoding="utf-8")
+    if "run/make_fbank.py" in text:
+        return "bennevis"
+    if "steps/make_fbank" in text:
+        return "kaldi"
+    return "unknown"
+
+
 @contextlib.contextmanager
 def working_directory(path: Path):
     """
@@ -1161,6 +1196,11 @@ def main(argv=None) -> int:
         # reference whose provenance is unknown is not a reference.
         image=os.environ.get("BENNEVIS_IMAGE", "unknown"),
         recipe=str(args.recipe),
+        # Read off the recipe rather than passed in, so a recipe that
+        # converts cannot be captured as though it had not. See
+        # `Manifest.features_from`: this decides whether the CMVN
+        # equivalence tests compare anything.
+        features_from=feature_extractor(recipe),
         notes=[
             "Captured from a completed run of the recipe named above, inside "
             "the image named above.",

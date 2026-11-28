@@ -77,11 +77,12 @@ fi
 # Feature extraction
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     for x in train_clean_100 train_clean_360 train_other_500 dev_clean dev_other test_clean test_other; do
-        steps/make_fbank.sh --nj ${nj} --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} fbank
-        steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} cmvn || exit 1;
-        utils/fix_data_dir.sh data/${x}
-        run/apply_cmvn.sh --nj ${nj} data/${x}
+        run/make_fbank.py --conf conf/fbank.conf --compress \
+            --write-utt2num-frames --ark-dir fbank data/${x} \
+            || { echo "$0: make_fbank.py failed for ${x}" >&2; exit 1; }
+        run/compute_cmvn_stats.py --output cmvn data/${x} || exit 1;
+        run/fix_data_dir.py data/${x} || exit 1;
+        run/apply_cmvn.py data/${x} || exit 1;
     done
     utils/combine_data.sh --extra-files "feats.cmvn.scp" data/train_460 data/train_clean_100 data/train_clean_360
     utils/combine_data.sh --extra-files "feats.cmvn.scp" data/train_960 data/train_460 data/train_other_500

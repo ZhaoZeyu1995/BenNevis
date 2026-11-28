@@ -34,11 +34,12 @@ fi
 # Feature extraction
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     for x in train dev test; do
-        steps/make_fbank.sh --nj ${nj} --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} data/${x}/fbank
-        steps/compute_cmvn_stats.sh data/${x} exp/compute_cmvn_stats/${x} data/${x}/cmvn || exit 1;
-        utils/fix_data_dir.sh data/${x}
-        run/apply_cmvn.sh data/${x}
+        run/make_fbank.py --conf conf/fbank.conf --compress \
+            --write-utt2num-frames --ark-dir data/${x}/fbank data/${x} \
+            || { echo "$0: make_fbank.py failed for ${x}" >&2; exit 1; }
+        run/compute_cmvn_stats.py --output data/${x}/cmvn data/${x} || exit 1;
+        run/fix_data_dir.py data/${x} || exit 1;
+        run/apply_cmvn.py data/${x} || exit 1;
     done
 fi
 

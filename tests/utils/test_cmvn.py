@@ -357,11 +357,33 @@ class TestEquivalenceWithKaldi:
     So the tolerance here is exact equality, deliberately. A difference of
     any size means something has changed, and the band of float32 noise that
     would have hidden it is gone.
+
+    **This whole class is conditional on the capture being Kaldi's, and
+    from the recipes' stage 2 becoming Python it will not always be.**
+    `raw/`, `features/` and `cmvn/` are stage 2's input, output and
+    statistics; once `run/make_fbank.py` and `run/apply_cmvn.py` write
+    them, a fresh capture makes `test_it_reproduces_kaldi_bit_for_bit`
+    into `apply(raw, stats) == apply(raw, stats)` -- a test that cannot
+    fail, which is this repository's most-repeated defect. The manifest
+    records `features_from` for exactly this, and these tests skip when
+    it is not Kaldi rather than passing emptily. The committed captures
+    were taken while Kaldi owned the stage, so they still compare; a
+    re-capture retires this gate, which is the per-stage retirement
+    CLAUDE.md prescribes and not a loss.
     """
 
     @pytest.fixture(scope="class", params=["train_yesno", "test_yesno"])
     def dataset(self, request):
         name = request.param
+        produced_by = json.loads((REFERENCE / "manifest.json").read_text()).get(
+            "features_from", "kaldi"
+        )
+        if produced_by not in ("", "kaldi"):
+            pytest.skip(
+                f"this capture's features were produced by {produced_by!r}, "
+                f"so comparing them with BenNevis's CMVN would compare the "
+                f"code with itself; the gate retires with the stage"
+            )
         with np.load(REFERENCE / "cmvn" / f"{name}.npz") as bundle:
             stats = bundle["global"]
         with np.load(REFERENCE / "raw" / f"{name}.npz") as bundle:

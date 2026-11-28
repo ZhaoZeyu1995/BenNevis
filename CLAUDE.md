@@ -366,14 +366,17 @@ tolerances chosen per layer:
   -- that the per-frame spectrum path was the remaining suspect, and that
   capturing `compute-spectrogram-feats` was the next cheap step -- is
   gone, because there is nothing to localise.
-  **The extractor is Python now, and it is not the default.**
+  **The extractor is Python now, and it is the default.**
   `BenNevis.utils.features.fbank` wraps torchaudio's, and
-  `run/make_fbank.py` writes an archive for a data directory. The recipes
-  still call `steps/make_fbank.sh`, deliberately: switching changes the
-  features -- Kaldi's are 8-bit compressed and these are not -- hence the
-  CMVN statistics, hence every WER, which is a measured decision of the
-  same kind as dropping pitch. `--compress` writes a like-for-like
-  archive when the comparison is the point.
+  `run/make_fbank.py` writes an archive for a data directory. It was
+  added beside `steps/make_fbank.sh` and left unused for a while,
+  because switching changes the features -- Kaldi's are 8-bit compressed
+  -- hence the CMVN statistics, hence every WER. **What made the switch
+  safe is passing `--compress`**, which puts our archive on the same
+  8-bit grid: the grid every number in both ledgers was measured on. So
+  the switch is like for like by construction, and writing uncompressed
+  is still a measured decision of the same kind as dropping pitch,
+  deferred rather than taken. See the stage 2 entry under Gotchas.
   What the module owes is not arithmetic but **the settings**, because
   Kaldi's defaults and torchaudio's differ where it matters:
   `energy_floor` is 0.0 for Kaldi and **1.0** for torchaudio, which would
@@ -392,7 +395,11 @@ tolerances chosen per layer:
   not store features uncompressed, because that would alter CMVN's
   inputs and hence the WERs. So the capture should extract features
   uncompressed *itself*, alongside, the same way it already has Kaldi
-  rewrite the archives with `copy-feats --compress=false`. Meanwhile the
+  rewrite the archives with `copy-feats --compress=false`. **That is now
+  the only way it can be had at all**, because the recipe's stage 2 is
+  Python, so what the capture reads is no longer Kaldi's output --
+  `features_from` records which, and `compare_features.py` is where the
+  live comparison went. Meanwhile the
   gate is built the other way round: the closest anything can get to an
   8-bit reference is half a grid step, so asserting closeness at that
   tolerance would pass for an implementation genuinely 0.01 wrong, and
@@ -1769,6 +1776,98 @@ cannot be asserted in tier 1b and the failure modes can.
   digest. Memoised rather than a class-scoped fixture, which cannot
   depend on a function-scoped parameter.
 
+- **Stage 2 is Python now, and the whole of it went in one change.**
+  `steps/make_fbank.sh`, `steps/compute_cmvn_stats.sh`,
+  `utils/fix_data_dir.sh` and the `apply-cmvn` inside
+  `run/apply_cmvn.sh` are gone from all **seven** recipes, and with
+  `apply_cmvn.sh` reduced to a shim that drops `utils/split_data.sh`,
+  `run.pl` and `utils/parse_options.sh` as well. The arithmetic needed
+  nothing: `BenNevis.utils.cmvn` has been bit-exact with `apply-cmvn`
+  since the first stage of the migration and `run/make_fbank.py` has
+  existed since #102. **What was missing was the call site**, which is
+  the state this project keeps rediscovering -- a replacement nothing
+  calls is not a replacement, and the way that state persists is by
+  nobody asserting the call site. `tests/recipes/test_stage2_wiring.py`
+  asserts it now, over recipes it discovers rather than lists, and it
+  found a defect on its first run: **`run/make_fbank.py` had no execute
+  bit**, so every converted recipe would have died in stage 2 after
+  downloading the corpus.
+  **`--compress` is passed deliberately and is the reason this change
+  moves no WER.** `make_fbank.sh` wrote compressed archives, so Kaldi's
+  `CompressedMatrix` quantised every feature to 8 bits, and every number
+  in both ledgers was measured on quantised features. Writing
+  uncompressed would change CMVN's inputs, hence the statistics, hence
+  every WER -- a measured decision of the same kind as dropping pitch,
+  and not one to take by deleting a flag. So the switch is like for like
+  and the uncompressed question stays separate, one variable at a time.
+  **`--nj` is gone rather than ignored, and that is measured.** The shell
+  split the data by speaker purely so that eight `apply-cmvn` processes
+  could run at once. In Python the whole of mini-librispeech's
+  `train_clean_5` -- 1,519 utterances, 1.79M frames, 80 dimensions --
+  takes **1.2s** to accumulate statistics over and **0.8s** to normalise
+  and write, against 3.9s merely to write the compressed archive; the
+  filterbank itself is **1ms** for a twelve-second utterance at four
+  torch threads. A flag whose best case is a second can only go wrong, so
+  a recipe still passing it gets an argument error rather than a silent
+  no-op. What is *not* measured is the `flac` decode, which is the real
+  cost of stage 2 on mini-librispeech and is where Kaldi's `nj=8` helped;
+  expect stage 2 to cost a minute or two more than its 2.8 and read the
+  next run for the figure.
+  **`fix_data_dir.sh` was read rather than inferred, and two of its rules
+  are not guessable.** A speaker absent from `cmvn.scp` loses **all of
+  its utterances**, because `filter_speakers` calls its helper with the
+  arguments the other way round -- filtering the *speaker list* by
+  `cmvn.scp` -- and then rebuilds `utt2spk` from the surviving `spk2utt`.
+  And `wav.scp` is utterance-indexed **only when there is no `segments`
+  file**; with one it is recording-indexed and filtering it against an
+  utterance list would empty it, so `BenNevis.utils.datadir` refuses a
+  directory holding `segments`, `vad.scp`, `utt2dur` or the other files
+  it does not filter rather than leaving one stale. The third rule is the
+  one Kaldi separates into two lists and a reimplementation will merge:
+  `vad.scp` is **rewritten but never intersected**, so a stale copy
+  cannot delete utterances -- and `feats.cmvn.scp` is ours and is exactly
+  that case, written by the next stage and therefore behind the others on
+  a re-run. All five of those are mutation-verified.
+  `make_fbank.py` also had to learn Kaldi's tolerance: one unreadable
+  utterance is logged and skipped, left out of `feats.scp`, and dropped
+  from the rest of the directory by `fix_data_dir` afterwards. The first
+  version died on it -- the same defect that cost run 46100161743's
+  capture, one stage along, and the second time that shape has been
+  shipped in a month.
+  **The consequence worth understanding is what it does to the captured
+  reference.** `raw/`, `features/` and `cmvn/` are stage 2's input,
+  output and statistics, so from this change on a fresh capture records
+  **ours**, and `tests/utils/test_cmvn.py`'s equivalence class would
+  become `apply(raw, stats) == apply(raw, stats)` -- a test that cannot
+  fail, which is this repository's most-repeated defect and the exact
+  failure the decoding graph's token table had. The manifest now records
+  `features_from`, read off the recipe's own `run.sh` so a converted
+  recipe cannot be captured as though it had not; the equivalence tests
+  skip with that reason when it is not Kaldi's, and
+  `tests/reference/test_corpora.py` fails when a committed capture stops
+  being Kaldi's. That is the per-stage retirement this file prescribes,
+  taken deliberately rather than by deleting a test.
+  **So the comparison moved into the nightly**, as
+  `tests/reference/compare_features.py`, which runs Kaldi's own
+  `compute-fbank-feats`, `compute-cmvn-stats` and `apply-cmvn` into a
+  scratch directory on the same `wav.scp` and the same `conf/fbank.conf`
+  and compares four things. The one to read first is **the float32 scale
+  and offset**, gated at exact equality: the double statistics are *not*
+  expected to agree to the bit, because numpy pairwise-sums a matrix
+  where Kaldi accumulates frame by frame -- which carries less error, not
+  more -- and the normaliser is what decides whether that last-bit
+  difference can reach a feature at all. It is `always()` and blocking,
+  with `set -eo pipefail` before the `| tee` for the reason the graph
+  gate had to learn twice, and it discovers its data sets rather than
+  having yesno's and mini-librispeech's names written into the workflow.
+  **What is left on the training path is stage 1 and nothing else.**
+  `local/data_prep.sh`, `local/prepare_dict.sh`, `utils/prepare_lang.sh`
+  and -- for mini-librispeech -- the download scripts, all of which live
+  in the Kaldi checkout. `prepare_lang.sh` is the easy one: nine files
+  byte-exact and already written, needing only the call site, which is
+  the same shape as this change. `local/data_prep.sh` is the one with no
+  counterpart.
+
 - **Stage 3 needed Kaldi for an argument parser and an artefact, and does
   not any more.** `prepare_topo.sh` sourced **Kaldi's
   `utils/parse_options.sh`** to read its own flags, and `utils/` is a
@@ -1783,10 +1882,13 @@ cannot be asserted in tier 1b and the failure modes can.
   the two FSTs when OpenFST is on PATH and says what it skipped when it is
   not, `true` requires it, and `prepare_graph.sh` passes `true` and fails
   pointing here when `T.fst` is missing.
-  **All six of `BenNevis/run/*.sh` still source `utils/parse_options.sh`
-  and seven source `path.sh`**, so this is one of six, and the pattern for
-  the rest is set: a Python entry point plus a shim, which also makes the
-  thing testable in tier 1 rather than only in tier 3.
+  **Four of `BenNevis/run/*.sh` still source `utils/parse_options.sh` and
+  five source `path.sh`** -- `align.sh`, `decode_faster.sh`,
+  `predict.sh` and `prepare_graph.sh`, plus `prepare_nolm.sh` for
+  `path.sh` alone. It was six and seven when this entry was written;
+  `prepare_topo.sh` and then `apply_cmvn.sh` became shims, and the
+  pattern for the rest is set: a Python entry point plus a shim, which
+  also makes the thing testable in tier 1 rather than only in tier 3.
   Two things that came out of doing it. The symbol tables are now written
   by two entry points -- this and `python3 -m BenNevis.topos` -- which is
   exactly how two implementations of one thing come to disagree, and what
