@@ -62,7 +62,9 @@ test_lang=data/lang_nosp_test_tgsmall
 stage=0
 stop_stage=100
 
-. ./utils/parse_options.sh || exit 1
+# run/parse_options.sh, not Kaldi's: utils/ is a symlink into the Kaldi
+# checkout, so a recipe could not read its own --stage without one.
+. ./run/parse_options.sh || exit 1
 
 if [ ${stage} -gt ${stop_stage} ]; then
     echo "$0: --stage ${stage} is past --stop_stage ${stop_stage}; nothing to do" >&2

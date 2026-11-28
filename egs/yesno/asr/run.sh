@@ -46,7 +46,9 @@ hydra_opts=""
 stage=0
 stop_stage=100
 
-. ./utils/parse_options.sh || exit 1
+# run/parse_options.sh, not Kaldi's: utils/ is a symlink into the Kaldi
+# checkout, so a recipe could not read its own --stage without one.
+. ./run/parse_options.sh || exit 1
 
 if [ ${stage} -gt ${stop_stage} ]; then
     echo "$0: --stage ${stage} is past --stop_stage ${stop_stage}; nothing to do" >&2
@@ -65,7 +67,7 @@ fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "$0: stage 1: data, dict and lang"
-    local/prepare_data.sh waves_yesno || { echo "$0: prepare_data.sh failed" >&2; exit 1; }
+    local/prepare_data.py waves_yesno || { echo "$0: prepare_data.py failed" >&2; exit 1; }
     local/prepare_dict.sh || { echo "$0: prepare_dict.sh failed" >&2; exit 1; }
     # prepare_lang.sh in Python. The settings must match stage 3's and
     # stage 10's -- tests/recipes/test_lexicon_settings.py checks all

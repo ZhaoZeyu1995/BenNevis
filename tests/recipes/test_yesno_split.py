@@ -19,6 +19,15 @@ published numbers came from.
 These tests drive the real Perl script over a synthetic listing with the two
 READMEs in it, so they pin that membership rather than the explanation of it.
 
+**Two checks that used to live here have moved and improved.** They read
+`prepare_data.sh` as text -- that the listing was filtered to `.wav`, and
+that the split count was stated as 31 -- and that file is gone, replaced
+by `local/prepare_data.py`. Both are now asserted by running the code, in
+`tests/recipes/test_yesno_prepare_data.py`, which also requires the
+Python to agree with these Perl scripts byte for byte. Reading a script
+for a flag was always the weak form; it was there because the filter was
+in shell.
+
 Tier 1: the script is Perl, which every runner has, and the test skips if it
 does not.
 
@@ -150,31 +159,3 @@ class TestTheScriptItself:
         train, test = run_split(tmp_path, [f"{i}.wav" for i in range(5)], train_count=5)
         assert len(train) == 5
         assert test == []
-
-
-class TestDataPreparationFilters:
-    def test_prepare_data_lists_only_waves(self):
-        """
-        The filter is in shell, so this reads it. Weak on its own, which is
-        why the membership tests above exist; its job is to catch the filter
-        being dropped.
-        """
-        text = (RECIPE / "local" / "prepare_data.sh").read_text()
-        listing = [
-            line
-            for line in text.splitlines()
-            if "waves_all.list" in line and not line.strip().startswith("#")
-        ]
-        assert listing, "nothing writes waves_all.list any more"
-        assert any(".wav" in line for line in listing), listing
-
-    def test_prepare_data_states_the_split_count(self):
-        text = (RECIPE / "local" / "prepare_data.sh").read_text()
-        called = [
-            line
-            for line in text.splitlines()
-            if "create_yesno_waves_test_train.pl" in line
-            and not line.strip().startswith("#")
-        ]
-        assert len(called) == 1, called
-        assert called[0].rstrip().endswith(" 31"), called[0]

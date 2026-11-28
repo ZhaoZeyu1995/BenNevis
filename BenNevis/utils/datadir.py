@@ -56,6 +56,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 __all__ = [
     "UTTERANCE_FILES",
     "INTERSECT_FILES",
+    "POSITIVE_FILES",
     "SPEAKER_FILES",
     "UNSUPPORTED_FILES",
     "DataDirError",
@@ -73,6 +74,7 @@ UTTERANCE_FILES = (
     "text",
     "wav.scp",
     "utt2num_frames",
+    "utt2dur",
     "feats.cmvn.scp",
 )
 
@@ -87,7 +89,16 @@ INTERSECT_FILES = (
     "text",
     "wav.scp",
     "utt2num_frames",
+    "utt2dur",
 )
+
+#: The files whose value must be a positive number for the utterance to
+#: survive, which is Kaldi's `awk '{ if (NF == 2 && $2 > 0) { print }}'`
+#: over `utt2dur` and `utt2num_frames`. A zero-length utterance is not
+#: something to train on, and keeping it at zero would reach the collate
+#: function as an empty matrix -- or, for `utt2dur`, divide by zero in the
+#: duration samplers.
+POSITIVE_FILES = ("utt2num_frames", "utt2dur")
 
 #: The speaker-indexed files. `spk2utt` is derived from `utt2spk` rather
 #: than filtered, which is Kaldi's own rule: "throughout this program, we
@@ -103,7 +114,6 @@ UNSUPPORTED_FILES = (
     "utt2uniq",
     "vad.scp",
     "utt2lang",
-    "utt2dur",
     "reco2dur",
     "reco2file_and_channel",
     "spk2gender",
@@ -190,6 +200,27 @@ def sort_unique(rows) -> List[Tuple[str, str]]:
             continue
         out.append((key, rest))
     return out
+
+
+def _positive(text: str) -> bool:
+    """
+    Whether a table's value is a number above zero.
+
+    Arguments
+    ---------
+    text: str
+        The remainder of the line, which should be one number.
+
+    Returns
+    -------
+    bool
+        False for anything unparseable, which is how `awk` treats a
+        malformed line under `$2 > 0`.
+    """
+    try:
+        return float(text) > 0.0
+    except ValueError:
+        return False
 
 
 def _keys(rows) -> List[str]:
@@ -295,11 +326,13 @@ def fix(
         if name not in tables:
             continue
         rows = tables[name]
-        if name in ("utt2num_frames",):
-            # `awk '{ if (NF == 2 && $2 > 0) { print }}'`: a zero-frame
-            # utterance is dropped rather than kept at zero, because a
-            # zero-length feature matrix is not something to train on.
-            known = {key for key, rest in rows if rest.isdigit() and int(rest) > 0}
+        if name in POSITIVE_FILES:
+            # `awk '{ if (NF == 2 && $2 > 0) { print }}'`. Parsed as a
+            # float rather than with `isdigit`, because `utt2dur` holds
+            # seconds -- `1.5` is not a digit string, and treating it as
+            # malformed would drop every utterance and leave a data
+            # directory with nothing in it.
+            known = {key for key, rest in rows if _positive(rest)}
         else:
             known = {key for key, _rest in rows}
         before = len(utterances)
