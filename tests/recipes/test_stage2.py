@@ -180,11 +180,18 @@ class TestTheWholeStage:
         Later stages do not all run from the recipe directory, and a
         relative archive path in an scp is only readable from where it
         was written.
+
+        Split from the **right**: an scp entry is `<path>:<offset>` and a
+        Windows path carries a drive colon of its own, so splitting from
+        the left gives `C` and reads as relative. The first version of
+        this test did that and failed only on Windows -- the fourth time
+        a path assumption has broken that tier and nothing else.
         """
         data = whole_stage(recipe)
         for name in ("feats.scp", "cmvn.scp", "feats.cmvn.scp"):
             for line in (data / name).read_text().splitlines():
-                assert Path(line.split()[1].split(":")[0]).is_absolute(), name
+                archive, _offset = line.split()[1].rsplit(":", 1)
+                assert Path(archive).is_absolute(), f"{name}: {archive}"
 
 
 class TestTheStatistics:
