@@ -39,7 +39,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PREPARE_LANG = "BenNevis.lm prepare-lang"
 
 #: The LM formatting scripts, which must not be in stage 1.
-LM_SCRIPTS = ("local/prepare_lm.sh", "local/format_lms.sh")
+#: `run/format_lm.sh` is ours, written because Kaldi's `format_lms.sh`
+#: ends in `validate_lang.pl` and that validates a GMM language
+#: directory; see that script's header.
+LM_SCRIPTS = (
+    "local/prepare_lm.sh",
+    "local/format_lms.sh",
+    "run/format_lm.sh",
+)
 
 
 def recipes():
@@ -60,17 +67,30 @@ def joined(recipe):
 
 def stage(recipe, number):
     """
-    The body of one stage, or an empty string.
+    The commands of one stage, with comments stripped.
 
     Read from the guard expression rather than from the `echo`, because
     the guard is what decides what runs.
+
+    **Comments are stripped, and that is not tidiness.** The first
+    version kept them, and a comment reading "run/format_lm.sh, not
+    local/format_lms.sh" made `test_it_moved_rather_than_vanished` pass
+    for a stage that no longer ran `local/format_lms.sh` at all -- the
+    test matched the explanation instead of the command. Same family as
+    `"G.fst" in name` matching `LG.fst.txt` and `--compile-fsts` reading
+    as a binary called `fsts`: a scan for a command name must look at
+    the commands.
     """
     match = re.search(
         rf"if \[ \$\{{stage\}} -le {number} \].*?\n(.*?)\nfi\n",
         joined(recipe),
         re.DOTALL,
     )
-    return match.group(1) if match else ""
+    if not match:
+        return ""
+    return "\n".join(
+        line for line in match.group(1).splitlines() if not line.strip().startswith("#")
+    )
 
 
 #: `prepare-lang`'s flags that take a value, so a positional scan can
