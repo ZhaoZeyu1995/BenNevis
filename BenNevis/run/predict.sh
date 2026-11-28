@@ -15,7 +15,7 @@ pin_memory=true
 batch_size=4
 num_workers=4
 
-. ./utils/parse_options.sh
+. ./run/parse_options.sh
 
 if [ $# != 4 ]; then
     echo "Usage: run/predict.sh [options] <data_dir> <lang_dir> <ckpt_dir> <predict_dir>"

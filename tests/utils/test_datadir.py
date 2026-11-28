@@ -68,6 +68,7 @@ def three_speakers(tmp_path, **overrides):
             f"{utt} /ark/feats.ark:{i * 100}" for i, utt in enumerate(utterances)
         ],
         "utt2num_frames": [f"{utt} 100" for utt in utterances],
+        "utt2dur": [f"{utt} 1.015000" for utt in utterances],
         "cmvn.scp": [
             f"{spk} /ark/cmvn.ark:{i * 10}"
             for i, spk in enumerate(("spkA", "spkB", "spkC"))
@@ -136,6 +137,50 @@ class TestItFiltersOnUtterances:
             assert "spkB-1" not in keys(data / name), name
         assert keys(data / "spk2utt") == ["spkA", "spkB", "spkC"]
         assert read_table(data / "spk2utt")[1] == ("spkB", "spkB-2")
+
+    def test_a_zero_duration_utterance_is_dropped(self, tmp_path):
+        """
+        `utt2dur` gets the same `$2 > 0` filter as `utt2num_frames`, and
+        it matters more: `Dataset` divides by the duration and the
+        duration samplers sum it, so a zero would be a batch of nothing.
+        """
+        data = three_speakers(tmp_path)
+        rows = [
+            (utt, "0.0" if utt == "spkA-1" else seconds)
+            for utt, seconds in read_table(data / "utt2dur")
+        ]
+        write_table(data / "utt2dur", rows)
+
+        assert fix(data)["kept"] == 5
+        assert "spkA-1" not in keys(data / "text")
+
+    def test_a_fractional_duration_is_not_malformed(self, tmp_path):
+        """
+        The trap this filter fell into first: `utt2dur` holds seconds, so
+        `1.5` is not a digit string. Testing it with `isdigit` drops
+        **every** utterance and leaves a data directory with nothing in
+        it -- which reads downstream as a corpus that failed to prepare.
+        """
+        data = three_speakers(tmp_path)
+        write_table(
+            data / "utt2dur",
+            [(utt, "1.234567") for utt, _ in read_table(data / "utt2dur")],
+        )
+
+        summary = fix(data)
+
+        assert summary["kept"] == 6, "a fractional duration was read as malformed"
+        assert summary["dropped"] == 0
+
+    def test_utt2dur_is_filtered_with_the_rest(self, tmp_path):
+        data = three_speakers(tmp_path)
+        rows = [row for row in read_table(data / "feats.scp") if row[0] != "spkC-1"]
+        write_table(data / "feats.scp", rows)
+
+        fix(data)
+
+        assert "spkC-1" not in keys(data / "utt2dur")
+        assert len(keys(data / "utt2dur")) == 5
 
     def test_a_zero_frame_utterance_is_dropped(self, tmp_path):
         """
@@ -251,7 +296,7 @@ class TestItSortsWhatItLeaves:
 
 
 class TestItRefusesWhatItCannotHandle:
-    @pytest.mark.parametrize("name", ["segments", "vad.scp", "utt2dur", "spk2gender"])
+    @pytest.mark.parametrize("name", ["segments", "vad.scp", "utt2lang", "spk2gender"])
     def test_a_file_it_does_not_filter_is_refused(self, tmp_path, name):
         """
         Leaving one of these unfiltered while filtering everything around
@@ -300,6 +345,7 @@ class TestNothingChangesWhenNothingIsWrong:
                 "text",
                 "wav.scp",
                 "utt2num_frames",
+                "utt2dur",
                 "spk2utt",
                 "cmvn.scp",
             ],

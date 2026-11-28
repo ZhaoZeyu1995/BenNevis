@@ -17,7 +17,7 @@ max_active="5000"
 acoustic_scale="1.0"
 beam='32'
 
-. ./utils/parse_options.sh
+. ./run/parse_options.sh
 
 if [ $# != 4 ]; then
   echo "Usage: run/decode_faster.sh [options] <data_dir> <lang_dir> <predict_dir> <decode_dir>"

@@ -22,6 +22,21 @@ six hypotheses. So an uncompressed archive is not the same data as
 Kaldi's even when the arithmetic is identical, and `--compress` exists to
 produce a like-for-like archive when that is what is wanted.
 
+**It writes `utt2dur` unconditionally, and that is not optional.**
+`make_fbank.sh` wrote it by default -- `write_utt2dur=true`, through
+`compute-fbank-feats --write-utt2dur` -- and `BenNevis.core.Dataset`
+**requires** it: it filters on `min_duration` and `max_duration`, sorts
+by it, and the duration-based samplers in `BenNevis/samplers/` batch on
+it. So a flag to turn it off would be a flag to stop training from
+starting, which is what the first version of this script did by not
+writing it at all.
+It is the **waveform's** duration in seconds, as Kaldi's is: samples
+divided by the sample rate, not `utt2num_frames` scaled. Kaldi has a
+separate `utils/data/get_utt2dur.sh` that derives it from the frame
+count with a 1.5-frame correction when there is no audio to measure,
+and the two do not agree exactly -- so measuring the waveform is both
+simpler and what the recorded runs used.
+
 **It computes filterbank only, where `make_fbank_pitch.sh` appended three
 pitch dimensions.** Pitch was dropped; `torchaudio` removed
 `compute_kaldi_pitch` in 2.1 and nothing replaces it.
@@ -142,6 +157,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ark = (ark_dir / "feats.ark").resolve()
 
     frames = {}
+    durations = {}
     failed = []
     written = 0
     with kaldiio.WriteHelper(
@@ -152,6 +168,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 rate, samples = loader[uttid]
                 features = fbank(samples, sample_rate=rate, **options)
+                # The waveform's own duration, which is what
+                # `compute-fbank-feats --write-utt2dur` records. `samples`
+                # may be (1, n) from a single-channel archive.
+                count = samples.shape[-1] if hasattr(samples, "shape") else len(samples)
+                duration = float(count) / float(rate)
             except Exception as failure:
                 # One unreadable utterance must not cost the corpus, and
                 # this is how `make_fbank.sh` behaves: it logs the
@@ -166,6 +187,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 continue
             writer(uttid, features.numpy())
             frames[uttid] = features.shape[0]
+            durations[uttid] = duration
             written += 1
             if args.report_every and written % args.report_every == 0:
                 logging.info("%d utterances", written)
@@ -181,6 +203,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             "".join(f"{utt} {count}\n" for utt, count in frames.items()),
             encoding="utf-8",
         )
+
+    # Unconditional: `Dataset` cannot be constructed without it. See the
+    # module docstring.
+    (out / "utt2dur").write_text(
+        "".join(f"{utt} {duration:.6f}\n" for utt, duration in durations.items()),
+        encoding="utf-8",
+    )
     if failed:
         logging.warning(
             "%d of %d utterances could not be read: %s%s. Run "

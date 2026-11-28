@@ -17,7 +17,7 @@ echo "$0 $@"
 topo=
 nondeterministic=false
 
-. ./utils/parse_options.sh
+. ./run/parse_options.sh
 
 if [ -z $topo ]; then
     echo "$0 --topo cannot be blank!"

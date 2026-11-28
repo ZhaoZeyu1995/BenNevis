@@ -19,7 +19,7 @@ recog_sets="dev test"
 model=rnnp
 hydra_opts=""
 
-. ./utils/parse_options.sh
+. ./run/parse_options.sh
 
 # Data preparation
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then

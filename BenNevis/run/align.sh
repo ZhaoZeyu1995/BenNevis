@@ -16,7 +16,7 @@ nj=4
 frame_shift=0.02
 ignore_labels=""
 
-. ./utils/parse_options.sh
+. ./run/parse_options.sh
 
 if [ $# -ne 4 -a $# -ne 3 ]; then
     echo "Usage: run/align.sh [options] <data_dir> <lang_dir> <predict_dir> [<decode_dir>]"

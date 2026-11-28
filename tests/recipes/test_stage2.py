@@ -163,6 +163,45 @@ class TestTheWholeStage:
             assert np.abs(stacked.mean(axis=0)).max() < 1e-4, speaker
             assert np.abs(stacked.var(axis=0) - 1.0).max() < 1e-4, speaker
 
+    def test_it_writes_utt2dur_without_being_asked(self, recipe):
+        """
+        `Dataset` **requires** `utt2dur`: it filters on `min_duration`
+        and `max_duration`, sorts by it, and the duration samplers batch
+        on it. `make_fbank.sh` wrote it by default through
+        `compute-fbank-feats --write-utt2dur`, and the first version of
+        `make_fbank.py` wrote none -- so training could not start at all
+        on a directory prepared by it. There is deliberately no flag.
+        """
+        data = whole_stage(recipe)
+        durations = dict(
+            line.split() for line in (data / "utt2dur").read_text().splitlines()
+        )
+        assert sorted(durations) == sorted(UTTERANCES)
+        # The fixture's waves are four seconds of 8 kHz audio.
+        for utt, seconds in durations.items():
+            assert abs(float(seconds) - 4.0) < 1e-6, utt
+
+    def test_the_duration_is_the_waveforms_not_the_frame_count(self, recipe):
+        """
+        Kaldi's `--write-utt2dur` records the duration of the wave it
+        read. `utils/data/get_utt2dur.sh` has a *different* rule for when
+        there is no audio to measure -- `(frames + 1.5) * frame_shift` --
+        and the two do not agree: at 398 frames that would be 3.995, not
+        4.0. Measuring the waveform is what the recorded runs used.
+        """
+        data = whole_stage(recipe)
+        durations = dict(
+            line.split() for line in (data / "utt2dur").read_text().splitlines()
+        )
+        frames = dict(
+            line.split() for line in (data / "utt2num_frames").read_text().splitlines()
+        )
+        for utt, seconds in durations.items():
+            derived = (int(frames[utt]) + 1.5) * 0.01
+            assert (
+                abs(float(seconds) - derived) > 1e-4
+            ), f"{utt}: the duration looks derived from the frame count"
+
     def test_utt2num_frames_matches_the_archive(self, recipe):
         """
         The sampler batches on this file, so a disagreement with the

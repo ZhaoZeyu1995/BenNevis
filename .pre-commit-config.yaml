@@ -41,21 +41,26 @@ repos:
   - repo: https://github.com/psf/black
     rev: 24.10.0
     hooks:
+      # `egs/` is here because a recipe can hold Python now. pre-commit
+      # passes the staged paths rather than a directory, so this cannot
+      # traverse the recipe symlinks the way `black egs/` does -- see the
+      # comment on CI's black step and
+      # tests/recipes/test_linted_recipes.py.
       - id: black
         args: [--line-length=88]
-        files: ^(BenNevis/|tests/)
+        files: ^(BenNevis/|tests/|egs/)
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
-      # Scoped to tests/ to match CI: BenNevis/ has never been isorted and gets
-      # its own deliberate PR.
+      # Scoped to tests/ and egs/ to match CI: BenNevis/ has never been
+      # isorted and gets its own deliberate PR.
       - id: isort
         args: [--profile=black, --line-length=88]
-        files: ^tests/
+        files: ^(tests/|egs/)
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.1.1
     hooks:
       - id: flake8
-        files: ^(BenNevis/|tests/)
+        files: ^(BenNevis/|tests/|egs/)

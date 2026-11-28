@@ -69,6 +69,10 @@ run the cheap ones everywhere and the expensive ones rarely.
 | 3 | `kaldi` | Kaldi build (Docker) | nightly |
 | 4 | `gpu` | CUDA, multi-GPU | manual |
 
+**yesno's recipe no longer needs Kaldi to train**, verified end to end
+with no `tools/kaldi` present -- see the Gotchas entry. mini-librispeech
+still does, for its corpus preparation alone.
+
 `egs/mini_librispeech/asr` exists for the measurements yesno cannot make:
 yesno sits at nought to two word errors, so nothing that improves a model can
 be shown to improve it, and yesno's filterbank is degenerate so nothing about
@@ -1775,6 +1779,86 @@ cannot be asserted in tier 1b and the failure modes can.
   FSTs because `tests/reference/test_corpora.py` already gates both by
   digest. Memoised rather than a class-scoped fixture, which cannot
   depend on a function-scoped parameter.
+
+- **yesno trains with no Kaldi at all, and that was verified by doing
+  it.** Stages 1, 2, 3 and 5 ran end to end against a synthetic
+  sixty-wave corpus with no `tools/kaldi` present: two epochs of `ctc`,
+  train loss 5.19 to 3.00 and validation 3.64 to 2.26, checkpoints
+  written, exit 0. That is the goal-2 milestone for the training half,
+  and **running it is what found the three things still in the way** --
+  none of which any test had caught, because every test either read a
+  script as text or ran one stage in isolation.
+  **`utt2dur` was missing, and it is a regression this migration
+  introduced.** `BenNevis.core.Dataset` *requires* it -- it filters on
+  `min_duration` and `max_duration`, sorts by it, and the duration
+  samplers batch on it -- and `make_fbank.sh` wrote it by default,
+  through `compute-fbank-feats --write-utt2dur`. `run/make_fbank.py`
+  wrote only `utt2num_frames`, so from the stage-2 conversion until this
+  fix **the recipes could not start training**, and the suite was green
+  throughout: `tests/recipes/test_stage2.py` checked the archive and the
+  frame counts, and nothing constructed a `Dataset` from what the stage
+  produced. It is written unconditionally now, with no flag, because a
+  flag to turn it off is a flag to stop training. Note it is the
+  **waveform's** duration: `utils/data/get_utt2dur.sh` has a different
+  rule for when there is no audio to measure, `(frames + 1.5) *
+  frame_shift`, and the two disagree -- 3.995 against 4.000 on the
+  fixture -- so a test asserts the value is *not* the derived one.
+  `BenNevis.utils.datadir` had also listed `utt2dur` as a file it
+  refuses, which would have made `fix_data_dir.py` reject every real
+  data directory the moment the file existed; it is filtered like the
+  rest now, and its `$2 > 0` test parses a **float**, because `1.5` is
+  not a digit string and `isdigit` would have dropped every utterance.
+  **`path.sh` exited when Kaldi was absent, and `exit` in a sourced file
+  exits the caller.** So `. ./path.sh` at the top of every `run.sh` made
+  the *whole recipe* unrunnable without a Kaldi checkout, including the
+  stages that no longer need one. It warns now and sets everything that
+  does not need Kaldi; the Kaldi-present behaviour is unchanged, PATH
+  order included. The pattern is the one `prepare_graph.sh` and
+  `prepare_topo.py` already follow: **the stage that cannot proceed
+  complains, not the environment refusing to be set up.**
+  **And `run.sh` sourced Kaldi's `utils/parse_options.sh` to read its own
+  flags** -- `utils/` being a symlink into the checkout -- so a recipe
+  could not parse `--stage` without Kaldi, which is *exactly* the defect
+  `prepare_topo.sh` had and was fixed for. `BenNevis/run/parse_options.sh`
+  is a replacement with Kaldi's semantics, because seven recipes and four
+  `run/*.sh` are written against them: `--name value` with dashes
+  becoming underscores, **an unknown option fatal** rather than ignored,
+  `--name=value` refused, and a variable currently `true` or `false`
+  settable only to `true` or `false`. All nine call sites are converted.
+  The unknown-option rule is the one that earns the file: `--stop_stge 4`
+  must not quietly run every stage, and a parser that ignored it would
+  pass every other test.
+  **yesno's data preparation is Python, and the Perl is kept as the
+  oracle.** `local/prepare_data.py` replaces `prepare_data.sh` and the
+  three Perl scripts beside it, plus `utils/utt2spk_to_spk2utt.pl` --
+  which was the last thing stage 1 took from the checkout.
+  `tests/recipes/test_yesno_prepare_data.py` drives
+  `create_yesno_wav_scp.pl` and `create_yesno_txt.pl` and requires the
+  Python to agree **byte for byte** on `wav.scp` and `text` for both
+  halves, which is a stronger standard than restating the 31/29 split in
+  a constant and asserting the constant. The Perl therefore has no caller
+  and is not dead; a test asserts it is still there, with the reason.
+  `prepare_data.sh` itself is gone -- its two other outputs,
+  `data/local/waves_all.list` and a copy of `task.arpabo`, were read by
+  nothing.
+  **A recipe can hold Python now, and `egs/` cannot simply be handed to
+  the linters.** A recipe directory is full of symlinks: `run` points
+  into `BenNevis/`, which isort is deliberately not run over, and
+  `utils`, `steps` and `local` point into a Kaldi checkout, whose own
+  Python would be linted on any machine that has one. Measured:
+  `isort egs/` reports three `BenNevis/run` files and `black egs/` walks
+  sixty-four. So the linters name each recipe file, and
+  `tests/recipes/test_linted_recipes.py` fails when a recipe gains one
+  that is not listed -- the same shape as `test_run_stages.py` asserting
+  its own membership.
+  Two checks moved rather than being deleted: `test_yesno_split.py` read
+  `prepare_data.sh` as text for the `.wav` filter and the stated split
+  count, and both are now asserted by **running** the code.
+  **What is left of Kaldi on the training path is mini-librispeech's
+  corpus preparation and nothing else**: `local/data_prep.sh`,
+  `local/prepare_dict.sh` and the two download scripts, all of which are
+  Kaldi's own and live in the checkout. yesno's `local/prepare_dict.sh`
+  is in-repo and is pure `cp` and `grep`.
 
 - **Stage 1's language directory is Python too, on the two recipes whose
   settings have been checked.** `utils/prepare_lang.sh` is gone from

@@ -28,7 +28,7 @@ hydra_opts=""
 acwts="0.5 0.75 1.0 1.25 1.5"
 lms="nolm tgsmall"
 
-. ./utils/parse_options.sh || exit 1
+. ./run/parse_options.sh || exit 1
 
 # Set bash to 'debug' mode, it will exit on :
 # -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',

@@ -29,15 +29,31 @@ jobs:
       # releases. Upgrading is a deliberate change, made in its own PR.
       - name: Install linters
         run: pip install black==24.10.0 isort==5.13.2 flake8==7.1.1
+      # A recipe can hold Python now -- `local/prepare_data.py` replaced a
+      # shell driver and three Perl scripts -- and there is no reason for
+      # recipe code to be held to a lower standard. It is named **file by
+      # file** rather than as `egs/`, because a recipe directory is full
+      # of symlinks: `run` points into BenNevis/, which isort is
+      # deliberately not run over, and `utils`, `steps` and `local` point
+      # into a Kaldi checkout, whose own Python would be linted on any
+      # machine that has one. `tests/recipes/test_linted_recipes.py` fails
+      # if a recipe gains a Python file that is not listed here, so the
+      # list cannot quietly fall behind.
       - name: black
-        run: black --check --diff --line-length=88 BenNevis/ tests/ docker/
+        run: >
+          black --check --diff --line-length=88 BenNevis/ tests/ docker/
+          egs/yesno/asr/local/prepare_data.py
       # Scoped to tests/ and docker/ for now: BenNevis/ has never been
       # isorted, and doing it here would bury this change under an import
       # reshuffle of the whole package. It gets its own deliberate PR.
       - name: isort
-        run: isort --check --diff --profile=black --line-length=88 tests/ docker/
+        run: >
+          isort --check --diff --profile=black --line-length=88 tests/ docker/
+          egs/yesno/asr/local/prepare_data.py
       - name: flake8
-        run: flake8 BenNevis/ tests/ docker/
+        run: >
+          flake8 BenNevis/ tests/ docker/
+          egs/yesno/asr/local/prepare_data.py
 
   # Tier 1: no k2, no Kaldi, no GPU. Runs on every push and must stay fast.
   # These tests import nothing heavier than the standard library, so they need
