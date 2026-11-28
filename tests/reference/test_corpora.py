@@ -167,6 +167,41 @@ class TestWhatTheCaptureHasToContain:
         assert any(k.startswith("raw/") for k in arrays), f"{name}: no raw/"
         assert any(k.startswith("features/") for k in arrays), f"{name}: no features/"
 
+    def test_it_says_which_implementation_produced_the_features(self, corpus):
+        """
+        `raw/`, `features/` and `cmvn/` are stage 2's input, output and
+        statistics, and the recipes' stage 2 is Python from this change
+        on. A capture that does not say which side produced them turns
+        `tests/utils/test_cmvn.py`'s equivalence class into a comparison
+        of the code with itself -- so the field is required of a new
+        capture, and an empty one is allowed only because the two
+        committed captures predate it, when nothing but Kaldi could have
+        written those files.
+
+        A capture reading "bennevis" is not a failure: it retires that
+        gate, deliberately and per stage. What must not happen is silence.
+        """
+        name, _directory, manifest = corpus
+        assert manifest.features_from in ("", "kaldi", "bennevis"), (
+            f"{name}: features_from is {manifest.features_from!r}, which "
+            f"names no implementation"
+        )
+
+    def test_the_committed_captures_are_still_kaldis(self, corpus):
+        """
+        Stated separately from the field's validity, because the two fail
+        for different reasons and want different fixes: the check above
+        catches a malformed capture, and this one catches the day the
+        committed reference stops being a reference. When it fires, the
+        answer is to record the retirement, not to edit this test.
+        """
+        name, _directory, manifest = corpus
+        assert manifest.features_from in ("", "kaldi"), (
+            f"{name}'s features came from {manifest.features_from!r}, so "
+            f"the CMVN equivalence gate no longer compares Kaldi with "
+            f"BenNevis. See CLAUDE.md on retiring an equivalence gate."
+        )
+
 
 class TestFingerprints:
     def test_a_fingerprint_names_an_artefact_that_was_captured(self, corpus):

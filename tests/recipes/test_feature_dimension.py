@@ -4,8 +4,9 @@ A model's input width is derived from the features, never written out.
 Tier 1: it reads the recipes' shell and YAML as text.
 
 **It used to be written out, and three recipes had it wrong.**
-`egs/librispeech/asr{1,2,3}` call `steps/make_fbank.sh`, which writes 80
-filterbank coefficients, while their model configuration said `idim: 83`
+`egs/librispeech/asr{1,2,3}` called `steps/make_fbank.sh`, which writes
+80 filterbank coefficients, while their model configuration said
+`idim: 83`
 -- 80 features into an 83-wide input layer, a shape mismatch at the first
 forward pass. The only reason nobody met it is that those recipes have
 never been run in CI. Note `conf` in asr2 and asr3 is a **symlink** to
@@ -33,10 +34,19 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: Kaldi's filterbank stages, so that a recipe can be told to have one.
-#: Listed rather than globbed because a recipe gaining a third kind of
-#: feature extraction should be a deliberate edit here.
-FEATURE_SCRIPTS = ("make_fbank.sh", "make_fbank_pitch.sh")
+#: The filterbank stages a recipe can run, so that it can be told to have
+#: one. Listed rather than globbed because a recipe gaining another kind
+#: of feature extraction should be a deliberate edit here.
+#:
+#: `run/make_fbank.py` is first because it is what the recipes call now;
+#: Kaldi's two stay listed so that this file keeps meaning if one comes
+#: back, and so the pitch assertion below still has something to look
+#: for. `tests/recipes/test_stage2_wiring.py` is what forbids them.
+FEATURE_SCRIPTS = (
+    "run/make_fbank.py",
+    "steps/make_fbank.sh",
+    "steps/make_fbank_pitch.sh",
+)
 
 
 def recipes():
@@ -47,12 +57,10 @@ def recipes():
 
 
 def feature_script(recipe: str) -> str:
-    """Which of Kaldi's feature scripts the recipe's stage 2 runs."""
+    """Which feature extractor the recipe's stage 2 runs."""
     text = (REPO_ROOT / recipe / "run.sh").read_text(encoding="utf-8")
     found = {
-        name
-        for name in FEATURE_SCRIPTS
-        if re.search(rf"steps/{re.escape(name)}\b", text)
+        name for name in FEATURE_SCRIPTS if re.search(rf"{re.escape(name)}\b", text)
     }
     assert len(found) <= 1, f"{recipe} runs more than one of {found}"
     return found.pop() if found else ""
@@ -159,7 +167,7 @@ def test_no_recipe_extracts_pitch_any_more():
     it would change quietly rather than loudly -- and re-anchor the WER
     ledger without saying so.
     """
-    using = [r for r in recipes() if feature_script(r) == "make_fbank_pitch.sh"]
+    using = [r for r in recipes() if feature_script(r) == "steps/make_fbank_pitch.sh"]
     assert not using, f"{using} extract pitch; see CLAUDE.md on why it went"
 
 

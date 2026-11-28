@@ -1,53 +1,29 @@
 #!/bin/bash
-# Apply CMVN for a data directory
-# This script assumes that there is feats.scp and cmvn.scp in the data directory
-# and creates feats.cmvn.scp in the data directory, which will be loaded by BenNevis.
+# A shim over run/apply_cmvn.py, kept so that a recipe's existing command
+# line works unchanged.
+#
+# The shell version is gone. It sourced Kaldi's utils/parse_options.sh to
+# read its own flags, split the data with utils/split_data.sh, ran
+# apply-cmvn under run.pl once per job and cat'ed the per-job scp files
+# back together -- four Kaldi dependencies for arithmetic that
+# BenNevis.utils.cmvn has been doing bit-exactly since the first stage of
+# the migration.
+#
+# Deliberately does NOT source path.sh: the point is that this stage needs
+# no Kaldi on PATH.
+#
+# --nj is gone rather than ignored, and the measurement is in
+# run/apply_cmvn.py's docstring: the whole of mini-librispeech's
+# train_clean_5 normalises and writes in under a second, so a job count
+# could only ever go wrong. A recipe still passing it gets an argument
+# error, which is the loud failure rather than the quiet one.
+#
 # Usage:
-# run/apply_cmvn.sh [options] <data-dir>
-# e.g.:
-# run/apply_cmvn.sh data/train
+# run/apply_cmvn.sh [--norm-vars true|false] [--norm-means true|false] \
+#     <data-dir>
 # Authors:
-#   * Zeyu Zhao (The University of Edinburgh) 2024
-
-. ./path.sh || exit 1;
+#  * Zeyu Zhao (The University of Edinburgh) 2024
 
 echo "$0 $@"  # Print the command line for logging
 
-nj=4
-norm_vars=true
-
-. ./utils/parse_options.sh
-
-if [ $# != 1 ]; then
-    echo "Usage: apply_cmvn.sh [options] <data-dir>"
-    echo "Options:"
-    echo "  --nj <nj>                 # default: 4, the number of jobs."
-    echo "  --norm-vars <true|false>  # default: true, whether to normalize the variance."
-    echo "e.g.:"
-    echo " apply_cmvn.sh --nj 4 --norm-vars true data/train"
-    exit 1
-fi
-
-data=$1
-num_spk=$(cat "$data/spk2utt" | wc -l)
-
-if [ $num_spk -lt $nj ]; then
-    echo "$0: Warning: The number of speakers is small than the number of jobs."
-    echo "$0: Changing the number of jobs to the number of speakers automatically."
-    nj=$num_spk
-fi
-
-./utils/split_data.sh $data $nj || exit 1;
-
-abs_data="$PWD/$data"
-logdir=$data/split$nj/log
-
-run.pl JOB=1:$nj $logdir/apply-cmvn.JOB.log \
-    apply-cmvn --norm-vars=$norm_vars --utt2spk=ark:$data/split${nj}/JOB/utt2spk \
-    scp:$data/split${nj}/JOB/cmvn.scp \
-    scp:$data/split${nj}/JOB/feats.scp \
-    ark,scp:$abs_data/split${nj}/JOB/feats.cmvn.ark,$data/split${nj}/JOB/feats.cmvn.scp
-
-for i in $(seq $nj); do
-    cat $data/split${nj}/${i}/feats.cmvn.scp
-done > $data/feats.cmvn.scp
+exec python3 "$(dirname "$0")/apply_cmvn.py" "$@"

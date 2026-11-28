@@ -377,6 +377,51 @@ jobs:
       # alone would have produced a gate that still could not fail,
       # which is the same shape as the `G.fst` gate that skipped
       # unconditionally.
+      # Stage 2 is Python now -- run/make_fbank.py, run/compute_cmvn_stats.py,
+      # run/fix_data_dir.py and run/apply_cmvn.py -- so the committed
+      # reference can no longer gate it: the capture's raw/, features/ and
+      # cmvn/ are one of the two sides from this change on, which is why
+      # the manifest records `features_from`. This step is the replacement,
+      # and it is the localising measurement CLAUDE.md asks for: a feature
+      # or loss comparison in preference to a WER.
+      #
+      # It runs Kaldi's own compute-fbank-feats, compute-cmvn-stats and
+      # apply-cmvn into a scratch directory on the same wav.scp and the
+      # same conf/fbank.conf, and compares four things -- see the script's
+      # docstring. The one to read first is the float32 scale and offset,
+      # which is gated at exact equality: the double statistics are not
+      # expected to agree to the bit, because numpy pairwise-sums where
+      # Kaldi accumulates frame by frame, and that comparison says whether
+      # the difference can reach a feature at all.
+      #
+      # `always()`, because features are stage 2 and a run that died in
+      # training still has them -- the cheapest way to get this reading.
+      #
+      # The data sets are discovered by the script rather than named
+      # here: yesno's are train_yesno and test_yesno where
+      # mini-librispeech's are train_clean_5 and dev_clean_2, and a
+      # workflow holding both lists is a list that drifts from the
+      # recipes. Every set is compared, because the training set is
+      # where a difference would move CMVN's statistics and so every
+      # WER.
+      #
+      # `set -eo pipefail` for the same reason as the graph gate below:
+      # the command ends in `| tee`, so without it the pipeline's status
+      # is tee's and the gate could not fail.
+      - name: Compare the Python features against Kaldi's
+        if: always()
+        run: |
+          set -eo pipefail
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            "$IMAGE" \
+            python3 tests/reference/compare_features.py \
+              --recipe "${RECIPE}" \
+            2>&1 | tee artefacts/feature-comparison.log
+
       - name: Compare the Python graphs against Kaldi's
         if: always() && env.RECIPE == 'egs/mini_librispeech/asr'
         run: |
