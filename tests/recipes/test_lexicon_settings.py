@@ -4,7 +4,7 @@ Stage 3's lexicon settings must match how its recipe prepared the lexicon.
 `prepare_topo.sh --lexicon` rebuilds `L.fst` from the dictionary in Python
 and writes it as `k2/L.fst.txt`, which is what takes OpenFST off the
 training path. It therefore has to be told the same two things
-`prepare_lang.sh` was -- the optional-silence probability and whether
+stage 1's `prepare-lang` is -- the optional-silence probability and whether
 phones are position-dependent -- and both differ between the two recipes:
 
 | recipe           | --sil-prob    | position-dependent |
@@ -32,7 +32,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: Recipes that pass `--lexicon`, and what their `prepare_lang.sh` call
+#: Recipes that pass `--lexicon`, and what their `prepare-lang` call
 #: implies stage 3 must pass with it. `prepare_topo.sh` is called by seven
 #: recipes and the flag is optional, because the other five have not had
 #: their settings checked -- they keep the `fstprint` fallback, which
@@ -54,6 +54,11 @@ EXPECTED = {
 
 def run_sh(recipe: str) -> str:
     return (REPO_ROOT / recipe / "run.sh").read_text(encoding="utf-8")
+
+
+#: How stage 1 now spells the call `prepare_lang.sh` used to be. Named
+#: once, because three tests across two files look for it.
+PREPARE_LANG = "BenNevis.lm prepare-lang"
 
 
 def joined(text: str) -> str:
@@ -96,7 +101,7 @@ class TestTheListMatchesWhatIsOnDisc:
         for recipe in sorted(on_disc - set(EXPECTED)):
             assert "--lexicon" not in call(run_sh(recipe), "prepare_topo.sh"), (
                 f"{recipe} passes --lexicon but is not in EXPECTED, so its "
-                f"settings are not checked against its prepare_lang.sh call"
+                f"settings are not checked against its prepare-lang call"
             )
 
 
@@ -108,20 +113,21 @@ class TestTheSettingsAgree:
         assert match, f"{recipe}: stage 3 passes no --sil-prob"
         assert match.group(1) == EXPECTED[recipe]["sil_prob"], recipe
 
-        lang = call(run_sh(recipe), "prepare_lang.sh")
-        given = re.search(r"--sil[-_]prob\s+(\S+)", lang)
-        if given:
-            assert given.group(1) == match.group(1), (
-                f"{recipe}: prepare_lang.sh was given --sil_prob "
-                f"{given.group(1)} but prepare_topo.sh is given "
-                f"{match.group(1)}"
-            )
-        else:
-            # prepare_lang.sh's own default is 0.5.
-            assert match.group(1) == "0.5", (
-                f"{recipe}: prepare_lang.sh takes its default --sil_prob of "
-                f"0.5 but prepare_topo.sh is given {match.group(1)}"
-            )
+        lang = call(run_sh(recipe), PREPARE_LANG)
+        given = re.search(r"--sil-prob\s+(\S+)", lang)
+        # **Required rather than optional now.** Stage 1 used to be
+        # `prepare_lang.sh`, whose own default of 0.5 applied when the
+        # recipe passed nothing -- so this test had to encode that
+        # default and mini-librispeech's setting lived in Kaldi rather
+        # than in the recipe. The Python entry point is given both
+        # settings explicitly, which makes the agreement readable from
+        # the recipe alone and removes the implicit default that is the
+        # whole shape of this trap.
+        assert given, f"{recipe}: stage 1 passes no --sil-prob to prepare-lang"
+        assert given.group(1) == match.group(1), (
+            f"{recipe}: prepare-lang is given --sil-prob {given.group(1)} "
+            f"but prepare_topo.sh is given {match.group(1)}"
+        )
 
     def test_position_dependence_matches_prepare_lang(self, recipe):
         topo = call(run_sh(recipe), "prepare_topo.sh")
@@ -129,14 +135,18 @@ class TestTheSettingsAgree:
         passed = bool(match) and match.group(1) == "true"
         assert passed == EXPECTED[recipe]["position_dependent"], recipe
 
-        lang = call(run_sh(recipe), "prepare_lang.sh")
+        lang = call(run_sh(recipe), PREPARE_LANG)
         given = re.search(r"--position-dependent-phones\s+(\S+)", lang)
-        # Not passing it to prepare_lang.sh means position-dependent, which
+        # Explicit in stage 1, for the reason above. Position dependence
         # is why mini-librispeech's lexicon says AH0 and its phones.txt
         # holds only AH0_B, AH0_E, AH0_I and AH0_S.
-        expected = True if not given else given.group(1) != "false"
+        assert given, (
+            f"{recipe}: stage 1 passes no --position-dependent-phones to "
+            f"prepare-lang"
+        )
+        expected = given.group(1) != "false"
         assert passed == expected, (
-            f"{recipe}: prepare_lang.sh implies position-dependent="
+            f"{recipe}: prepare-lang implies position-dependent="
             f"{expected} but prepare_topo.sh is given {passed}"
         )
 
@@ -152,10 +162,10 @@ class TestTheSettingsAgree:
         assert match, recipe
         assert match.group(1) == EXPECTED[recipe]["lexicon"], recipe
 
-        lang = call(run_sh(recipe), "prepare_lang.sh")
+        lang = call(run_sh(recipe), PREPARE_LANG)
         fields = [f for f in lang.split() if not f.startswith("-")]
         prepared = next((f for f in fields if "dict" in f), None)
-        assert prepared, f"{recipe}: cannot find prepare_lang.sh's dictionary"
+        assert prepared, f"{recipe}: cannot find prepare-lang's dictionary"
         assert match.group(1).startswith(prepared.rstrip("/")), (
             f"{recipe}: stage 3 rebuilds from {match.group(1)} but the "
             f"lexicon was prepared from {prepared}"
@@ -203,7 +213,7 @@ class TestPrepareTopoItself:
 
     def test_the_defaults_are_the_conservative_ones(self):
         """
-        Not `prepare_lang.sh`'s. Its defaults are 0.5 and
+        Not `prepare-lang`'s, which are `prepare_lang.sh`'s own: 0.5 and
         position-dependent; these are 0.0 and not, so a recipe that
         forgets to pass them gets a loud mismatch against its
         `phones.txt` rather than a quietly different lexicon.

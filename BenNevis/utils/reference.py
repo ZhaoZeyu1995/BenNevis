@@ -368,20 +368,28 @@ class Manifest:
         reference whose provenance is unknown is not a reference.
     recipe: str
         The recipe directory, relative to the repository root.
-    features_from: str
-        Which implementation produced `raw/`, `features/` and `cmvn/`:
-        "kaldi" or "bennevis". **Not a label but a gate.** Those three
-        groups are stage 2's input, output and statistics, and the tests
-        that compare the Python CMVN against them only mean anything
-        while the capture is Kaldi's -- once the recipe's stage 2 is
-        Python, a fresh capture would turn
-        `test_it_reproduces_kaldi_bit_for_bit` into a comparison of the
-        code with itself, which is the failure the decoding-graph token
-        table already had: "a test that derives its inputs from the code
-        under test proves only that the code is self-consistent".
-        Empty means a capture taken before this field existed, which is
-        necessarily "kaldi" because nothing else could write those files
-        then.
+    produced_by: Dict[str, str]
+        Which implementation produced each group of captured artefacts:
+        stage name to "kaldi", "bennevis" or "unknown". **Not a label but
+        a gate**, and the reason it is a map rather than a flag is that
+        the stages convert one at a time.
+
+        `"features"` covers `raw/`, `features/` and `cmvn/` -- stage 2's
+        input, output and statistics. `"lang"` covers `lang/` and `dict/`
+        -- stage 1's tables and the two lexicon FSTs.
+
+        Every test that compares a Python stage against one of those
+        groups only means anything while the capture is Kaldi's. Once the
+        recipe's stage runs the Python, a fresh capture turns the
+        comparison into the code against itself, which is the failure the
+        decoding graph's token table already had: "a test that derives
+        its inputs from the code under test proves only that the code is
+        self-consistent". So the affected tests read this and skip with a
+        reason rather than passing emptily.
+
+        A missing key means a capture taken before the key existed, which
+        is necessarily "kaldi" because nothing else could have written
+        those files then.
     notes: List[str]
         Anything a reader needs to interpret the data.
     exact: Dict[str, str]
@@ -423,7 +431,7 @@ class Manifest:
     captured: str = ""
     image: str = ""
     recipe: str = ""
-    features_from: str = ""
+    produced_by: Dict[str, str] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
     exact: Dict[str, str] = field(default_factory=dict)
     arrays: Dict[str, Dict[str, Any]] = field(default_factory=dict)

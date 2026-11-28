@@ -30,6 +30,7 @@ Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
 """
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -120,8 +121,37 @@ def _prepare_once(corpus):
     ],
 )
 class TestAgainstTheCapture:
+    """
+    This implementation against Kaldi's, on the real reference.
+
+    **Conditional on the capture's `lang/` being Kaldi's.** The recipes'
+    stage 1 calls `python3 -m BenNevis.lm prepare-lang` from the change
+    that added this note, so a fresh capture records *these* tables and
+    every assertion below becomes the code against itself -- the failure
+    the decoding graph's token table already had. The manifest records
+    `produced_by`, read off the recipe's own `run.sh`, and this skips with
+    that reason rather than passing emptily.
+
+    The committed captures were taken while Kaldi owned the stage, so
+    they still compare. A re-capture retires this gate, which is the
+    per-stage retirement CLAUDE.md prescribes and not a loss: nine files
+    byte-exact is a result that has already been obtained, and
+    `tests/reference/compare_lang.py` is where the live comparison goes.
+    """
+
     @pytest.fixture
     def prepared(self, corpus):
+        produced_by = (
+            json.loads((REFERENCE / corpus / "manifest.json").read_text())
+            .get("produced_by", {})
+            .get("lang", "kaldi")
+        )
+        if produced_by != "kaldi":
+            pytest.skip(
+                f"{corpus}'s lang/ was produced by {produced_by!r}, so "
+                f"comparing it with prepare_lang would compare the code "
+                f"with itself; the gate retires with the stage"
+            )
         return _prepare_once(corpus)
 
     def test_every_recorded_table_is_byte_exact(self, prepared):
@@ -302,3 +332,165 @@ class TestItRefusesBadInput:
         )
         with pytest.raises(ValueError, match="phone lists do"):
             prepare_lang(dictionary, "<UNK>", tmp_path / "lang")
+
+
+class TestCompilingTheLexiconFsts:
+    """
+    `--compile-fsts`, which decides whether the binary `L.fst` and
+    `L_disambig.fst` are written beside the text.
+
+    **Nothing in BenNevis's lane reads a binary FST.** Training reads
+    `k2/L.fst.txt`; `run/decode_k2.py` builds its graph in k2. The binary
+    form exists for Kaldi's `prepare_graph.sh`, which composes
+    `L_disambig.fst` against `G.fst`, and for `decode-faster` -- the
+    stages goal 2 deletes last and together. So a tree with no OpenFST
+    must still get a language directory it can train from, which is why
+    `auto` skips rather than fails, and `prepare_graph.sh` is what says so
+    loudly when the decoding lane then has nothing to compose.
+
+    The compiling itself is `BenNevis.utils.openfst`, whose argument list
+    is pinned in `tests/utils/test_openfst.py`. What these pin is the
+    choice of whether to call it.
+    """
+
+    @staticmethod
+    def dictionary(tmp_path):
+        directory = tmp_path / "dict"
+        directory.mkdir()
+        (directory / "lexicon.txt").write_text(
+            "<UNK> SIL\nYES Y\nNO N\n", encoding="utf-8"
+        )
+        (directory / "silence_phones.txt").write_text("SIL\n", encoding="utf-8")
+        (directory / "nonsilence_phones.txt").write_text("Y\nN\n", encoding="utf-8")
+        (directory / "optional_silence.txt").write_text("SIL\n", encoding="utf-8")
+        return directory
+
+    def test_false_writes_the_text_and_no_binary(self, tmp_path):
+        out = tmp_path / "lang"
+        prepare_lang(
+            self.dictionary(tmp_path),
+            "<UNK>",
+            out,
+            position_dependent_phones=False,
+            sil_prob=0.0,
+            compile_fsts="false",
+        )
+        assert (out / "k2" / "L.fst.txt").is_file()
+        assert (out / "k2" / "L_disambig.fst.txt").is_file()
+        assert not (out / "L.fst").exists()
+        assert not (out / "L_disambig.fst").exists()
+
+    def test_auto_without_openfst_skips_and_says_so(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """
+        The case every developer machine is in. It must leave a usable
+        language directory and explain what is missing, because the
+        failure it defers to is four stages away.
+        """
+        import BenNevis.utils.openfst as openfst
+
+        monkeypatch.setattr(openfst, "available", lambda: False)
+        out = tmp_path / "lang"
+        with caplog.at_level("INFO"):
+            prepare_lang(
+                self.dictionary(tmp_path),
+                "<UNK>",
+                out,
+                position_dependent_phones=False,
+                sil_prob=0.0,
+                compile_fsts="auto",
+            )
+        assert not (out / "L.fst").exists()
+        assert "OpenFST is not on PATH" in caplog.text
+        assert "prepare_graph.sh" in caplog.text
+
+    def test_true_without_openfst_is_an_error(self, tmp_path, monkeypatch):
+        """
+        A caller that asked for the binaries and silently got none would
+        fail inside `fsttablecompose` with something unrelated.
+        """
+        import BenNevis.utils.openfst as openfst
+
+        monkeypatch.setattr(openfst, "available", lambda: False)
+        with pytest.raises(ValueError, match="OpenFST is not on PATH"):
+            prepare_lang(
+                self.dictionary(tmp_path),
+                "<UNK>",
+                tmp_path / "lang",
+                position_dependent_phones=False,
+                sil_prob=0.0,
+                compile_fsts="true",
+            )
+
+    def test_it_compiles_both_from_the_text_it_wrote(self, tmp_path, monkeypatch):
+        """
+        From the text rather than by rebuilding, so the binary cannot be
+        a different FST from the committed-and-gated text. The text is
+        numeric and byte-identical to `fstprint`'s output -- gated against
+        the capture for both corpora -- so it needs no symbol tables.
+        """
+        import BenNevis.utils.openfst as openfst
+
+        compiled = []
+
+        def record(text, output, **kwargs):
+            compiled.append((text, output, kwargs))
+            output.write_bytes(b"binary")
+
+        monkeypatch.setattr(openfst, "available", lambda: True)
+        monkeypatch.setattr(openfst, "compile_fst", record)
+
+        out = tmp_path / "lang"
+        prepare_lang(
+            self.dictionary(tmp_path),
+            "<UNK>",
+            out,
+            position_dependent_phones=False,
+            sil_prob=0.0,
+            compile_fsts="true",
+        )
+
+        assert [path.name for _text, path, _kw in compiled] == [
+            "L.fst",
+            "L_disambig.fst",
+        ]
+        for text, path, kwargs in compiled:
+            source = out / "k2" / f"{path.stem}.fst.txt"
+            assert text == source.read_text(encoding="utf-8")
+            assert not kwargs, f"{path.name} was given {kwargs}"
+
+    def test_an_unknown_choice_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="auto, true or false"):
+            prepare_lang(
+                self.dictionary(tmp_path),
+                "<UNK>",
+                tmp_path / "lang",
+                position_dependent_phones=False,
+                sil_prob=0.0,
+                compile_fsts="yes",
+            )
+
+    def test_nothing_is_compiled_when_no_text_was_written(self, tmp_path, monkeypatch):
+        """
+        `write_fsts=False` is what the tier 1 table gate uses, and there
+        is nothing to compile from. Reaching for the text anyway would
+        raise `FileNotFoundError` in the one path that exists to be cheap.
+        """
+        import BenNevis.utils.openfst as openfst
+
+        monkeypatch.setattr(openfst, "available", lambda: True)
+        monkeypatch.setattr(
+            openfst,
+            "compile_fst",
+            lambda *a, **k: pytest.fail("compiled with no text to compile from"),
+        )
+        prepare_lang(
+            self.dictionary(tmp_path),
+            "<UNK>",
+            tmp_path / "lang",
+            position_dependent_phones=False,
+            sil_prob=0.0,
+            write_fsts=False,
+            compile_fsts="true",
+        )

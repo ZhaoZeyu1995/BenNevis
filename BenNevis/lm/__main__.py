@@ -154,6 +154,16 @@ def main(argv=None) -> int:
         default="true",
         help="prepare_lang.sh's default is true, and so is this",
     )
+    prepare.add_argument(
+        "--compile-fsts",
+        choices=("auto", "true", "false"),
+        default="auto",
+        help="whether to also write the binary L.fst and L_disambig.fst, "
+        "which only Kaldi's decoding lane reads: prepare_graph.sh "
+        "composes against L_disambig.fst. auto writes them when OpenFST "
+        "is on PATH and says what it skipped when it is not, so a tree "
+        "with no Kaldi still gets a language directory it can train from",
+    )
 
     args = parser.parse_args(argv)
 
@@ -169,6 +179,7 @@ def main(argv=None) -> int:
             args.out_dir,
             position_dependent_phones=args.position_dependent_phones == "true",
             sil_prob=args.sil_prob,
+            compile_fsts=args.compile_fsts,
         )
         return 0
 

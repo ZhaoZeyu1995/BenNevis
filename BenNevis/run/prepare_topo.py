@@ -47,7 +47,6 @@ from __future__ import annotations
 import argparse
 import logging
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -194,39 +193,16 @@ def write_lexicon_text(args: argparse.Namespace, des: Path) -> None:
     )
 
 
-def compile_fst(
-    text: str, isymbols: Path, osymbols: Path, output: Path, keep_symbols: bool
-) -> None:
-    """
-    `fstcompile | fstarcsort` over text on stdin.
-
-    A pipeline in two `subprocess` calls rather than a shell string, so no
-    shell is needed and a failure in the first half is not swallowed by the
-    second -- which `set -o pipefail` was doing for in the shell version.
-    """
-    compile_argv = [
-        "fstcompile",
-        f"--isymbols={isymbols}",
-        f"--osymbols={osymbols}",
-    ]
-    if not keep_symbols:
-        compile_argv += ["--keep_isymbols=false", "--keep_osymbols=false"]
-    compiled = subprocess.run(
-        compile_argv, input=text.encode("utf-8"), capture_output=True, check=True
-    )
-    sorted_fst = subprocess.run(
-        ["fstarcsort", "--sort_type=olabel"],
-        input=compiled.stdout,
-        capture_output=True,
-        check=True,
-    )
-    output.write_bytes(sorted_fst.stdout)
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     _ensure_importable()
     args = parse(argv)
+
+    # Imported here rather than at the top, like every other BenNevis
+    # import in this file: the module is reachable only after
+    # `_ensure_importable`.
+    from BenNevis.utils.openfst import available as openfst_available
+    from BenNevis.utils.openfst import compile_fst
 
     if not topology_exists(args.topo):
         logging.error("unknown topology %s", args.topo)
@@ -241,7 +217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     compile_fsts = args.compile_fsts
     if compile_fsts == "auto":
-        if shutil.which("fstcompile") and shutil.which("fstarcsort"):
+        if openfst_available():
             compile_fsts = "true"
         else:
             compile_fsts = "false"
@@ -250,9 +226,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "written. Nothing in the Python lane reads them; Kaldi's "
                 "prepare_graph.sh does, and fails saying so."
             )
-    elif compile_fsts == "true" and not (
-        shutil.which("fstcompile") and shutil.which("fstarcsort")
-    ):
+    elif compile_fsts == "true" and not openfst_available():
         logging.error("--compile-fsts true but OpenFST is not on PATH")
         return 1
 
@@ -291,17 +265,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         phones = topo_build.read_phone_table(des / "phones.txt")
         compile_fst(
             topo_build.build_openfst_text(loaded, "lang", phones),
-            des / "tokens_disambig.txt",
-            des / "phones.txt",
             des / "T.fst",
+            isymbols=des / "tokens_disambig.txt",
+            osymbols=des / "phones.txt",
             keep_symbols=False,
         )
         k2_phones = topo_build.read_phone_table(des / "k2" / "phones.txt")
         compile_fst(
             topo_build.build_openfst_text(loaded, "k2", k2_phones),
-            des / "k2" / "tokens.txt",
-            des / "k2" / "phones.txt",
             des / "k2" / "T.fst",
+            isymbols=des / "k2" / "tokens.txt",
+            osymbols=des / "k2" / "phones.txt",
             keep_symbols=True,
         )
         logging.info("wrote %s and %s", des / "T.fst", des / "k2" / "T.fst")

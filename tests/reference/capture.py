@@ -175,9 +175,25 @@ TOOL_LOCATIONS = {
 }
 
 
-def feature_extractor(recipe: Path) -> str:
+#: How to tell, from a recipe's `run.sh`, which implementation ran each
+#: stage whose output this captures. First match wins, so the Python is
+#: listed first; a stage that matches neither is "unknown", which is
+#: louder than guessing.
+STAGE_MARKERS = {
+    "features": (
+        ("bennevis", "run/make_fbank.py"),
+        ("kaldi", "steps/make_fbank"),
+    ),
+    "lang": (
+        ("bennevis", "BenNevis.lm prepare-lang"),
+        ("kaldi", "utils/prepare_lang.sh"),
+    ),
+}
+
+
+def implementations(recipe: Path) -> dict:
     """
-    Which implementation produced the recipe's features.
+    Which implementation produced each captured stage's output.
 
     Arguments
     ---------
@@ -186,28 +202,26 @@ def feature_extractor(recipe: Path) -> str:
 
     Returns
     -------
-    str
-        "bennevis" if stage 2 runs `run/make_fbank.py`, "kaldi" if it
-        runs one of Kaldi's `steps/make_fbank*.sh`, "unknown" otherwise.
+    dict
+        Stage name to "bennevis", "kaldi" or "unknown", for every stage
+        in `STAGE_MARKERS`.
 
     Notes
     -----
-    Determined from `run.sh` rather than from a flag, because a flag is
-    something a workflow can forget to update when a recipe converts --
-    and the consequence of getting this wrong is a reference that reads
-    as Kaldi's while being ours, which makes a gate pass while comparing
-    nothing. Matched on the whole script because stage 2 is the only
-    place any of these appear.
+    Determined from `run.sh` rather than passed in as a flag, because a
+    flag is something a workflow can forget to update when a recipe
+    converts -- and the consequence of getting this wrong is a reference
+    that reads as Kaldi's while being ours, which makes a gate pass while
+    comparing nothing. See `Manifest.produced_by`.
     """
     run = recipe / "run.sh"
-    if not run.is_file():
-        return "unknown"
-    text = run.read_text(encoding="utf-8")
-    if "run/make_fbank.py" in text:
-        return "bennevis"
-    if "steps/make_fbank" in text:
-        return "kaldi"
-    return "unknown"
+    text = run.read_text(encoding="utf-8") if run.is_file() else ""
+    found = {}
+    for stage, markers in STAGE_MARKERS.items():
+        found[stage] = next(
+            (name for name, marker in markers if marker in text), "unknown"
+        )
+    return found
 
 
 @contextlib.contextmanager
@@ -1198,9 +1212,9 @@ def main(argv=None) -> int:
         recipe=str(args.recipe),
         # Read off the recipe rather than passed in, so a recipe that
         # converts cannot be captured as though it had not. See
-        # `Manifest.features_from`: this decides whether the CMVN
-        # equivalence tests compare anything.
-        features_from=feature_extractor(recipe),
+        # `Manifest.produced_by`: this decides whether the tests that
+        # compare a Python stage against this capture compare anything.
+        produced_by=implementations(recipe),
         notes=[
             "Captured from a completed run of the recipe named above, inside "
             "the image named above.",

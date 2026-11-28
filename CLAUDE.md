@@ -1776,6 +1776,98 @@ cannot be asserted in tier 1b and the failure modes can.
   digest. Memoised rather than a class-scoped fixture, which cannot
   depend on a function-scoped parameter.
 
+- **Stage 1's language directory is Python too, on the two recipes whose
+  settings have been checked.** `utils/prepare_lang.sh` is gone from
+  yesno and mini-librispeech, replaced by
+  `python3 -m BenNevis.lm prepare-lang`, which has been byte-exact on
+  nine files since it was written and was waiting only for a call site --
+  the same state `run/make_fbank.py` was in.
+  **Only those two convert, and that is the point rather than an
+  omission.** `prepare-lang` must be given the same `--sil-prob` and
+  `--position-dependent-phones` the shell script was, and getting them
+  wrong builds a lexicon that is *wrong rather than broken*: the tables
+  come out, the FSTs compose, every transcription is quietly worse.
+  `egs/librispeech/asr{1,2,3}` and `egs/timit/asr_{char,phn}` have never
+  had theirs checked and keep Kaldi's script.
+  `tests/recipes/test_stage1_wiring.py` pins the coupling rather than the
+  list: **a recipe converted at stage 1 is exactly a recipe converted at
+  stage 3**, because both rebuild a lexicon from the dictionary and both
+  need those two settings, so converting one end without the other fails.
+  **Both settings are now stated explicitly, and that is a real
+  improvement rather than tidiness.** While stage 1 was
+  `prepare_lang.sh`, mini-librispeech passed neither and got 0.5 and
+  position-dependent from Kaldi's defaults -- so its silence probability
+  lived in Kaldi rather than in its own recipe, and
+  `tests/recipes/test_lexicon_settings.py` had to encode that default to
+  check the three stages agreed. The implicit default was the whole shape
+  of the trap; the tests now require the values to be present and compare
+  them directly.
+  **The language model left stage 1, which is what makes the stage
+  Kaldi-free at all.** `local/prepare_lm.sh` and `local/format_lms.sh`
+  ran there and need `arpa2fst`, `fstcompile`, `fstcompose` and
+  `fstinfo` -- for `G.fst`, which **only decoding reads**. So stage 1
+  wanted OpenFST for an artefact training never touches. They run at the
+  top of stage 4 now, beside the graphs they feed, and the test pins both
+  halves: not in stage 1, and *present in stage 4* before
+  `prepare_graph.sh`, which is the difference between moving a step and
+  deleting it.
+  **`prepare-lang` compiles the binary lexicon FSTs when it can, and the
+  three-way flag is the established pattern.** `--compile-fsts auto|true|
+  false` is `run/prepare_topo.py`'s, for the same reason: nothing in
+  BenNevis's lane reads a binary FST -- training reads `k2/L.fst.txt` and
+  `run/decode_k2.py` builds its graph in k2 -- while Kaldi's
+  `prepare_graph.sh` composes `L_disambig.fst`. So a tree with no OpenFST
+  gets a language directory it can train from, and the decoding lane
+  fails pointing here. The compiling itself moved into
+  `BenNevis.utils.openfst`, shared with `prepare_topo.py`, because two
+  implementations of one thing are how the two come to disagree and what
+  they would disagree about is the **arc order** of a graph the decoder
+  loads -- which composes either way and decodes differently.
+  Compiling **our text** rather than rebuilding is safe and is why this
+  is cheap: `BenNevis.lm.lexicon` writes *numeric* text that is
+  byte-identical to `fstprint`'s output for both corpora, so it compiles
+  without symbol tables and gives the same binary as Kaldi's symbolic
+  text compiled with them.
+  **`prepare_graph.sh`'s input guard could not fail, and that was found
+  by reading it.** It said
+  `echo "$0: $src/$file is missing!" || exit 1`, where `||` binds to
+  `echo`, `echo` always succeeds and the `exit` is unreachable -- so the
+  script announced the missing input and carried on to fail inside
+  `fsttablecompose` with something unrelated. Same family as the
+  nightly's `grep | awk` under `pipefail`, the `| tee` that made a gate
+  unable to fail, and the `G.fst` gate that skipped unconditionally.
+  It matters more now than it did: a missing `L_disambig.fst` is a
+  *reachable* state once stage 1 may skip it, so the guard now exits and
+  names the flag that makes it loud.
+  `tests/recipes/test_prepare_graph_guard.py` lifts the loop out of the
+  script and runs it, five of its seven tests failing against the old
+  form.
+  **And the capture's `lang/` retires the same way its features did.**
+  `produced_by` replaced `features_from` and is a **map from stage to
+  implementation** rather than a flag, because the stages convert one at
+  a time: `"features"` covers `raw/`, `features/` and `cmvn/`, `"lang"`
+  covers `lang/` and `dict/`. `tests/lm/test_prepare_lang.py`'s
+  nine-files-byte-exact class skips when the capture's `lang` is ours,
+  and `tests/reference/compare_lang.py` is the live replacement: it runs
+  Kaldi's `utils/prepare_lang.sh` into a scratch directory with the
+  settings **read out of the recipe's own stage-1 call** -- not out of the
+  workflow, which would be a copy that drifts -- and compares the tables
+  as bytes and both lexicon FSTs against `fstprint`. Equality, since both
+  were byte-exact first time.
+  The two `tmp/` entries need no such handling and that is worth knowing:
+  the Python needs no temporary directory, so a fresh capture simply has
+  no `tmp/lexiconp.txt`, and the suffixing and disambiguation tests in
+  `tests/reference/test_corpora.py` already skip on absence. **A gate
+  that disappears by absence is safer than one that disappears by
+  silence.**
+  **What is left on the training path is the corpus-specific preparation
+  and nothing else**: yesno's `local/prepare_data.sh` with its three Perl
+  scripts and Kaldi's `utils/utt2spk_to_spk2utt.pl`, and
+  mini-librispeech's `local/data_prep.sh`, `local/prepare_dict.sh` and
+  two download scripts, all four of which are Kaldi's own and live in the
+  checkout. `local/prepare_dict.sh` for yesno is already pure `cp` and
+  `grep`.
+
 - **Stage 2 is Python now, and the whole of it went in one change.**
   `steps/make_fbank.sh`, `steps/compute_cmvn_stats.sh`,
   `utils/fix_data_dir.sh` and the `apply-cmvn` inside

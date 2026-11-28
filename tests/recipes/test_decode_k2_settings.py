@@ -2,7 +2,7 @@
 Stage 10's lexicon settings must match how its recipe prepared the lexicon.
 
 `run/decode_k2.py` rebuilds `L_disambig` from the dictionary, so it has to
-be told the same two things `prepare_lang.sh` was: the optional-silence
+be told the same two things stage 1's `prepare-lang` is: the optional-silence
 probability and whether phones are position-dependent. Both differ between
 the two recipes:
 
@@ -30,7 +30,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: Recipes with a k2 decoding stage, and what their `prepare_lang.sh` call
+#: Recipes with a k2 decoding stage, and what their `prepare-lang` call
 #: implies stage 10 must pass. Listed rather than derived, so adding a
 #: recipe is a deliberate edit -- and the first test below checks the list
 #: against what is actually on disc, so it cannot go stale silently.
@@ -55,11 +55,15 @@ def stage_ten(text: str) -> str:
 
 def prepare_lang_call(text: str) -> str:
     """
-    The `prepare_lang.sh` invocation, joined across its line continuations.
+    Stage 1's `prepare-lang` invocation, joined across its continuations.
+
+    `utils/prepare_lang.sh` until stage 1 became Python; the settings are
+    the same two and are now stated explicitly rather than falling back
+    to a Kaldi default.
     """
     joined = text.replace("\\\n", " ")
     for line in joined.splitlines():
-        if "prepare_lang.sh" in line and not line.strip().startswith("#"):
+        if "BenNevis.lm prepare-lang" in line and not line.strip().startswith("#"):
             return line
     return ""
 
@@ -89,10 +93,13 @@ class TestTheSettingsAgree:
 
     def test_the_silence_probability_matches_prepare_lang(self, recipe):
         """
-        yesno passes `--sil_prob 0.0` to `prepare_lang.sh`, so stage 10
-        must too -- which it does by taking the default. mini_librispeech
-        passes nothing, so `prepare_lang.sh`'s own default of 0.5 applies
-        and stage 10 has to say so explicitly.
+        yesno passes `--sil-prob 0.0` to `prepare-lang`, so stage 10
+        must too -- which it does by taking the default.
+        mini_librispeech passes 0.5, so stage 10 has to say so
+        explicitly. Both are explicit in stage 1 now; while stage 1 was
+        `prepare_lang.sh`, mini-librispeech's 0.5 came from that
+        script's own default and so lived in Kaldi rather than in the
+        recipe.
         """
         text = run_sh(recipe)
         body = stage_ten(text)
@@ -101,7 +108,7 @@ class TestTheSettingsAgree:
         given = match.group(1) if match else "0.0"
         assert given == expected, (
             f"{recipe}: stage 10 uses sil_prob {given}, but its "
-            f"prepare_lang.sh call implies {expected}"
+            f"prepare-lang call implies {expected}"
         )
 
     def test_position_dependence_matches_prepare_lang(self, recipe):
@@ -110,43 +117,46 @@ class TestTheSettingsAgree:
         assert given == EXPECTED[recipe]["position_dependent"], (
             f"{recipe}: stage 10 "
             f"{'passes' if given else 'omits'} --position_dependent_phones, "
-            f"which disagrees with its prepare_lang.sh call"
+            f"which disagrees with its prepare-lang call"
         )
 
     def test_prepare_lang_still_says_what_we_think(self, recipe):
         """
-        The other half: this reads the recipe's actual `prepare_lang.sh`
+        The other half: this reads the recipe's actual `prepare-lang`
         line, so the table above is checked against the source of truth
         rather than against itself. If someone changes the preparation,
         this fails and the stage-10 flags have to follow.
         """
         call = prepare_lang_call(run_sh(recipe))
-        assert call, f"{recipe} has no prepare_lang.sh call"
+        assert call, f"{recipe} has no prepare-lang call"
 
-        explicit_zero = "--sil_prob 0.0" in call
-        expected_zero = EXPECTED[recipe]["sil_prob"] == "0.0"
-        assert explicit_zero == expected_zero, (
-            f"{recipe}: prepare_lang.sh "
-            f"{'sets' if explicit_zero else 'does not set'} --sil_prob 0.0"
+        sil = re.search(r"--sil-prob\s+(\S+)", call)
+        assert sil, f"{recipe}: stage 1 passes no --sil-prob"
+        assert sil.group(1) == EXPECTED[recipe]["sil_prob"], (
+            f"{recipe}: prepare-lang is given --sil-prob {sil.group(1)} "
+            f"where this table says {EXPECTED[recipe]['sil_prob']}"
         )
 
-        turned_off = "--position-dependent-phones false" in call
-        assert turned_off == (not EXPECTED[recipe]["position_dependent"]), (
-            f"{recipe}: prepare_lang.sh "
-            f"{'disables' if turned_off else 'leaves on'} "
-            f"position-dependent phones"
+        position = re.search(r"--position-dependent-phones\s+(\S+)", call)
+        assert position, f"{recipe}: stage 1 passes no --position-dependent-phones"
+        assert (position.group(1) == "true") == EXPECTED[recipe][
+            "position_dependent"
+        ], (
+            f"{recipe}: prepare-lang is given position-dependent-phones "
+            f"{position.group(1)} where this table says "
+            f"{EXPECTED[recipe]['position_dependent']}"
         )
 
     def test_the_lexicon_it_rebuilds_from_is_the_one_prepared(self, recipe):
         """
-        `prepare_lang.sh`'s first positional argument is the dictionary,
+        `prepare-lang`'s first positional argument is the dictionary,
         and stage 10 must rebuild from the same one -- yesno's is
         `data/local/dict` and mini_librispeech's is `data/local/dict_nosp`.
         """
         text = run_sh(recipe)
         call = prepare_lang_call(text)
         dicts = re.findall(r"(data/local/dict\w*)", call)
-        assert dicts, f"{recipe}: no dictionary in the prepare_lang.sh call"
+        assert dicts, f"{recipe}: no dictionary in the prepare-lang call"
         prepared = dicts[0]
 
         body = stage_ten(text)
