@@ -951,3 +951,171 @@ class TestTheProbeIsPackedOncePerGraph:
         assert LabelProbe(our_graph, epsilon=words["YES"]).weight(ids) != (
             LabelProbe(our_graph, epsilon=0).weight(ids)
         )
+
+
+@pytest.fixture(scope="module")
+def tlg_from_both_lexicon_shapes(tables):
+    """
+    yesno's `TLG`, composed twice: once from the flower, once from a tree.
+
+    Everything but the lexicon's shape is held identical -- the same
+    grammar, the same topology, the same symbol tables -- so a difference
+    between the two can only be the shape.
+    """
+    from BenNevis.decode.graph import build_decoding_graph, prepare_output_probe
+    from BenNevis.lm import build_fst_text, read_arpa
+    from BenNevis.lm.lexicon import build_disambig_fst_text, read_lexicon
+    from BenNevis.topos import build as topo_build
+    from BenNevis.topos import spec as topo_spec
+
+    words, phones = tables
+    first = min(value for key, value in phones.items() if key.startswith("#"))
+    grammar = load_openfst_text(build_fst_text(read_arpa(YESNO / "task.arpabo"), words))
+    loaded = topo_spec.load("ctc")
+    out_phones = {
+        key: value for key, value in phones.items() if not key.startswith("#")
+    }
+    phone_list = [key for key, _ in sorted(out_phones.items(), key=lambda kv: kv[1])]
+    tokens = {
+        token: index
+        for index, token in enumerate(
+            topo_build.build_tokens(
+                loaded, phone_list, with_eps=False, with_disambig=False
+            )
+        )
+    }
+    topology = load_openfst_text(
+        topo_build.build_openfst_int_text(
+            loaded, "k2", phone_list, isymbols=tokens, osymbols=out_phones
+        )
+    )
+
+    built = {}
+    for structure in ("flower", "tree"):
+        lexicon = load_openfst_text(
+            build_disambig_fst_text(
+                read_lexicon(YESNO / "lexicon.txt"),
+                words,
+                phones,
+                sil_prob=0.0,
+                structure=structure,
+            )
+        )
+        graph = build_decoding_graph(topology, lexicon, grammar, first)
+        built[structure] = (graph, prepare_output_probe(graph))
+    return built
+
+
+class TestTheLexiconShapeDoesNotChangeTheGraphsFunction:
+    """
+    The gate for composing the decoding graph from a prefix tree.
+
+    `BenNevis.decode.pipeline.build_graph` builds its lexicon as a tree
+    now, because the flower is the measured cause of the remaining gap
+    against `decode-faster`: profiling found the word-boundary state
+    carrying 208,941 arcs over 106 distinct input labels, and 366 such
+    states holding 52.5% of the whole graph. On mini-librispeech's
+    lexicon alone the tree takes 1,333,084 arcs to 469,947 and the worst
+    out-degree from 206,510 to **195**.
+
+    `tests/lm/test_lexicon_tree.py` already compares the two lexicons as
+    functions. This is the stronger statement: that the difference
+    survives **composition** -- through `compose_lg`, its epsilon
+    removal, the disambiguation-symbol stripping and the topology -- and
+    that what a decoder would read is still the same function.
+
+    yesno rather than mini-librispeech because the ARPA model is
+    committed here and downloaded there, which is the same reason the
+    Kaldi comparison above lives on yesno. yesno's four-word lexicon
+    gives the tree nothing to *share*, so this says nothing about the
+    saving -- it says the composition is unharmed, which is the part that
+    could silently be wrong.
+    """
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            ["YES"],
+            ["NO"],
+            ["YES", "NO"],
+            ["NO", "YES"],
+            ["YES", "YES", "NO"],
+            ["NO", "NO", "NO"],
+            ["YES", "YES", "YES", "YES"],
+        ],
+    )
+    def test_both_shapes_cost_the_same_to_recognise(
+        self, tlg_from_both_lexicon_shapes, tables, sentence
+    ):
+        """
+        Exactly equal, not within a tolerance. Two compositions of the
+        same lexicon differ in their arc *order* and not in their
+        arithmetic -- there is no quantisation between them, unlike the
+        comparison against Kaldi, which crosses `fstminimizeencoded`'s
+        1/1024 grid.
+        """
+        from BenNevis.decode.graph import weight_of_word_sequence
+
+        words, _phones = tables
+        ids = [words[word] for word in sentence]
+        flower = weight_of_word_sequence(tlg_from_both_lexicon_shapes["flower"][1], ids)
+        tree = weight_of_word_sequence(tlg_from_both_lexicon_shapes["tree"][1], ids)
+        assert flower is not None, f"the flower graph rejects {sentence}"
+        assert tree is not None, f"the tree graph rejects {sentence}"
+        assert tree == pytest.approx(
+            flower, abs=1e-6
+        ), f"{sentence}: tree {tree} against flower {flower}"
+
+    def test_a_sequence_outside_the_grammar_is_rejected_by_both(
+        self, tlg_from_both_lexicon_shapes, tables
+    ):
+        """
+        A rejection test proves nothing unless the thing it forbids was
+        reachable, which is the lesson the prefix check in
+        `weight_of_label_sequence` was written after. `<UNK>` is in the
+        lexicon and not in yesno's grammar, so both graphs must refuse
+        it -- and a graph that accepted everything would pass the test
+        above.
+        """
+        from BenNevis.decode.graph import weight_of_word_sequence
+
+        words, _phones = tables
+        ids = [words["<UNK>"]]
+        for structure, (_graph, probe) in tlg_from_both_lexicon_shapes.items():
+            assert weight_of_word_sequence(probe, ids) is None, structure
+
+    def test_yesno_is_the_degenerate_case_and_grows_slightly(
+        self, tlg_from_both_lexicon_shapes
+    ):
+        """
+        **On yesno the tree's graph is bigger, and that is expected.**
+        Four words over five phones share no prefix, so the tree saves
+        nothing -- and it pays for `add_self_loops`.
+
+        That is the mechanism worth knowing. `AddSelfLoops` loops every
+        final state and every state with a non-epsilon *output* label on
+        an outgoing arc. In the flower every word rides an arc leaving
+        the loop state, so **one** state qualifies and one `#0`
+        self-loop is added. In the tree the words ride the *final* arcs,
+        which leave the penultimate nodes, so one self-loop is added per
+        word-emitting state. Measured on mini-librispeech: 1 against
+        **154,371**.
+
+        So the saving is real and smaller than the lexicon alone
+        suggests -- 1,589,728 arcs against 851,622 with the self-loops
+        counted, 1.87x rather than 2.28x -- while the out-degree win is
+        untouched, because a self-loop adds one arc to a state that had
+        two or three, not to the state that had 206,510.
+
+        yesno, with nothing to share, is left with the cost and none of
+        the benefit: 33 arcs become 40. Asserted rather than tolerated,
+        because the number moving the *other* way on a real lexicon is
+        the whole point, and a test that merely allowed growth here
+        would also pass if the saving disappeared everywhere.
+        """
+        flower = tlg_from_both_lexicon_shapes["flower"][0]
+        tree = tlg_from_both_lexicon_shapes["tree"][0]
+        assert flower.num_arcs == 33
+        assert tree.num_arcs == 40
+        assert flower.shape[0] == 11
+        assert tree.shape[0] == 13

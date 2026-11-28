@@ -611,6 +611,7 @@ def build_disambig_fst_text(
     sil_phone: str = "SIL",
     position_dependent_phones: bool = False,
     disambig_symbol: str = "#0",
+    structure: str = "flower",
 ) -> str:
     """
     `L_disambig.fst` as OpenFST text, the whole chain in one call.
@@ -650,6 +651,14 @@ def build_disambig_fst_text(
         both sides -- the phone side from `wdisambig_phones.int` and the
         word side from `wdisambig_words.int`, which are this symbol's ids
         in the two tables.
+    structure: str
+        `"flower"` or `"tree"`; see `build_lexicon_arcs`. The
+        disambiguation symbols are appended to the *entries* before the
+        FST is built, so they work the same either way -- a shared prefix
+        does not change which pronunciations are ambiguous, and the
+        symbols are what makes the composition determinisable in both
+        shapes. `"flower"` stays the default because it reproduces
+        Kaldi's bytes and is the oracle the tree is gated against.
 
     Returns
     -------
@@ -671,6 +680,7 @@ def build_disambig_fst_text(
         sil_prob,
         sil_phone,
         sil_disambig,
+        structure=structure,
     )
     arcs = add_self_loops(
         arcs, [final], [(phones[disambig_symbol], words[disambig_symbol])]

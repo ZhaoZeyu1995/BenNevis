@@ -561,3 +561,81 @@ class TestItRefusesNonsense:
                 {"<eps>": 0, "AH": 1, "SIL": 2},
                 structure="trie",
             )
+
+
+class TestTheSelfLoopCost:
+    """
+    What `add_self_loops` costs the tree, which is not obvious.
+
+    `AddSelfLoops` in `fstext/pre-determinize-inl.h` loops every final
+    state **and every state with a non-epsilon output label on an
+    outgoing arc**, with weight One. In the flower every word rides an
+    arc leaving the loop state, so exactly one state qualifies and
+    `L_disambig` gains a single `#0` self-loop -- which is why
+    mini-librispeech's 206,510 entries add "exactly one arc,
+    `1 1 347 200004`", as CLAUDE.md records.
+
+    In the tree the words ride the *final* arcs, which leave the
+    penultimate nodes, so one self-loop is added **per word-emitting
+    state**. That is the part of the saving that the lexicon arc count
+    alone does not show, and it is worth a number rather than a
+    discovery during a five-hour run.
+    """
+
+    @staticmethod
+    def with_loops(corpus, structure):
+        from BenNevis.lm.lexicon import add_disambiguation
+
+        lexicon = read_lexicon(REFERENCE / corpus / "dict" / "lexicon.txt")
+        settings = SETTINGS[corpus]
+        if settings["position_dependent_phones"]:
+            lexicon = [(word, position_dependent(p)) for word, p in lexicon]
+        disambiguated, highest = add_disambiguation(lexicon)
+        sil_prob = settings["sil_prob"]
+        arcs, final = build_lexicon_arcs(
+            disambiguated,
+            table(corpus, "words.txt"),
+            table(corpus, "phones.txt"),
+            sil_prob,
+            silence_phone(corpus),
+            f"#{highest + 1}" if sil_prob else None,
+            structure=structure,
+        )
+        emitting = {arc[0] for arc in arcs if arc[3] != 0}
+        return len(arcs), len(emitting | {final})
+
+    def test_the_flower_needs_exactly_one(self):
+        """
+        Every word leaves the loop state, which is also the final state,
+        so one state qualifies -- the "exactly one arc" CLAUDE.md
+        records for mini-librispeech's 206,510 entries.
+        """
+        if "mini_librispeech" not in corpora():
+            pytest.skip("no mini-librispeech capture")
+        _arcs, loops = self.with_loops("mini_librispeech", "flower")
+        assert loops == 1
+
+    def test_the_tree_needs_one_per_word_emitting_state(self):
+        if "mini_librispeech" not in corpora():
+            pytest.skip("no mini-librispeech capture")
+        _arcs, loops = self.with_loops("mini_librispeech", "tree")
+        assert loops == 154_371
+
+    def test_the_saving_survives_them_and_is_smaller_than_it_looks(self):
+        """
+        The honest figure. 2.28x on the lexicon's own arcs becomes 1.87x
+        once the self-loops are counted -- and the out-degree win is
+        untouched, because a self-loop adds one arc to a state that had
+        two or three rather than to the state that had 206,510.
+        """
+        if "mini_librispeech" not in corpora():
+            pytest.skip("no mini-librispeech capture")
+        flower_arcs, flower_loops = self.with_loops("mini_librispeech", "flower")
+        tree_arcs, tree_loops = self.with_loops("mini_librispeech", "tree")
+
+        bare = flower_arcs / tree_arcs
+        with_loops = (flower_arcs + flower_loops) / (tree_arcs + tree_loops)
+        assert bare == pytest.approx(2.28, abs=0.02), bare
+        assert with_loops == pytest.approx(1.87, abs=0.02), with_loops
+        assert with_loops < bare, "the self-loops must cost something"
+        assert with_loops > 1.5, "but the saving must survive them"
