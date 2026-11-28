@@ -1974,6 +1974,27 @@ cannot be asserted in tier 1b and the failure modes can.
   checkout. `local/prepare_dict.sh` for yesno is already pure `cp` and
   `grep`.
 
+- **The stages are tested as a chain now, because testing them one at a
+  time let a regression through.** `tests/recipes/test_stages_compose.py`
+  runs the real entry points over a synthetic three-utterance corpus --
+  `prepare-lang`, `prepare_topo.py`, `make_fbank.py`,
+  `compute_cmvn_stats.py`, `fix_data_dir.py`, `apply_cmvn.py` -- and then
+  **constructs a `Dataset` from the result** and takes a sample from it.
+  Two seconds, tier 2, every push.
+  It exists because `make_fbank.py` not writing `utt2dur` left master
+  unable to train for two commits with the whole suite green: four test
+  files covered stage 2's archive, frame counts, normalisation and
+  compression, and not one of them built the thing that reads them.
+  **Mutation-verified against that exact regression**: removing the
+  `utt2dur` write fails two tests and errors six.
+  It deliberately asserts no *value*. The WERs, the feature arithmetic
+  and the table bytes are gated elsewhere and far more precisely; what
+  this adds is that the files a stage writes are the files the next stage
+  and the trainer look for, under the names they look for them under. The
+  general lesson is the one worth keeping: **a green suite of
+  stage-level tests says nothing about whether the pipeline runs**, and
+  the only thing that does is running it.
+
 - **Stage 2 is Python now, and the whole of it went in one change.**
   `steps/make_fbank.sh`, `steps/compute_cmvn_stats.sh`,
   `utils/fix_data_dir.sh` and the `apply-cmvn` inside
