@@ -280,3 +280,86 @@ class TestTheStepKeepsItsEnvironment:
         """
         run = _step(STEP)["run"]
         assert "path.sh" not in run
+
+
+class TestItSaysWhyWhenThereIsNothingToCompare:
+    """
+    The gate is `always()` on purpose: the graphs are built in stage 4, so
+    a run that died in **training** still has them and the comparison is
+    worth making. But a run that died *before* stage 4 has none, and then
+    reading `words.txt` raised a bare `FileNotFoundError` traceback on top
+    of the real failure.
+
+    Run 46164030031 is the example. Stage 2 exited 1 -- a genuine bug --
+    and this step added eight lines of `pathlib` stack to the diagnosis,
+    so the job showed two failures of which only one meant anything.
+
+    The status is unchanged: a gate that could not compare has not
+    passed. What changed is that it names the missing inputs and says
+    which stage makes them.
+    """
+
+    @staticmethod
+    def run_gate(recipe, tmp_path):
+        import subprocess
+        import sys
+
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tests" / "reference" / "compare_graphs.py"),
+                "--recipe",
+                str(recipe),
+                "--graph-dir",
+                "data/lang_test_tgsmall_ctc",
+                "--lexicon",
+                "data/local/dict_nosp/lexicon.txt",
+                "--arpa",
+                "data/local/lm/lm_tgsmall.arpa.gz",
+                "--topo",
+                "ctc",
+                "--sil-prob",
+                "0.5",
+                "--position-dependent-phones",
+                # Any executable: the fstprint probe runs before the
+                # input check and would otherwise stop this first.
+                "--fstprint",
+                "/bin/echo",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    @pytest.mark.skipif(
+        not Path("/bin/echo").exists(), reason="needs a POSIX executable to stand in"
+    )
+    def test_it_names_the_missing_inputs(self, tmp_path):
+        done = self.run_gate(tmp_path / "recipe", tmp_path)
+        assert done.returncode == 1, done.stdout
+        assert "nothing to compare" in done.stdout
+        for expected in ("words.txt", "phones.txt", "lexicon.txt", "arpa"):
+            assert expected in done.stdout, expected
+
+    @pytest.mark.skipif(
+        not Path("/bin/echo").exists(), reason="needs a POSIX executable to stand in"
+    )
+    def test_it_points_at_the_stage_that_makes_them(self, tmp_path):
+        """
+        So a reader meeting two failures knows which one to read first.
+        """
+        done = self.run_gate(tmp_path / "recipe", tmp_path)
+        assert "stage 4" in done.stdout
+        assert "downstream" in done.stdout
+
+    @pytest.mark.skipif(
+        not Path("/bin/echo").exists(), reason="needs a POSIX executable to stand in"
+    )
+    def test_it_does_not_raise_a_traceback(self, tmp_path):
+        """
+        The specific regression: a `FileNotFoundError` stack is not a
+        diagnosis, and this step is read at exactly the moment when the
+        job already has one real failure in it.
+        """
+        done = self.run_gate(tmp_path / "recipe", tmp_path)
+        assert "Traceback" not in done.stdout + done.stderr
+        assert "FileNotFoundError" not in done.stdout + done.stderr
