@@ -1,5 +1,135 @@
 {
   "arrays": {
+    "audio/test_yesno/1_0_0_0_0_0_0_0": {
+      "dtype": "int16",
+      "key": "1_0_0_0_0_0_0_0",
+      "path": "audio/test_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        53600
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/test_yesno/1_0_0_0_0_0_0_1": {
+      "dtype": "int16",
+      "key": "1_0_0_0_0_0_0_1",
+      "path": "audio/test_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        53920
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/test_yesno/1_0_0_0_0_0_1_1": {
+      "dtype": "int16",
+      "key": "1_0_0_0_0_0_1_1",
+      "path": "audio/test_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        50160
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/test_yesno/1_0_0_0_1_0_0_1": {
+      "dtype": "int16",
+      "key": "1_0_0_0_1_0_0_1",
+      "path": "audio/test_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        49840
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/test_yesno/1_0_0_1_0_1_1_1": {
+      "dtype": "int16",
+      "key": "1_0_0_1_0_1_1_1",
+      "path": "audio/test_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        49200
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/train_yesno/0_0_0_0_1_1_1_1": {
+      "dtype": "int16",
+      "key": "0_0_0_0_1_1_1_1",
+      "path": "audio/train_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        50800
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/train_yesno/0_0_0_1_0_0_0_1": {
+      "dtype": "int16",
+      "key": "0_0_0_1_0_0_0_1",
+      "path": "audio/train_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        54080
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/train_yesno/0_0_0_1_0_1_1_0": {
+      "dtype": "int16",
+      "key": "0_0_0_1_0_1_1_0",
+      "path": "audio/train_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        48880
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/train_yesno/0_0_1_0_0_0_1_0": {
+      "dtype": "int16",
+      "key": "0_0_1_0_0_0_1_0",
+      "path": "audio/train_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        48560
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
+    "audio/train_yesno/0_0_1_0_0_1_1_0": {
+      "dtype": "int16",
+      "key": "0_0_1_0_0_1_1_0",
+      "path": "audio/train_yesno.npz",
+      "sample_rate": 8000,
+      "shape": [
+        48160
+      ],
+      "tolerance": {
+        "atol": 0.0,
+        "rtol": 0.0
+      }
+    },
     "cmvn/test_yesno/global": {
       "dtype": "float64",
       "key": "global",
@@ -359,7 +489,7 @@
     "tmp/lex_ndisambig": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
     "tmp/lexiconp.txt": "19e1e17ebb937b64a102483806fbc29288ffd589773ed160b3631e991b09f783",
     "tmp/lexiconp_disambig.txt": "0e721e45cbf4936ad2c92f5380aee42174806f2fc9502616e16dbff652503de6",
-    "transcriptions/2state-1/hyp.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d",
+    "transcriptions/2state-1/hyp.wrd.trn": "3e48234d8dad0e13482ae87653b7d4896ed82311791d2503c2aaa03562ede77e",
     "transcriptions/2state-1/ref.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d",
     "transcriptions/2state/hyp.wrd.trn": "cbd8e8f025d2c325d9871d3acf58d0fa99b08cfa81d7e104c5e9249c04c6b479",
     "transcriptions/2state/ref.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d",
@@ -373,7 +503,7 @@
     "transcriptions/ctc/ref.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d",
     "transcriptions/mmictc-1/hyp.wrd.trn": "a7ae36dfcf9ccda3fa541c5a895cb1bfe886538fec5f392b5f2afd5f30b67867",
     "transcriptions/mmictc-1/ref.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d",
-    "transcriptions/mmictc/hyp.wrd.trn": "a7ae36dfcf9ccda3fa541c5a895cb1bfe886538fec5f392b5f2afd5f30b67867",
+    "transcriptions/mmictc/hyp.wrd.trn": "03df11079a6fcba8b0f4d048dad3684bddfc0e1539b86858527d9b57a1020336",
     "transcriptions/mmictc/ref.wrd.trn": "2cc049b06f1c8cf4952cd1893837025ac7f1256d54ade4186d681c266ad8460d"
   },
   "functional": {
@@ -578,7 +708,7 @@
       "YES YES NO YES": 11.5136719
     }
   },
-  "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:07f0565d6795d3cf09cccc0b263df3d7e9cff83aecc68aa829ed02aaa1b92731",
+  "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:a96f6c57d61b8a775feff6353be05ebbc5d279fb296b5a223981ef2ec6fb7247",
   "large": {},
   "notes": [
     "Captured from a completed run of the recipe named above, inside the image named above.",

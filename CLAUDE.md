@@ -1688,10 +1688,43 @@ cannot be asserted in tier 1b and the failure modes can.
   Together with `--compile-fsts` reading as a binary called `fsts`, that
   is twice in one day: **a filter over names wants the whole name, not a
   substring of it.**
-  **The waveforms are not in these captures**, because the runs were
-  dispatched from a branch that did not yet have the change recording
-  them. So `tests/utils/test_features.py`'s filterbank gate still skips,
-  and activates on the next capture rather than this one.
+  **The waveforms are in yesno's capture now, and the gate is live.**
+  Run 46139958942 -- the scheduled nightly on `ff0088f`, the last run
+  before stage 2 became Python, so a **Kaldi** capture -- recorded
+  `audio/`, and committing it activated
+  `tests/utils/test_features.py`'s filterbank gate. It reports **505,600
+  entries compared with 121, or 0.024%, not exactly the nearest grid
+  point**: the same rate as the 12-of-53,440 above, on ten times the
+  data, and the measurement feature extraction had been waiting several
+  captures for. Kaldi's filterbank and `torchaudio`'s agree to within
+  the reference's own 8-bit quantisation on real audio.
+  Two things came out of re-capturing, and both are worth keeping.
+  **A re-capture differs on exactly two of 85 exact artefacts, and both
+  are decoded hypotheses** -- `transcriptions/2state-1/hyp.wrd.trn` and
+  `transcriptions/mmictc/hyp.wrd.trn`. All 83 *pipeline* artefacts, the
+  lang tables and dict and every FST and graph, are byte-identical
+  across two runs in different image builds. So the irreproducible part
+  is the model, not the preparation: training is not bit-reproducible
+  across runs, which is already recorded, and those two entries are a
+  record for a human to diff rather than a gate -- nothing compares
+  them, and `test_the_decoded_output_is_captured` only asserts that one
+  exists.
+  **And the gate had never run in CI, which is the more useful finding.**
+  Everything below `importorskip("torch")` in that file needs torch, so
+  tier 1 -- pytest and pyyaml only -- skipped it, while tier 1b selects
+  `-m torch` and **deselected the whole file** because nothing in it
+  carried the marker. `TestFbank` and `TestAgainstTheCapture` therefore
+  ran only on a machine that happened to have torch *and* used the tier-1
+  selection: a developer's laptop. One file of eighteen that
+  importorskips a heavy dependency was unmarked; the other seventeen were
+  fine.
+  **A test that never runs is harder to notice than one that cannot
+  fail**, because the suite does not even report a skip -- `-m torch`
+  deselects it silently and the deselected count is a number nobody
+  reads. `tests/ci/test_tier_markers.py` now fails when a module reaches
+  for torch, k2, numpy, kaldiio or numba and carries no tier marker, and
+  it is paired with a test that the detector finds the fifteen-odd
+  modules that do, so a regex matching nothing cannot make it vacuous.
   **The next capture did not provide them either, and the reason is a
   bug that cost a whole run.** `wav.scp` holds paths relative to the
   *recipe* directory — mini-librispeech's entries are
