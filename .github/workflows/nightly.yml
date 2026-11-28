@@ -377,6 +377,38 @@ jobs:
       # alone would have produced a gate that still could not fail,
       # which is the same shape as the `G.fst` gate that skipped
       # unconditionally.
+      # Stage 1 builds its language directory with
+      # `python3 -m BenNevis.lm prepare-lang` where it used to run
+      # utils/prepare_lang.sh, and the committed reference cannot gate that
+      # any more for the same reason as the features: the capture's lang/
+      # and dict/ become our own output the next time a capture is taken,
+      # and tests/lm/test_prepare_lang.py would compare the code with
+      # itself. `produced_by` records which side wrote each group and those
+      # tests skip accordingly; this is the live comparison.
+      #
+      # It runs Kaldi's utils/prepare_lang.sh into a scratch directory with
+      # the settings read out of the recipe's own stage-1 call -- not out of
+      # this workflow, which would be a copy that drifts -- and compares the
+      # tables as bytes and the two lexicon FSTs against fstprint. Both were
+      # byte-exact first time on both corpora, so the tolerance is equality.
+      #
+      # `always()`, because stage 1 runs before anything that can fail for
+      # an interesting reason, and `set -eo pipefail` before the `| tee` for
+      # the reason the graph gate had to learn twice.
+      - name: Compare the Python language directory against Kaldi's
+        if: always()
+        run: |
+          set -eo pipefail
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e HOME=/tmp \
+            -e PYTHONPATH=/workspace \
+            "$IMAGE" \
+            python3 tests/reference/compare_lang.py \
+              --recipe "${RECIPE}" \
+            2>&1 | tee artefacts/lang-comparison.log
+
       # Stage 2 is Python now -- run/make_fbank.py, run/compute_cmvn_stats.py,
       # run/fix_data_dir.py and run/apply_cmvn.py -- so the committed
       # reference can no longer gate it: the capture's raw/, features/ and

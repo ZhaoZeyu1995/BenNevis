@@ -53,12 +53,12 @@ lang=data/lang_nosp
 test_lang=data/lang_nosp_test_tgsmall
 
 #   0  download the corpus and the language model
-#   1  data, dict, lang and LM          5  train
-#   2  features and CMVN                6  predict
-#   3  topologies                       7  decode
-#   4  decoding graphs                  8  align against the reference
-#                                       9  align against the decoding output
-#                                      10  decode again with k2, for comparison
+#   1  data, dict and lang              5  train
+#   2  features and CMVN                 6  predict
+#   3  topologies                        7  decode
+#   4  the LM and the decoding graphs    8  align against the reference
+#                                        9  align against the decoding output
+#                                       10  decode again with k2, for comparison
 stage=0
 stop_stage=100
 
@@ -79,7 +79,7 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
 fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
-    echo "$0: stage 1: data, dict, lang and LM"
+    echo "$0: stage 1: data, dict and lang"
     for part in dev-clean-2 train-clean-5; do
         local/data_prep.sh ${corpus}/LibriSpeech/${part} \
             data/$(echo ${part} | sed s/-/_/g) || exit 1;
@@ -88,9 +88,14 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     # only matter for words outside the supplied lexicon.
     local/prepare_dict.sh --stage 3 --nj ${nj} --cmd run.pl \
         data/local/lm data/local/lm data/local/dict_nosp || exit 1;
-    utils/prepare_lang.sh data/local/dict_nosp \
-        "<UNK>" data/local/lang_tmp_nosp ${lang} || exit 1;
-    local/format_lms.sh --src-dir ${lang} data/local/lm || exit 1;
+    # prepare_lang.sh in Python. The settings are prepare_lang.sh's own
+    # defaults and are passed explicitly rather than left implicit,
+    # because stage 3 and stage 10 both have to state them and
+    # tests/recipes/test_lexicon_settings.py checks all three agree -- a
+    # mismatch builds a lexicon that is wrong rather than broken.
+    python3 -m BenNevis.lm prepare-lang \
+        --position-dependent-phones true --sil-prob 0.5 \
+        data/local/dict_nosp "<UNK>" ${lang} || exit 1;
 fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
@@ -117,7 +122,12 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 fi
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-    echo "$0: stage 4: decoding graphs"
+    echo "$0: stage 4: the language model and the decoding graphs"
+    # local/format_lms.sh used to run in stage 1, which made stage 1 need
+    # Kaldi and OpenFST for an artefact only decoding reads. It belongs
+    # here, beside the graphs it feeds, so that everything training needs
+    # is Kaldi-free.
+    local/format_lms.sh --src-dir ${lang} data/local/lm || exit 1;
     for topo in ${topos}; do
         run/prepare_graph.sh --topo ${topo} ${test_lang} \
             data/local/lang_tgsmall_${topo}_tmp \

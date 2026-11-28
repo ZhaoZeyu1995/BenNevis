@@ -41,9 +41,23 @@ src=$1
 tmp=$2
 des=$3
 
+# `echo "..." || exit 1` was what this said, which never exits: the `||`
+# binds to echo, echo always succeeds, and the script carried on to fail
+# inside fsttablecompose with something unrelated. Same family as the
+# nightly's `grep | awk` under pipefail and the G.fst gate that skipped
+# unconditionally -- a shell detail deciding whether a check means
+# anything. It matters more now that L_disambig.fst is written by
+# `BenNevis.lm prepare-lang`, which skips it when OpenFST is absent.
 for file in L_disambig.fst G.fst; do
     if [ ! -f $src/$file ]; then
-        echo "$0: $src/$file is missing!" || exit 1;
+        echo "$0: $src/$file is missing." >&2
+        if [ "$file" = "L_disambig.fst" ]; then
+            echo "$0: stage 1 writes it with 'python3 -m BenNevis.lm prepare-lang'," >&2
+            echo "$0: which skips it when OpenFST is not on PATH. This stage is" >&2
+            echo "$0: Kaldi's decoding lane and needs OpenFST; pass" >&2
+            echo "$0: --compile-fsts true there to make that a loud failure." >&2
+        fi
+        exit 1
     fi
 done
 

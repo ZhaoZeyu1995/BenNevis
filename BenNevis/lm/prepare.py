@@ -281,6 +281,61 @@ def _table(symbols: Sequence[str]) -> List[str]:
     return [f"{symbol} {index}" for index, symbol in enumerate(symbols)]
 
 
+def _compile_lexicon_fsts(out_dir: Path, compile_fsts: str) -> None:
+    """
+    Compile `k2/L.fst.txt` and `k2/L_disambig.fst.txt` to binary FSTs.
+
+    Arguments
+    ---------
+    out_dir: Path
+        The language directory, already holding the two text FSTs.
+    compile_fsts: str
+        `auto`, `true` or `false`; see `prepare_lang`.
+
+    Raises
+    ------
+    ValueError
+        On an unknown choice, or on `true` with no OpenFST -- a caller
+        that asked for the binaries and silently got none would fail four
+        stages later, inside `fsttablecompose`.
+
+    Notes
+    -----
+    The text carries **numeric** labels and is byte-identical to
+    `fstprint`'s output -- verified against the capture for both corpora
+    -- so it compiles without symbol tables and gives the same binary as
+    Kaldi's symbolic text compiled with them. `L_disambig.fst.txt`
+    already has `fstaddselfloops`' arc folded in, which
+    `build_disambig_fst_text` does, so there is no separate step for it.
+    """
+    if compile_fsts not in ("auto", "true", "false"):
+        raise ValueError(
+            f"compile_fsts must be auto, true or false, got {compile_fsts!r}"
+        )
+    if compile_fsts == "false":
+        return
+
+    from BenNevis.utils.openfst import available, compile_fst
+
+    if not available():
+        if compile_fsts == "true":
+            raise ValueError(
+                "compile_fsts is true but OpenFST is not on PATH, so L.fst "
+                "and L_disambig.fst cannot be written"
+            )
+        logging.info(
+            "OpenFST is not on PATH, so L.fst and L_disambig.fst will not be "
+            "written. Nothing in BenNevis's lane reads them; Kaldi's "
+            "prepare_graph.sh does, and fails saying so."
+        )
+        return
+
+    for name in ("L", "L_disambig"):
+        text = (out_dir / "k2" / f"{name}.fst.txt").read_text(encoding="utf-8")
+        compile_fst(text, out_dir / f"{name}.fst")
+    logging.info("compiled %s and %s", out_dir / "L.fst", out_dir / "L_disambig.fst")
+
+
 def prepare_lang(
     dict_dir: Path,
     oov_word: str,
@@ -288,6 +343,7 @@ def prepare_lang(
     position_dependent_phones: bool = True,
     sil_prob: float = 0.5,
     write_fsts: bool = True,
+    compile_fsts: str = "auto",
 ) -> None:
     """
     Write a language directory from a dictionary, without Kaldi.
@@ -325,6 +381,17 @@ def prepare_lang(
         what the tier 1 gate on the tables wants, since
         `tests/reference/test_corpora.py` already gates both FSTs by
         digest and tier 1 has to stay instant.
+    compile_fsts: str
+        Whether to also write the **binary** `L.fst` and
+        `L_disambig.fst`, which is what `prepare_lang.sh` did and what
+        Kaldi's `prepare_graph.sh` composes against. `auto` compiles them
+        when OpenFST is on PATH and says what it skipped when it is not,
+        `true` requires it, `false` never does -- the same three choices
+        as `run/prepare_topo.py --compile-fsts`, and for the same reason:
+        **nothing in BenNevis's own lane reads a binary FST.** Training
+        reads `k2/L.fst.txt`, so a tree with no OpenFST gets a language
+        directory it can train from; the decoding lane is Kaldi's and
+        fails pointing here.
 
     Raises
     ------
@@ -486,6 +553,7 @@ def prepare_lang(
         ),
         encoding="utf-8",
     )
+    _compile_lexicon_fsts(out_dir, compile_fsts)
     logging.info(
         "wrote %s: %d phones, %d words, %d align_lexicon entries",
         out_dir,

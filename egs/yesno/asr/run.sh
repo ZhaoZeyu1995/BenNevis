@@ -38,10 +38,10 @@ hydra_opts=""
 # on a real corpus.
 #
 #   0  download the corpus          5  train
-#   1  data, dict, lang and LM      6  predict
+#   1  data, dict and lang          6  predict
 #   2  features and CMVN            7  decode
 #   3  topologies                   8  align against the reference
-#   4  decoding graphs              9  align against the decoding output
+#   4  the LM and the graphs        9  align against the decoding output
 #                                  10  decode again with k2, for comparison
 stage=0
 stop_stage=100
@@ -64,13 +64,17 @@ if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
 fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
-    echo "$0: stage 1: data, dict, lang and LM"
+    echo "$0: stage 1: data, dict and lang"
     local/prepare_data.sh waves_yesno || { echo "$0: prepare_data.sh failed" >&2; exit 1; }
     local/prepare_dict.sh || { echo "$0: prepare_dict.sh failed" >&2; exit 1; }
-    utils/prepare_lang.sh --position-dependent-phones false --sil_prob 0.0 \
-        data/local/dict "<UNK>" data/local/lang data/lang \
-        || { echo "$0: prepare_lang.sh failed" >&2; exit 1; }
-    local/prepare_lm.sh || { echo "$0: prepare_lm.sh failed" >&2; exit 1; }
+    # prepare_lang.sh in Python. The settings must match stage 3's and
+    # stage 10's -- tests/recipes/test_lexicon_settings.py checks all
+    # three against each other, because a mismatch builds a lexicon that
+    # is wrong rather than broken.
+    python3 -m BenNevis.lm prepare-lang \
+        --position-dependent-phones false --sil-prob 0.0 \
+        data/local/dict "<UNK>" data/lang \
+        || { echo "$0: prepare-lang failed" >&2; exit 1; }
 fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
@@ -97,7 +101,12 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 fi
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-    echo "$0: stage 4: decoding graphs"
+    echo "$0: stage 4: the language model and the decoding graphs"
+    # local/prepare_lm.sh used to run in stage 1, which made stage 1 need
+    # OpenFST -- arpa2fst, fstcompile, fstcompose, fstinfo -- for an
+    # artefact only decoding reads. It belongs here, beside the graphs it
+    # feeds, so that everything training needs is Kaldi-free.
+    local/prepare_lm.sh || { echo "$0: prepare_lm.sh failed" >&2; exit 1; }
     for topo in ${topos}; do
         run/prepare_graph.sh --topo $topo data/lang_test_tg data/local/lang_tg_${topo}_tmp data/lang_test_tg_${topo} || exit 1;
     done
