@@ -38,6 +38,139 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import List, Sequence, Tuple
+
+
+def read_scp(path) -> List[Tuple[str, str]]:
+    """
+    An scp as `(uttid, location)` pairs, in the file's own order.
+
+    Arguments
+    ---------
+    path: Path
+        The scp to read.
+
+    Returns
+    -------
+    List[Tuple[str, str]]
+        One pair per usable line. A line that is not two fields is
+        skipped, which is what `kaldiio` does with it too.
+    """
+    entries = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            fields = line.split(None, 1)
+            if len(fields) == 2:
+                entries.append((fields[0], fields[1].strip()))
+    return entries
+
+
+def split_entries(
+    entries: Sequence[Tuple[str, str]], count: int
+) -> List[List[Tuple[str, str]]]:
+    """
+    Divide the scp's entries between `count` shards, round-robin.
+
+    **Round-robin rather than contiguous, because `output.scp` is sorted
+    by duration.** A block-wise split gives the last shard every one of
+    the longest utterances: on run 46100161743's 1,089 utterances the
+    eight shards finished across a five-minute spread, 08:16:59 to
+    08:22:03, with seven of them idle at the end. Interleaving makes each
+    shard a near-uniform sample of the length distribution.
+
+    The previous version justified contiguous blocks by saying the recipe
+    merges the result against `ref.wrd.trn` by position. **That was
+    wrong**: `read_trn` returns a mapping from utterance id and `score`
+    looks every reference utterance up by id, so the order affects
+    nothing that is scored. What it does affect is the bytes of
+    `hyp.wrd.trn`, which `in_scp_order` restores explicitly -- making
+    "byte-identical for every `nj`" true by construction rather than by
+    the accident of splitting contiguously.
+
+    Arguments
+    ---------
+    entries: Sequence[Tuple[str, str]]
+        From `read_scp`.
+    count: int
+        How many shards, clamped to between one and the entry count: a
+        shard yielding nothing would fork a process to do nothing.
+
+    Returns
+    -------
+    List[List[Tuple[str, str]]]
+        The shards. Their sizes differ by at most one.
+    """
+    count = max(1, min(count, len(entries))) if entries else 1
+    return [list(entries[start::count]) for start in range(count)]
+
+
+def shard_readers(entries: Sequence[Tuple[str, str]], count: int):
+    """
+    One callable per shard, each reading its own features.
+
+    The parent only ever holds the scp's lines: mini-librispeech's 1,089
+    utterances are 1.6GB of log probabilities, which is not something to
+    materialise in order to hand to a child.
+
+    Arguments
+    ---------
+    entries: Sequence[Tuple[str, str]]
+        From `read_scp`.
+    count: int
+        How many shards.
+
+    Returns
+    -------
+    list
+        Callables, each yielding `(uttid, tensor)` pairs.
+    """
+    import kaldiio
+    import torch
+
+    def reader(block):
+        def read():
+            for uttid, location in block:
+                # Copied because kaldiio hands back a read-only view and
+                # torch warns once per process about non-writable tensors.
+                yield uttid, torch.from_numpy(kaldiio.load_mat(location).copy())
+
+        return read
+
+    return [reader(block) for block in split_entries(entries, count)]
+
+
+def in_scp_order(hypotheses, entries: Sequence[Tuple[str, str]]) -> list:
+    """
+    Put decoded hypotheses back into the scp's order.
+
+    The WER does not depend on this -- `score` looks every utterance up
+    by id -- but the bytes of `hyp.wrd.trn` do, and keeping them
+    independent of `--nj` is what makes that flag safe to change.
+
+    Arguments
+    ---------
+    hypotheses: Iterable[Tuple[str, Sequence[str]]]
+        As the shards returned them.
+    entries: Sequence[Tuple[str, str]]
+        From `read_scp`.
+
+    Returns
+    -------
+    list
+        Sorted by the scp's position. An utterance the decoder returned
+        that is **not** in the scp is appended rather than dropped --
+        losing one silently is the failure this project keeps meeting --
+        and several such keep the order they arrived in.
+    """
+    order = {uttid: position for position, (uttid, _) in enumerate(entries)}
+    missing = len(order)
+    return [
+        hypothesis
+        for _arrival, hypothesis in sorted(
+            enumerate(hypotheses),
+            key=lambda pair: (order.get(pair[1][0], missing), pair[0]),
+        )
+    ]
 
 
 def main(argv=None) -> int:
@@ -161,37 +294,12 @@ def main(argv=None) -> int:
             # torch warns once per process about non-writable tensors.
             yield uttid, torch.from_numpy(array.copy())
 
-    def shards(count):
-        """
-        `count` callables, each yielding one contiguous block of the scp.
-
-        Contiguous rather than round-robin, because the blocks are
-        concatenated in order afterwards and the recipe merges the result
-        against `ref.wrd.trn` by position -- the same reason
-        `split_scp.pl` splits the way it does.
-
-        Each callable reads its own features, in its own process. The
-        parent only ever holds the scp's lines: mini-librispeech's 1,089
-        utterances are 1.6GB of log probabilities, which is not something
-        to materialise in order to hand it to a child.
-        """
-        entries = []
-        for line in scp.read_text(encoding="utf-8").splitlines():
-            fields = line.split(None, 1)
-            if len(fields) == 2:
-                entries.append((fields[0], fields[1]))
-        count = max(1, min(count, len(entries)))
-        size = -(-len(entries) // count)
-        blocks = [entries[i : i + size] for i in range(0, len(entries), size)]
-
-        def reader(block):
-            def read():
-                for uttid, location in block:
-                    yield uttid, torch.from_numpy(kaldiio.load_mat(location).copy())
-
-            return read
-
-        return [reader(block) for block in blocks]
+    # Read once: both the shard split and the output order are derived
+    # from it, and they must agree.
+    entries = read_scp(scp)
+    if not entries:
+        logging.error("%s has no usable entries", scp)
+        return 1
 
     if args.search == "viterbi":
         import gc
@@ -219,7 +327,7 @@ def main(argv=None) -> int:
         trim_malloc()
         hypotheses = decode_shards(
             search_graph,
-            shards(args.nj),
+            shard_readers(entries, args.nj),
             idx2word,
             acoustic_scale=args.acoustic_scale,
             beam=args.beam,
@@ -243,6 +351,15 @@ def main(argv=None) -> int:
     logging.info("decoded %d utterances", len(hypotheses))
 
     output = decode_dir / f"aw_{args.acoustic_scale}"
+    # In the scp's order, whatever order the shards returned them in. The
+    # WER does not depend on this -- `score` looks every utterance up by
+    # id -- but the file's bytes do, and keeping them independent of
+    # `--nj` is what makes the flag safe to change. Any utterance the
+    # decoder returned that is not in the scp is appended rather than
+    # dropped, because losing one silently is the failure this project
+    # keeps meeting.
+    order = {uttid: position for position, (uttid, _) in enumerate(entries)}
+    hypotheses = sorted(hypotheses, key=lambda pair: order.get(pair[0], len(order)))
     write_trn(hypotheses, utt2spk, output / "hyp.wrd.trn")
 
     reference = predict_dir / "ref.wrd.trn"
