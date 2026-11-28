@@ -125,11 +125,17 @@ fi
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "$0: stage 4: the language model and the decoding graphs"
-    # local/format_lms.sh used to run in stage 1, which made stage 1 need
+    # The LM formatting used to run in stage 1, which made stage 1 need
     # Kaldi and OpenFST for an artefact only decoding reads. It belongs
     # here, beside the graphs it feeds, so that everything training needs
     # is Kaldi-free.
-    local/format_lms.sh --src-dir ${lang} data/local/lm || exit 1;
+    #
+    # run/format_lm.sh, not local/format_lms.sh: Kaldi's ends in
+    # utils/validate_lang.pl, which validates a GMM language directory
+    # and requires nine files BenNevis does not write because nothing but
+    # a decision-tree build and an HMM topology reads them. See that
+    # script's header.
+    run/format_lm.sh --src-dir ${lang} --suffix tgsmall data/local/lm || exit 1;
     for topo in ${topos}; do
         run/prepare_graph.sh --topo ${topo} ${test_lang} \
             data/local/lang_tgsmall_${topo}_tmp \

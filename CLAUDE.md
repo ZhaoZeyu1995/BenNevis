@@ -2028,6 +2028,48 @@ cannot be asserted in tier 1b and the failure modes can.
   checkout. `local/prepare_dict.sh` for yesno is already pure `cp` and
   `grep`.
 
+- **And then stage 4 failed for the same reason one stage along, which
+  makes it a pattern rather than an incident.** With `spk2gender` fixed,
+  run 46165159785 reached stage 4 and died in `local/format_lms.sh`,
+  whose last step is `utils/validate_lang.pl`. That validates a **GMM**
+  language directory and printed nine `fail to open` lines:
+  `phones/context_indep.txt`, four `.csl` lists, `phones/roots.txt`,
+  `phones/sets.txt`, `phones/extra_questions.{txt,int}` and `topo` --
+  every one of which only a decision-tree build or an HMM topology
+  reads. `prepare-lang` deliberately does not write them, and that
+  reasoning was right about BenNevis and wrong about the **recipe**.
+  So the rule from `spk2gender` generalises, and it is worth stating
+  once properly: **"nothing in BenNevis reads it" is not "nothing in the
+  recipe reads it"**, and the recipe that runs nightly is the one least
+  able to tell the difference. yesno's `local/prepare_lm.sh` runs
+  `arpa2fst` and some `fstinfo` diagnostics and never validates, so
+  yesno was green through both of these. Two dispatches went on them.
+  **The fix is `run/format_lm.sh`, ours**, doing what Kaldi's script does
+  -- copy the language directory, `arpa2fst` with `--disambig-symbol=#0`
+  and `--read-symbol-table`, `fstarcsort --sort_type=ilabel` -- and not
+  validating. Its header lists what the validator checked and where each
+  of those checks actually lives: the lexicon FSTs' olabel sorting in
+  `BenNevis.utils.openfst`, the symbol tables byte-exact in
+  `tests/lm/test_prepare_lang.py`, `G.fst`'s *function* in
+  `compare_graphs.py`, and the graphs' inputs in `prepare_graph.sh`.
+  **Dropping a validator is only safe if its useful checks live
+  somewhere, and the header has to say where** -- otherwise the next
+  reader cannot tell a considered omission from an oversight. It also
+  builds `tgsmall` alone where Kaldi's built `tgmed` too, which was a
+  graph nothing read.
+  **A test passed because of a comment, and that is the third
+  substring-matching bug in this file's history.**
+  `test_it_moved_rather_than_vanished` asserts the LM formatting is
+  still in stage 4, and it matched `local/format_lms.sh` inside the
+  *comment* explaining why that script is no longer called -- so it
+  passed for a stage that no longer ran it. `stage()` strips comment
+  lines now, and the mutation that deletes the command fails it. After
+  `"G.fst" in name` matching `LG.fst.txt` and `--compile-fsts` reading
+  as a binary called `fsts`, the rule is plain: **a scan for a command
+  name must look at the commands.** My own new test for the replacement
+  made the identical mistake on its first run, which is how firmly the
+  habit sits.
+
 - **mini-librispeech's stage 2 was broken from the stage-2 conversion
   until this fix, and the hazard had been written down before it bit.**
   `fix_data_dir.py` listed `spk2gender` among the files it **refuses**,
