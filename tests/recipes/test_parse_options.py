@@ -36,6 +36,17 @@ pytestmark = pytest.mark.skipif(
     "are POSIX-only anyway",
 )
 
+#: Driving a whole `run.sh` needs the venv, because its first line is
+#: `. ./env.sh`, which activates `tools/venv` and fails without it. Tier 1
+#: installs pytest and pyyaml and no venv, so those tests skip there --
+#: the parser's own semantics are covered by the direct tests above, and
+#: what the whole-recipe tests add is that it is wired in, which a
+#: developer's machine and the nightly both check.
+needs_venv = pytest.mark.skipif(
+    not (REPO_ROOT / "tools" / "venv" / "bin" / "activate").is_file(),
+    reason="a recipe's env.sh activates tools/venv, which tier 1 has not",
+)
+
 
 def parse(declarations, arguments, report='echo "stage=$stage"'):
     """
@@ -264,6 +275,7 @@ class TestEveryScriptUsesThisParser:
         ), path
 
 
+@needs_venv
 @pytest.mark.parametrize("recipe", ["egs/yesno/asr", "egs/mini_librispeech/asr"])
 class TestTheRecipesStillParseTheirFlags:
     def test_the_recipe_still_refuses_an_inverted_range(self, recipe):
