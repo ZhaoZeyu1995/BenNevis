@@ -1277,6 +1277,39 @@ caused by this would show up as a nightly quietly re-downloading 1.2GiB
 rather than as a failure. A registry cache is not forbidden — it does not
 touch the Actions budget — but 58 seconds is the number to beat.
 
+**SpecAugment exists now, and it is off by default.**
+`BenNevis.core.augment.SpecAugment` masks bands of frequency and spans of
+time in a padded batch, and `Trainer` applies it in `_compute_loss` --
+which is reached from both `_train_batch` and `_valid_batch`, so the
+module being a no-op outside `training` is what keeps the validation loss
+comparable across epochs. A validation loss computed on masked features
+would wander with the mask draw rather than with the model, and both the
+mid-epoch save schedule and the ledger read that loss.
+Four decisions in it are not defaults, and each is a failure that would
+produce a slightly worse WER and no other symptom:
+**time masks are placed inside each utterance's own length**, because a
+batch is padded to its longest member and a mask in the padding does
+nothing -- the duration samplers group *similar* lengths, not identical
+ones, so masking over the padded width weakens the augmentation in
+proportion to how ragged each batch is; **the width is capped at a
+fraction of the utterance**, since a 100-frame mask removes a sixth of a
+600-frame yesno utterance and all of a 60-frame one, and the cap is what
+lets one setting serve corpora whose lengths differ by an order of
+magnitude; **the mask value is zero because CMVN has already made each
+dimension zero-mean**, so zero is the mean and masking to it is masking
+to no information -- which also means this only belongs *after*
+normalisation; and it **does not write in place**, because the batch it
+is handed is the one the DataLoader still owns.
+Time warping, the paper's third transform, is deliberately absent: it
+needs an interpolation per utterance, it is the smallest of the three
+contributions, and espnet leaves it off too.
+**None of it is measured on this project yet.** It is off in every
+recipe, with the settings written out and commented in
+`conf/trainer/default.yaml`, and the WER ledger is how it gets judged --
+a 66% WER on five hours of audio is what it exists to move. The tests
+pin the four failure modes above rather than the WER, because a WER
+cannot be asserted in tier 1b and the failure modes can.
+
 ## Gotchas
 
 - **The dynamic batch samplers had three bugs and no tests.** The first real
