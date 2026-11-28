@@ -305,7 +305,13 @@ class TestFunctionalEquivalenceOfG:
         """
         if not manifest.functional:
             pytest.skip("this reference was captured before fingerprints")
-        assert any("G.fst" in name for name in manifest.functional)
+        # The basename, not a substring: `LG.fst.txt` and `TLG.fst.txt`
+        # both contain "G.fst", and the loop below used that test and so
+        # compared a word-level grammar against a *decoding* graph's
+        # fingerprint. See there.
+        assert any(
+            name.rsplit("/", 1)[-1] == "G.fst.txt" for name in manifest.functional
+        )
 
     def test_a_python_build_matches_it(self, manifest):
         if not manifest.functional:
@@ -332,7 +338,23 @@ class TestFunctionalEquivalenceOfG:
 
         checked = 0
         for name, recorded in manifest.functional.items():
-            if "G.fst" not in name:
+            # **The basename, not a substring.** `graph/<topo>/LG.fst.txt`
+            # contains "G.fst", so `"G.fst" in name` also selected every
+            # topology's LG -- and this loop then compared the Python
+            # *grammar* build against a *decoding graph* fingerprint. It
+            # passed only because yesno is built with `--sil_prob 0.0`,
+            # which makes every lexicon weight zero, so LG's weights equal
+            # G's up to `fstminimizeencoded`'s 1/1024 rounding: 6.907755
+            # here against 6.908203 recorded, which is 7074/1024 exactly.
+            # The old yesno capture had no LG fingerprints, so the bug was
+            # latent until a fresh one recorded them.
+            #
+            # LG and TLG are gated as functions by the nightly's
+            # `compare_graphs.py`, which bounds the comparison by
+            # `n * kDelta / 2` because Kaldi's graphs are quantised and
+            # ours are not. That is the right tolerance for them and the
+            # wrong one for `G`, which `arpa2fst` writes unrounded.
+            if name.rsplit("/", 1)[-1] != "G.fst.txt":
                 continue
             built = fingerprint(
                 by_source,

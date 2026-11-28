@@ -1515,6 +1515,37 @@ touch the Actions budget — but 58 seconds is the number to beat.
   widened.** If an 80-dimensional run exceeds the gate, that is a real
   finding about pitch and the thing to do is find out why -- widening it
   is how a ledger stops meaning anything.
+  **Both captures are re-taken and the cost of dropping pitch is three
+  word errors.** Runs 46075407888 (yesno, all stages) and 46092683476
+  (mini-librispeech, stages 0 to 4) produced 80-dimensional references.
+  Against the 83-dimensional ledger, six of the eight topologies are
+  unchanged, `3state-skip-2` is two errors worse and `mmictc` one --
+  three in 1,856 reference words, and **every topology stayed inside the
+  gate that was deliberately not widened**. That is the measurement the
+  decision rested on, and it came out the way the tonal-language argument
+  predicted.
+  The same run also settles what was still owed on the decoder: all eight
+  topologies agree **error for error and error type for error type**
+  between `decode-faster` and the Python search, this time on master's
+  corrected `max_active` rather than #93's.
+  **A fresh capture fired a latent test defect, which is the second
+  substring-matching bug of the day.**
+  `TestFunctionalEquivalenceOfG` selected its fingerprints with
+  `"G.fst" in name` -- and `graph/<topo>/LG.fst.txt` contains `G.fst`, so
+  a test for the word-level *grammar* was comparing the Python `G` build
+  against every topology's *decoding graph* fingerprint. It passed only
+  because yesno is built with `--sil_prob 0.0`, which makes every lexicon
+  weight zero, so LG's weights equal G's up to `fstminimizeencoded`'s
+  1/1024 rounding -- 6.907755 against a recorded 6.908203, which is
+  7074/1024 exactly. The old capture had no LG fingerprints, so nothing
+  fired until a new one recorded them. It matches the basename now.
+  Together with `--compile-fsts` reading as a binary called `fsts`, that
+  is twice in one day: **a filter over names wants the whole name, not a
+  substring of it.**
+  **The waveforms are not in these captures**, because the runs were
+  dispatched from a branch that did not yet have the change recording
+  them. So `tests/utils/test_features.py`'s filterbank gate still skips,
+  and activates on the next capture rather than this one.
   **And it invalidates the captured reference, which is the gate working
   rather than a problem.** The capture records `conf/pitch.conf`, and
   `test_against_reference.py` fails with "recipe/conf/pitch.conf no
