@@ -208,6 +208,18 @@ def main(argv=None) -> int:
     # *search* and in nothing else -- which is the whole point of having
     # both. `tests/recipes/test_decode_k2_settings.py` reads them out of
     # both files and fails if they drift apart.
+    parser.add_argument(
+        "--lexicon-structure",
+        choices=("tree", "flower"),
+        default="tree",
+        help="how to build the lexicon FST the graph is composed from. "
+        "`tree` shares common prefixes, which is the shape "
+        "determinisation would produce and which takes the "
+        "word-boundary state's out-degree from 206,510 to 195 on "
+        "mini-librispeech; `flower` is Kaldi's shape and is here so that "
+        "one run can decode the same checkpoint both ways and the "
+        "difference is a measurement rather than an expectation",
+    )
     parser.add_argument("--beam", type=float, default=32.0)
     parser.add_argument("--max_active", type=int, default=5000)
     parser.add_argument("--min_active", type=int, default=20)
@@ -281,6 +293,7 @@ def main(argv=None) -> int:
         variant=args.variant,
         sil_prob=args.sil_prob,
         position_dependent_phones=args.position_dependent_phones,
+        lexicon_structure=args.lexicon_structure,
     )
     logging.info("decoding graph: %d states, %d arcs", graph.shape[0], graph.num_arcs)
 

@@ -865,11 +865,36 @@ million arcs four times, which is the trap `test_prepare_lang.py`
 already records. Building the equivalence case from a subset and
 asserting the figures at the recipe's own silence probability -- so the
 builds are shared with the tests above -- brought it to three.
-**It is not wired in yet**, deliberately. Switching `k2/L.fst.txt` and
-`build_disambig_fst_text` to the tree changes the training numerator
-graph and the k2 decoding graph, and the gate for that is
-`compare_graphs.py` in a nightly -- so it wants a measurement run of its
-own rather than riding on the one re-anchoring mini-librispeech.
+**It is wired into the k2 decoding lane and nowhere else.**
+`BenNevis.decode.pipeline.build_graph` composes from a tree now --
+`lexicon_structure="tree"`, with `run/decode_k2.py --lexicon-structure`
+exposing the choice so **one run can decode the same checkpoint both
+ways** and the difference is a measurement rather than an expectation.
+Kaldi's lane is untouched: `prepare_lang` still writes the flower, Kaldi
+determinises it anyway, and `compare_graphs.py` therefore still compares
+our graph against Kaldi's own on function. Training's numerator graph
+still uses the flower too, and switching it is its own measurement.
+**And `add_self_loops` costs the tree more than the arc count shows.**
+`AddSelfLoops` loops every final state *and every state with a
+non-epsilon output label on an outgoing arc*. In the flower every word
+rides an arc leaving the loop state, so one state qualifies and
+mini-librispeech's 206,510 entries add "exactly one arc" -- the figure
+already recorded here. In the tree the words ride the final arcs, which
+leave the penultimate nodes, so it is **one self-loop per word-emitting
+state: 154,371**. The honest saving is therefore 1,589,728 arcs against
+851,622, **1.87x rather than the 2.28x the lexicon's own arcs suggest**.
+The out-degree win is untouched, because a self-loop adds one arc to a
+state that had two or three rather than to the state that had 206,510.
+**yesno is the degenerate case and gets the cost with none of the
+benefit**: four words over five phones share no prefix, so its TLG goes
+from 11 states and 33 arcs to 13 and 40. That is asserted rather than
+tolerated, because a test that merely permitted growth there would also
+pass if the saving vanished everywhere. What yesno *does* establish is
+the thing that could silently be wrong: all seven word sequences cost
+exactly the same through the whole composition -- `compose_lg`, its
+epsilon removal, the disambiguation stripping and the topology -- and
+`<UNK>`, which the lexicon has and the grammar does not, is refused by
+both.
 
 **`TLG` is now gated as a function, and the probe runs on the output
 side.** The question a decoder asks is what it costs to recognise a word

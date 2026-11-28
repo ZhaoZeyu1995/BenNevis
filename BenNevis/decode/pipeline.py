@@ -201,6 +201,7 @@ def build_graph(
     sil_prob: float = 0.0,
     position_dependent_phones: bool = False,
     device=None,
+    lexicon_structure: str = "tree",
 ):
     """
     A decoding graph from a recipe's own inputs.
@@ -285,7 +286,26 @@ def build_graph(
             f"epsilon and silently corrupt the graph"
         )
 
-    logging.info("building L_disambig from %s", lexicon)
+    # **A prefix tree, not Kaldi's flower, and this is the one place the
+    # choice is made.** `make_lexicon_fst.py` gives the word-boundary
+    # state one arc per lexicon entry -- 206,510 on mini-librispeech --
+    # and profiling the decoder found that state carrying 208,941 arcs
+    # over 106 distinct input labels, 1,950 parallel arcs per label, with
+    # 366 such states holding 52.5% of the whole graph. That is the
+    # remaining gap against `decode-faster`, and determinisation is the
+    # textbook fix: `k2.determinize` costs 56 minutes and returns 3.4x
+    # the arcs, so it is not the route. Building the lexicon in the shape
+    # determinisation would have produced costs nothing.
+    #
+    # Measured on mini-librispeech's lexicon alone: 1,333,084 arcs become
+    # 469,947 and the worst out-degree anywhere falls from 206,510 to
+    # **195**.
+    #
+    # Nothing else changes shape. Kaldi's lane still composes the flower
+    # -- `prepare_lang` writes that, and Kaldi determinises it anyway --
+    # so `tests/reference/compare_graphs.py` still compares our graph
+    # against Kaldi's own, on function, which is the gate for this.
+    logging.info("building L_disambig from %s as a %s", lexicon, lexicon_structure)
     lexicon_fsa = load_openfst_text(
         build_disambig_fst_text(
             read_lexicon(lexicon),
@@ -293,6 +313,7 @@ def build_graph(
             phones,
             sil_prob=sil_prob,
             position_dependent_phones=position_dependent_phones,
+            structure=lexicon_structure,
         )
     )
 
