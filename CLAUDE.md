@@ -798,6 +798,79 @@ deliberately rounding to Kaldi's grid. `QUANTISATION_DELTA` in
 the rounding. This is the clearest example in the project of an equivalence
 gate that would turn an accident into a requirement.
 
+**The lexicon can be a prefix tree, and that is the fix for the flower.**
+`make_lexicon_fst.py` builds a *flower* -- a fresh chain of states per
+entry off the loop state, word on the first arc -- and that is the
+measured cause of the decoding gap: state 0 carries 208,941 arcs over
+106 distinct input labels, 1,950 parallel arcs per label, and 366 such
+states hold 52.5% of the whole graph. Determinisation fixes it and
+`k2.determinize` costs 56 minutes and *grows* the graph 3.4x. But we
+build this FST ourselves now, so it can be built in the shape
+determinisation would have produced, which is far cheaper than
+determinising 43 million arcs afterwards.
+`build_lexicon_arcs(..., structure="tree")` does that. Measured on
+mini-librispeech's 206,510 entries at `sil_prob=0`:
+
+| | flower | tree |
+| --- | --- | --- |
+| arcs | 1,333,084 | 469,947 |
+| states | 1,126,575 | 263,438 |
+| **worst out-degree** | **206,510** | **195** |
+
+So 2.84x the arcs, 4.28x the states, and **no state anywhere with more
+than 195 arcs**. The out-degree is the figure that matters: the decoder's
+cost is the arcs leaving the states it reaches, not the graph's size.
+**The arithmetic is worse than the obvious estimate and the difference is
+instructive.** A fully shared tree would give 3.37x and an out-degree of
+67 -- the distinct first phones. It cannot, because **the final arc
+carries the word** and so cannot be shared, which costs one arc per entry
+and puts the one-phone words' arcs back on the loop state: 195 rather
+than 67. The first figures quoted for this were the idealised ones.
+**Two consequences are forced rather than chosen.** The word rides the
+*last* arc, because the first is shared -- and measured, a word becomes
+unambiguous only **5.90 phones into a mean pronunciation of 6.46**, with
+41% of entries never becoming unambiguous at all, so there is no earlier
+placement available. That **moves alignment timing**: `bin/align.py`
+reads `labels[i]` and `aux_labels[i]` together to decide which frames a
+word covers, so a word's recorded position shifts by most of its own
+length. WER is untouched, since the word *sequences* are identical.
+And this is inherent to removing the flower rather than particular to a
+tree: determinisation delays output labels the same way -- that is what
+determinisation is -- so Kaldi's own determinised graph already emits
+words late and ours is the odd one out. It bears on the CTM convention
+left open in #62.
+**The flower stays, as the oracle.** It reproduces Kaldi's `L.fst` byte
+for byte on both corpora and that is worth keeping as a check on the
+lexicon reader; the tree is gated against it the way CLAUDE.md says an
+FST should be, on function rather than bytes.
+`tests/lm/test_lexicon_tree.py` searches both with a Dijkstra over
+(state, position) and requires the same weight and a permitted word for
+every entry of a subset chosen to *contain* the awkward shapes -- every
+homophone of a sampled entry and everything that is a prefix of or
+extends one -- rather than a random slice that would miss them by luck.
+Three things that test got wrong first, each worth knowing:
+**comparing a single best path's word is ill-posed.** 50,129 entries
+share a pronunciation with another word, and at `sil_prob=0` every path
+costs zero, so "the" best path is whichever the search reaches first --
+the two structures picked different homophones for JAQUELIN and a real
+ambiguity was reported as a defect. The weight is well defined; the word
+is only ever "one the lexicon gives that pronunciation".
+**A word is not always emitted at all.** With optional silence, a word
+whose pronunciation *is* the silence phone is read more cheaply by the
+silence arc than by its own entry -- yesno's lexicon has exactly that,
+`<SIL> <SIL>` -- so the best path emits nothing, in both structures. What
+must agree is *whether* anything was emitted.
+**And it took tier 1 from instant to thirteen seconds**, by indexing 1.5
+million arcs four times, which is the trap `test_prepare_lang.py`
+already records. Building the equivalence case from a subset and
+asserting the figures at the recipe's own silence probability -- so the
+builds are shared with the tests above -- brought it to three.
+**It is not wired in yet**, deliberately. Switching `k2/L.fst.txt` and
+`build_disambig_fst_text` to the tree changes the training numerator
+graph and the k2 decoding graph, and the gate for that is
+`compare_graphs.py` in a nightly -- so it wants a measurement run of its
+own rather than riding on the one re-anchoring mini-librispeech.
+
 **`TLG` is now gated as a function, and the probe runs on the output
 side.** The question a decoder asks is what it costs to recognise a word
 sequence, which under a CTC topology is a **minimum over every token
