@@ -2028,6 +2028,37 @@ cannot be asserted in tier 1b and the failure modes can.
   checkout. `local/prepare_dict.sh` for yesno is already pure `cp` and
   `grep`.
 
+- **mini-librispeech's stage 2 was broken from the stage-2 conversion
+  until this fix, and the hazard had been written down before it bit.**
+  `fix_data_dir.py` listed `spk2gender` among the files it **refuses**,
+  on the reasoning that nothing in BenNevis reads it -- and Kaldi's
+  `local/data_prep.sh` *writes* it, one entry per chapter-speaker from
+  `SPEAKERS.TXT`. So `fix` refused every mini-librispeech data directory
+  and stage 2 exited 1 on every run. Run 46164030031 died there after
+  three minutes, having been dispatched for five and a half hours.
+  **yesno's nightly could not see it**, because yesno's own preparation
+  writes no `spk2gender`, and yesno is the recipe that runs on a
+  schedule. A recipe-specific input that one corpus has and the other
+  does not is invisible to whichever corpus runs more often.
+  The rule that generalises: **refusing a file nothing reads is only
+  safe if nothing writes it either**, and the writers here are Kaldi's
+  own corpus-preparation scripts, which are exactly the part of the
+  pipeline not yet ported. `spk2gender`, `utt2uniq`, `vad.scp` and
+  `utt2lang` are all handled now, the way Kaldi handles them --
+  `spk2gender` like `cmvn.scp`, in both directions, so a speaker missing
+  from it loses its utterances. Only `segments` and the two `reco2*`
+  files are still refused, and those genuinely change what `wav.scp` is
+  indexed by.
+  **`tests/recipes/test_stages_compose.py` did not catch it because its
+  fixture wrote only the files the Python stages need.** It writes
+  `spk2gender` now, and reinstating the refusal fails all seventeen of
+  its tests. That is the same shape as `test_capture.py`'s synthetic
+  recipe having no `wav.scp` and the `idim` reader that stopped
+  matching: **a fixture that omits an input makes a whole code path
+  untestable while the suite stays green**, and this is the third time it
+  has cost a run. A fixture for a stage should hold what the *previous*
+  stage really writes, not what the stage under test happens to read.
+
 - **The first nightly on the Python pipeline: the recipe passed, the WERs
   did not move, and the new feature gate failed on its own bug.** Run
   46155782177, yesno, all stages, against run 46139958942 on `ff0088f`

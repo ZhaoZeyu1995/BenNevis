@@ -123,6 +123,16 @@ def prepared(tmp_path_factory):
         "".join(f"{u} {u.split('-')[0]}\n" for u in sorted(UTTERANCES)), "utf-8"
     )
     (data / "spk2utt").write_text("spkA spkA-001 spkA-002\nspkB spkB-001\n", "utf-8")
+    # **`spk2gender` is here deliberately**, because its absence is what
+    # let the stage-2 conversion break mini-librispeech. Kaldi's
+    # `local/data_prep.sh` writes it from `SPEAKERS.TXT`, nothing in
+    # BenNevis reads it, and `fix_data_dir.py` therefore *refused* every
+    # real data directory -- which this fixture could not show while it
+    # wrote only the files the Python stages happen to need. A fixture
+    # that omits an input makes a whole code path untestable while the
+    # suite stays green, which is the third time that shape has cost a
+    # run here.
+    (data / "spk2gender").write_text("spkA m\nspkB f\n", "utf-8")
 
     dictionary = recipe / "data" / "local" / "dict"
     dictionary.mkdir(parents=True)
@@ -198,6 +208,7 @@ class TestTheDataDirectoryIsComplete:
             "cmvn.scp",
             "utt2num_frames",
             "utt2dur",
+            "spk2gender",
         ],
     )
     def test_the_file_exists_and_covers_every_utterance(self, prepared, name):
@@ -209,8 +220,8 @@ class TestTheDataDirectoryIsComplete:
         path = prepared / "data" / "train" / name
         assert path.is_file(), name
         keys = [line.split()[0] for line in path.read_text().splitlines()]
-        expected = sorted(UTTERANCES) if name != "spk2utt" else ["spkA", "spkB"]
-        if name == "cmvn.scp":
+        expected = sorted(UTTERANCES)
+        if name in ("spk2utt", "cmvn.scp", "spk2gender"):
             expected = ["spkA", "spkB"]
         assert keys == expected, name
 
