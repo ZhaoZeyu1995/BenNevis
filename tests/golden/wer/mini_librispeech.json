@@ -1,0 +1,96 @@
+{
+  "_comment": [
+    "The first WER ledger entry egs/mini_librispeech/asr has ever had.",
+    "",
+    "Everything here comes from one run, 46100161743, and that is the most",
+    "important thing to know about it. yesno's entry has a reference_wer",
+    "from the author's own pre-refactor CUDA runs to judge against; this",
+    "recipe has never published a WER, so there is nothing historical to",
+    "compare with and measured_wer is the only anchor that exists.",
+    "",
+    "**The gate is therefore wider than the evidence justifies, and that is",
+    "deliberate.** One run gives no estimate of run-to-run spread. The",
+    "decode is deterministic given a checkpoint -- every nj from 1 to 8",
+    "gives byte-identical hypotheses -- but the training that produces the",
+    "checkpoint is not bit-reproducible across runners, and this model is",
+    "undertrained and on a steep part of its curve, where a small",
+    "difference in the optimisation lands somewhere visibly different. So",
+    "max_wer is measured_wer plus two points, and the second recorded run",
+    "is what should tighten it. Two points is 403 word errors of 20,138,",
+    "which is 4.3% relative: far too loose to catch a subtle regression and",
+    "tight enough to catch the kind this corpus exists to catch -- a",
+    "broken feature pipeline, a topology that stopped composing, a decoder",
+    "that deletes everything.",
+    "",
+    "Judge a change against measured_wer, not against max_wer. **Raising",
+    "max_wer to make a run pass is how a ledger stops meaning anything.**",
+    "",
+    "Only `ctc` is recorded. The other seven topologies have never been",
+    "trained on this corpus: at 36 minutes an epoch, eight epochs of one",
+    "topology is five and a half hours, so all eight would be days. A",
+    "topology absent from `topologies` is unmeasured, not passing.",
+    "",
+    "**Two decoders scored the same checkpoint, and the Python one is the",
+    "measurement.** `measured_wer` is BenNevis's own search in",
+    "BenNevis/decode/viterbi.py, because that is the system's output now.",
+    "Kaldi's decode-faster read the same log probabilities against its own",
+    "TLG.fst and is recorded beside it as `kaldi_wer` -- a cross-check on",
+    "the whole graph and search chain rather than a gate, and one that",
+    "will disappear with Kaldi."
+  ],
+  "model": "rnnp",
+  "test_set": "dev_clean_2",
+  "reference_words": 20138,
+  "utterances": {
+    "train_clean_5": 1519,
+    "dev_clean_2": 1089
+  },
+  "reference_source": "none: this recipe has no published pre-refactor WER",
+  "topologies": {
+    "ctc": {
+      "reference_wer": null,
+      "max_wer": 48.6,
+      "measured_wer": 46.56,
+      "measured_errors": 9376,
+      "measured_breakdown": {
+        "substitutions": 5359,
+        "deletions": 3849,
+        "insertions": 168
+      },
+      "kaldi_wer": 48.8,
+      "kaldi_breakdown": {
+        "correct": 52.1,
+        "substitutions": 25.7,
+        "deletions": 22.2,
+        "insertions": 0.9,
+        "sentence_error": 97.5
+      }
+    }
+  },
+  "training": {
+    "epochs": 8,
+    "valid_loss": [
+      4.531778,
+      2.899829,
+      2.351041,
+      2.104903,
+      1.971688,
+      1.891980,
+      1.855526,
+      1.827947
+    ],
+    "note": "Still falling at epoch 8, by 0.028 -- flattening rather than bottomed. The last three improvements were 0.080, 0.036 and 0.028, so a ninth epoch would buy something and the run had no budget for it: 5h34m of a 5h50m ceiling. A deeper model is the thing to change, not the epoch count."
+  },
+  "measured": {
+    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/46100161743",
+    "date": "2026-11-28",
+    "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:07f0565d6795d3cf09cccc0b263df3d7e9cff83aecc68aa829ed02aaa1b92731",
+    "runner": "AMD EPYC 7763, 4 cores, 16GiB",
+    "note": "CPU, torch 2.15, SpecAugment off, 8 epochs of ctc, 36.6 minutes an epoch. Kaldi's stage 7 decoded all 1,089 utterances in 7m07s at nj=8; the Python search took 20m38s at nj=8 after a 55s graph build, so 2.9x at 2.24 points better."
+  },
+  "features": {
+    "measured_at": "fbank, 80 dimensions",
+    "current": "fbank, 80 dimensions",
+    "note": "The first ledger entry in this project measured on the features the recipe actually has. yesno's predates dropping pitch and says so; this one does not need the caveat."
+  }
+}

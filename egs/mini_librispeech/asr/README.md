@@ -57,6 +57,30 @@ recipe uses 3 × 1024, which is far too slow for the CPU runners this is
 exercised on, so this is scaled to 3 × 320 to fit a few hours. Tune it
 deliberately and record what the change does to the WER ledger.
 
-There is no entry in `tests/golden/wer/` for this recipe yet, because no
-training run has been recorded. Until one has, there is nothing to regress
-against and the recipe is a reference corpus rather than a gate.
+## The WER ledger
+
+`tests/golden/wer/mini_librispeech.json` records the first training run
+this recipe has ever had scored: run 46100161743, eight epochs of `ctc`,
+**46.56%** on all 1,089 utterances of `dev_clean_2`.
+
+| | WER | sub | del | ins |
+| --- | --- | --- | --- | --- |
+| BenNevis's search | **46.56%** | 26.6 | 19.1 | 0.8 |
+| Kaldi `decode-faster` | 48.8% | 25.7 | 22.2 | 0.9 |
+
+Both read the same checkpoint, so that is a comparison of searches and
+not of models: ours is 2.24 points better and the difference is mostly
+**deletions**, 19.1 against 22.2. It took 20m38s at `--nj 8` against
+`decode-faster`'s 7m07s.
+
+Three things to know before judging a change against it.
+
+The gate is `measured_wer` plus two points, which is **wider than the
+evidence justifies**, because one run gives no estimate of run-to-run
+spread; the second recorded run is what should tighten it. The
+validation loss was still falling at epoch 8 — 1.8279, improving by
+0.028 — so the model is undertrained and a deeper one is the thing to
+change rather than the epoch count. And only `ctc` is recorded: at 36
+minutes an epoch the other seven topologies have never been trained
+here, so a topology absent from the ledger is unmeasured rather than
+passing.
