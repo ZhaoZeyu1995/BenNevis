@@ -1491,6 +1491,69 @@ touch the Actions budget — but 58 seconds is the number to beat.
 - The `k2` variant of every topology must be **epsilon-free on the input
   side**, because its input alphabet is the network's output layer and a
   network cannot emit `<eps>`. This is checked at spec load time.
+- **Pitch is gone, and the features are 80 dimensions.**
+  `steps/make_fbank_pitch.sh` appended the three dimensions
+  `process-kaldi-pitch-feats` produces, making every recipe's input 83
+  wide. It was dropped deliberately: pitch is a GMM-era addition for
+  **tonal** languages, where F0 carries lexical information, and these
+  corpora are English and Hebrew; every modern end-to-end recipe uses
+  plain filterbank or the waveform, and this project's own `wav2vec2` and
+  `whisper` encoders never touch fbank at all.
+  **The practical reason it had to go is that nothing can replace it.**
+  `torchaudio.functional.compute_kaldi_pitch` was **removed in torchaudio
+  2.1** -- checked against the installed 2.11.1, where it is absent and
+  `detect_pitch_frequency` is a different algorithm producing a different
+  thing. So a Python feature extractor would have had to reimplement
+  `feat/pitch-functions.cc`, NCCF over lag candidates plus a Viterbi,
+  with no prospect of bit-exactness. Dropping it is what makes a Python
+  fbank the last feature problem rather than the first of two.
+  **What this costs is the WER ledger's comparability**, and it is
+  recorded rather than absorbed. Every number in
+  `tests/golden/wer/yesno.json` and in `egs/yesno/asr/README.md` was
+  measured at 83 dimensions; both now say so, and a `features` block
+  names which era each belongs to. **`max_wer` was deliberately not
+  widened.** If an 80-dimensional run exceeds the gate, that is a real
+  finding about pitch and the thing to do is find out why -- widening it
+  is how a ledger stops meaning anything.
+  **Both captures are re-taken and the cost of dropping pitch is three
+  word errors.** Runs 46075407888 (yesno, all stages) and 46092683476
+  (mini-librispeech, stages 0 to 4) produced 80-dimensional references.
+  Against the 83-dimensional ledger, six of the eight topologies are
+  unchanged, `3state-skip-2` is two errors worse and `mmictc` one --
+  three in 1,856 reference words, and **every topology stayed inside the
+  gate that was deliberately not widened**. That is the measurement the
+  decision rested on, and it came out the way the tonal-language argument
+  predicted.
+  The same run also settles what was still owed on the decoder: all eight
+  topologies agree **error for error and error type for error type**
+  between `decode-faster` and the Python search, this time on master's
+  corrected `max_active` rather than #93's.
+  **A fresh capture fired a latent test defect, which is the second
+  substring-matching bug of the day.**
+  `TestFunctionalEquivalenceOfG` selected its fingerprints with
+  `"G.fst" in name` -- and `graph/<topo>/LG.fst.txt` contains `G.fst`, so
+  a test for the word-level *grammar* was comparing the Python `G` build
+  against every topology's *decoding graph* fingerprint. It passed only
+  because yesno is built with `--sil_prob 0.0`, which makes every lexicon
+  weight zero, so LG's weights equal G's up to `fstminimizeencoded`'s
+  1/1024 rounding -- 6.907755 against a recorded 6.908203, which is
+  7074/1024 exactly. The old capture had no LG fingerprints, so nothing
+  fired until a new one recorded them. It matches the basename now.
+  Together with `--compile-fsts` reading as a binary called `fsts`, that
+  is twice in one day: **a filter over names wants the whole name, not a
+  substring of it.**
+  **The waveforms are not in these captures**, because the runs were
+  dispatched from a branch that did not yet have the change recording
+  them. So `tests/utils/test_features.py`'s filterbank gate still skips,
+  and activates on the next capture rather than this one.
+  **And it invalidates the captured reference, which is the gate working
+  rather than a problem.** The capture records `conf/pitch.conf`, and
+  `test_against_reference.py` fails with "recipe/conf/pitch.conf no
+  longer exists in the recipe" -- which is exactly what that check is for:
+  a reference taken under different settings is a record of something the
+  pipeline no longer does. The fix is its own error message's: re-run the
+  recipe, re-capture, commit the result. **Not** an edit to the test or
+  to the manifest.
 - **Three recipes configured an input width their own features did not
   have, and nothing caught it.** `egs/librispeech/asr{1,2,3}` call
   `steps/make_fbank.sh`, which writes 80 filterbank coefficients, while

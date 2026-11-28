@@ -79,6 +79,10 @@ FULL_FEATURE_UTTERANCES = 5
 #: told apart from one taken under different settings -- which matters most
 #: for `--dither`, where a change silently makes every captured feature
 #: unreproducible.
+#: `conf/pitch.conf` is listed although no recipe uses it any more: pitch
+#: was dropped, and a capture taken from an older checkout still holds
+#: one, so the list has to be able to record it. A missing file is noted
+#: on stderr rather than being an error, which is what makes that work.
 RECIPE_CONF = ("conf/fbank.conf", "conf/pitch.conf")
 
 #: Text artefacts copied verbatim from the language directory. These are what

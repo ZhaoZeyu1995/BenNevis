@@ -148,3 +148,29 @@ def test_odim_is_derived_rather_than_written_out():
                 f"determined by the language directory at training time"
             )
     assert checked >= 6, checked
+
+
+def test_no_recipe_extracts_pitch_any_more():
+    """
+    Pitch was a GMM-era addition for tonal languages; these corpora are
+    English and Hebrew, and every modern end-to-end recipe uses plain
+    filterbank or the waveform. Pinned because going back to it silently
+    would change every model's input width -- which is now *derived*, so
+    it would change quietly rather than loudly -- and re-anchor the WER
+    ledger without saying so.
+    """
+    using = [r for r in recipes() if feature_script(r) == "make_fbank_pitch.sh"]
+    assert not using, f"{using} extract pitch; see CLAUDE.md on why it went"
+
+
+def test_no_recipe_still_carries_a_pitch_configuration():
+    """
+    `conf/pitch.conf` outlived its use in `egs/librispeech/asr*`, which
+    had already moved to `make_fbank.sh` -- a dead configuration file that
+    made the `idim: 83` those recipes carried look deliberate.
+    """
+    stale = sorted(
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in REPO_ROOT.glob("egs/*/*/conf/pitch.conf")
+    )
+    assert not stale, stale
