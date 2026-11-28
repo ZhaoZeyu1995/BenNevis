@@ -222,6 +222,94 @@ class TestItFiltersOnUtterances:
             fix(data)
 
 
+class TestTheFilesKaldisPreparationActuallyWrites:
+    """
+    The gap that cost a five-and-a-half-hour slot.
+
+    `spk2gender`, `utt2uniq`, `vad.scp` and `utt2lang` were listed as
+    unsupported, because nothing in BenNevis reads them -- but
+    `local/data_prep.sh` **writes** `spk2gender`, one entry per
+    chapter-speaker from `SPEAKERS.TXT`. So `fix` refused every
+    mini-librispeech data directory and stage 2 failed on every run from
+    the stage-2 conversion onward. yesno's own preparation does not write
+    it, which is why the nightly that does run stayed green.
+
+    Refusing a file nothing reads is only safe if nothing **writes** it
+    either, and the writers here are Kaldi's own corpus-preparation
+    scripts.
+    """
+
+    def test_spk2gender_does_not_make_the_directory_unfixable(self, tmp_path):
+        """
+        The exact failure: `ERROR data/train_clean_5 contains spk2gender,
+        which this does not handle`.
+        """
+        data = three_speakers(
+            tmp_path,
+            **{"spk2gender": ["spkA m", "spkB f", "spkC m"]},
+        )
+        summary = fix(data)
+        assert summary["kept"] == 6
+        assert keys(data / "spk2gender") == ["spkA", "spkB", "spkC"]
+
+    def test_spk2gender_is_filtered_with_the_speakers(self, tmp_path):
+        """
+        Kaldi's `filter_speakers` treats it exactly like `cmvn.scp`, so a
+        dropped speaker leaves it too.
+        """
+        data = three_speakers(
+            tmp_path,
+            **{"spk2gender": ["spkA m", "spkB f", "spkC m"]},
+        )
+        write_table(
+            data / "cmvn.scp",
+            [r for r in read_table(data / "cmvn.scp") if r[0] != "spkB"],
+        )
+        fix(data)
+        assert keys(data / "spk2gender") == ["spkA", "spkC"]
+
+    def test_a_speaker_missing_from_spk2gender_loses_its_utterances(self, tmp_path):
+        """
+        The reversed-argument rule applies to this file too: Kaldi filters
+        the *speaker list* by `spk2gender` as well as by `cmvn.scp`.
+        """
+        data = three_speakers(
+            tmp_path,
+            **{"spk2gender": ["spkA m", "spkC m"]},
+        )
+        summary = fix(data)
+        assert summary["speakers"] == 2
+        assert summary["kept"] == 4
+        assert "spkB-1" not in keys(data / "utt2spk")
+
+    @pytest.mark.parametrize("name", ["utt2uniq", "vad.scp"])
+    def test_a_rewrite_only_file_is_filtered_but_does_not_narrow(self, tmp_path, name):
+        """
+        Kaldi rewrites these and never intersects them, the same as
+        `feats.cmvn.scp`: a stale one must not delete utterances.
+        """
+        data = three_speakers(tmp_path, **{name: ["spkA-1 x"]})
+        summary = fix(data)
+        assert summary["kept"] == 6, f"a stale {name} narrowed the corpus"
+        assert keys(data / name) == ["spkA-1"]
+
+    def test_utt2lang_narrows_like_the_rest(self, tmp_path):
+        """
+        Unlike those two, `utt2lang` **is** in Kaldi's intersection list,
+        so an utterance it omits is dropped.
+        """
+        utterances = [f"{spk}-{n}" for spk in ("spkA", "spkB", "spkC") for n in (1, 2)]
+        data = three_speakers(
+            tmp_path,
+            **{"utt2lang": [f"{utt} en" for utt in utterances[:-1]]},
+        )
+
+        summary = fix(data)
+
+        assert summary["kept"] == 5
+        assert utterances[-1] not in keys(data / "text")
+
+
 class TestItFiltersOnSpeakers:
     def test_a_speaker_without_statistics_loses_its_utterances(self, tmp_path):
         """
@@ -296,7 +384,9 @@ class TestItSortsWhatItLeaves:
 
 
 class TestItRefusesWhatItCannotHandle:
-    @pytest.mark.parametrize("name", ["segments", "vad.scp", "utt2lang", "spk2gender"])
+    @pytest.mark.parametrize(
+        "name", ["segments", "reco2dur", "reco2file_and_channel", "images.scp"]
+    )
     def test_a_file_it_does_not_filter_is_refused(self, tmp_path, name):
         """
         Leaving one of these unfiltered while filtering everything around

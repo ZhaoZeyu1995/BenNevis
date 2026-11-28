@@ -70,9 +70,12 @@ __all__ = [
 #: neither recipe has a `segments` file; see the module docstring.
 UTTERANCE_FILES = (
     "utt2spk",
+    "utt2uniq",
     "feats.scp",
+    "vad.scp",
     "text",
     "wav.scp",
+    "utt2lang",
     "utt2num_frames",
     "utt2dur",
     "feats.cmvn.scp",
@@ -88,6 +91,7 @@ INTERSECT_FILES = (
     "feats.scp",
     "text",
     "wav.scp",
+    "utt2lang",
     "utt2num_frames",
     "utt2dur",
 )
@@ -103,20 +107,34 @@ POSITIVE_FILES = ("utt2num_frames", "utt2dur")
 #: The speaker-indexed files. `spk2utt` is derived from `utt2spk` rather
 #: than filtered, which is Kaldi's own rule: "throughout this program, we
 #: regard utt2spk as primary and spk2utt as derived".
-SPEAKER_FILES = ("cmvn.scp",)
+#:
+#: **`spk2gender` is here because leaving it out broke mini-librispeech.**
+#: `local/data_prep.sh` writes it from `SPEAKERS.TXT` -- one entry per
+#: chapter-speaker -- and nothing in BenNevis reads it, so it was listed
+#: as unsupported and `fix` refused the whole directory. Kaldi's
+#: `filter_speakers` treats it exactly like `cmvn.scp`, in both
+#: directions, so that is what this does.
+SPEAKER_FILES = ("cmvn.scp", "spk2gender")
 
-#: Files Kaldi's script handles and this does not. Present in a directory,
-#: each would be left unfiltered while everything around it was filtered,
-#: which is worse than refusing: `segments` would make `wav.scp`
-#: recording-indexed, and the rest would simply go stale.
+#: Files Kaldi's script handles and this does not. Present in a
+#: directory, each would be left unfiltered while everything around it
+#: was filtered -- worse than refusing, because `segments` makes `wav.scp`
+#: **recording**-indexed and the two `reco2*` files are indexed that way
+#: too.
+#:
+#: **This list used to be longer, and that cost a five-and-a-half-hour
+#: slot.** `spk2gender`, `utt2uniq`, `vad.scp` and `utt2lang` were on it
+#: because nothing in BenNevis reads them -- but `local/data_prep.sh`
+#: *writes* `spk2gender`, so `fix` refused every mini-librispeech data
+#: directory and stage 2 failed on every run from the stage-2 conversion
+#: onward. The four are handled now, the way Kaldi handles them. The
+#: lesson is that refusing a file nothing reads is only safe if nothing
+#: **writes** it either, and the writers here are Kaldi's own
+#: corpus-preparation scripts.
 UNSUPPORTED_FILES = (
     "segments",
-    "utt2uniq",
-    "vad.scp",
-    "utt2lang",
     "reco2dur",
     "reco2file_and_channel",
-    "spk2gender",
     "images.scp",
 )
 
