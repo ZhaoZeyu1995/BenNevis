@@ -76,8 +76,9 @@ features can be judged on it either. Its stages 0–4 need no training and take
 minutes, which is the path for feature and graph comparison; stage 5 onward
 is **about twenty minutes an epoch on a CI runner** for five hours of audio,
 so twelve epochs of one topology is four hours and all eight would be days.
-It is therefore **not** part of the nightly, and has no WER ledger entry
-until a training run has been recorded.
+It is therefore **not** part of the nightly. **It does have a WER ledger
+entry now**, from run 46100161743 -- see the entry below -- so it is a
+gate as well as a reference corpus, for `ctc` alone.
 The twenty is measured, from run 45202289714: twelve epochs of `ctc` ran
 18:05 to 22:08, which is 20m09s each. It had been written here as ten, and
 that estimate is what made a 300-minute ceiling look generous — the run hit
@@ -103,7 +104,16 @@ making eight epochs **272 minutes** of a 348-minute budget, and it was an
 Intel Xeon 6975P-C; the 34m30s run was an Intel 6973P-C and both fast runs
 were AMD EPYC. Two of each is not a law, but when a mini-librispeech run's
 first epoch lands near 34 minutes the arithmetic for the rest of the job
-should assume it will not recover. The rest of that run is cheap and
+should assume it will not recover.
+**The vendor part of that is now refuted, and the "assume it will not
+recover" part is confirmed.** Run 46100161743 took **36.6 minutes** an
+epoch on an **AMD EPYC 7763** -- the same processor as both of the fast
+runs, slower than either Intel one. So the heading above was wrong: the
+vendor predicts nothing, three readings happened to line up, and the
+only reliable figure is the first epoch of the run in front of you. It is
+kept rather than deleted because the error is instructive -- four runs
+sorted into two groups of two is exactly the amount of evidence that
+invites a rule, and the rule was wrong the first time it was tested. The rest of that run is cheap and
 stable: stages 0 to 4 cost **2.8 minutes** and stages 6 to 9 **7.8**, so
 budget about eleven minutes for everything that is not training or stage
 10. What does not fit is stage 10 — see the decode figures below — and
@@ -127,9 +137,14 @@ the eight-epoch `ctc` model — 51.0 correct, 24.9 substitutions, **24.1
 deletions**, 0.8 insertions, 98.3% sentence error. The deletion rate
 thirty times the insertion rate is an undertrained CTC model preferring
 blank, which is what five hours of audio and eight epochs of `rnnp` gives.
-It is a baseline for the decoder comparison and **not** a ledger entry:
-`tests/golden/wer/` still has no mini-librispeech file, and the first
-number to go in one should come from a run whose point was the model.
+It was a baseline for the decoder comparison and not a ledger entry; the
+entry exists now and came from a later run, and the two are comparable
+in one respect worth noting -- **48.8% against this 49.7% is the cost of
+dropping pitch on this corpus, and it is negative**. Same recipe, same
+eight epochs, same topology, 80 dimensions instead of 83, and
+`decode-faster` scored 0.9 points *better*. That is one run against one
+run and not a measurement of pitch, but it is the second corpus to say
+the tonal-language argument held.
 
 Tier 3 runs `egs/yesno/asr` end to end inside the Kaldi image, nightly, from
 `.github/workflows/nightly.yml`. It is the **only** coverage the entry points
@@ -1213,6 +1228,71 @@ a change against `reference_wer` and tighten `max_wer` deliberately. The
 gates start loose because no run has yet been recorded in CI; `test_set` has
 232 reference words, so one word error is 0.43%.
 
+**There are two ledgers now, and they are discovered rather than listed.**
+`tests/recipes/test_ledger.py` had yesno's path as a module constant, which
+is the shape that left mini-librispeech's captured reference unread until
+`tests/reference/test_corpora.py` was written — so committing a second
+ledger would have added a file no test looked at. It globs
+`tests/golden/wer/*.json`, asserts it found some, and runs the checks that
+are true of any ledger over all of them; what is true of one corpus alone —
+yesno's eight-words-per-utterance arithmetic, mini-librispeech's absent
+reference — lives in its own class.
+
+**`tests/golden/wer/mini_librispeech.json` is the first ledger entry this
+project has had from a run whose point was the model.** Run 46100161743,
+eight epochs of `ctc`, all stages, success in 5h34m of a 5h50m ceiling:
+
+| | WER | sub | del | ins |
+| --- | --- | --- | --- | --- |
+| BenNevis's search | **46.56%** | 26.6 | 19.1 | 0.8 |
+| Kaldi `decode-faster` | 48.8% | 25.7 | 22.2 | 0.9 |
+
+on all 1,089 utterances of `dev_clean_2`, 20,138 reference words, from the
+same checkpoint — so **2.24 points** apart on the search alone, and the
+difference is mostly deletions, 19.1 against 22.2. That is the third time
+the Python search has come out ahead of `decode-faster` by deleting less,
+on three different checkpoints, which makes it a property of the two
+searches rather than of one model. Wall time was 20m38s at `--nj 8` after
+a 55s graph build, against `decode-faster`'s 7m07s: **2.9x**, and peak
+memory across all eight shards was 5,321MiB on a 16GiB runner.
+
+Four things about that entry are decisions rather than records.
+**The gate is `measured_wer` plus two points, which is wider than the
+evidence justifies.** One run gives no estimate of run-to-run spread: the
+decode is deterministic given a checkpoint — every `nj` from 1 to 8 gives
+byte-identical hypotheses — but the training that produces it is not
+bit-reproducible across runners, and this model is undertrained and on a
+steep part of its curve. Two points is 403 word errors of 20,138, which
+catches a broken feature pipeline or a decoder that deletes everything and
+nothing subtler. The second recorded run is what should tighten it, and
+`test_ledger.py` caps any gate's allowance at three points so the
+widening cannot continue quietly.
+**`measured_wer` is the Python search, not Kaldi's.** The ledger is a
+regression gate on the system's output, and gating on `decode-faster`
+would make it depend on a dependency being deleted. Kaldi's number is
+recorded beside it as a cross-check on the whole graph and search chain.
+**Only `ctc` is in it**, because at 36 minutes an epoch the other seven
+topologies have never been trained on this corpus. A topology absent from
+`topologies` is unmeasured, not passing, and the test that the ledger
+covers exactly what `run.sh` trains is what keeps those two facts the
+same fact.
+**The validation loss was still falling** — 4.5318, 2.8998, 2.3510,
+2.1049, 1.9717, 1.8920, 1.8555, **1.8279**, improving by 0.080, 0.036 and
+0.028 over the last three — so this is a flattening curve rather than a
+bottomed one, and the ledger records the whole curve for the next run to
+be read against. The thing to change is the model, not the epoch count:
+`conf/model/rnnp.yaml` is 3 × 320 where librispeech's is 3 × 1024.
+The per-epoch loss is also 0.018 *worse* than the 83-dimensional run's
+1.8100 at the same epoch, while the WER came out 0.9 points better — a
+reminder that the two do not move together and that the ledger gates the
+one that matters.
+One easy win was visible and is not taken yet: the eight shards finished
+across a **five-minute spread**, 08:16:59 to 08:22:03, because
+`decode_k2.py` block-splits an `output.scp` that is sorted by duration,
+so the last shard gets the longest utterances. Interleaving would cost
+nothing and give back most of that tail; the hypotheses are identical
+either way, which is what makes it safe.
+
 The error rate itself is computed by `BenNevis.utils.scoring`, in Python, not
 read out of `sclite`. That keeps sctk off the measurement path and makes the
 number testable in tier 1. `sclite` is then the *independent oracle*: tier 3
@@ -1579,6 +1659,29 @@ cannot be asserted in tier 1b and the failure modes can.
   dispatched from a branch that did not yet have the change recording
   them. So `tests/utils/test_features.py`'s filterbank gate still skips,
   and activates on the next capture rather than this one.
+  **The next capture did not provide them either, and the reason is a
+  bug that cost a whole run.** `wav.scp` holds paths relative to the
+  *recipe* directory — mini-librispeech's entries are
+  `flac -c -d -s ./corpus/LibriSpeech/... |` — because every stage of a
+  Kaldi recipe runs from there, while `capture.py` is invoked from the
+  repository root. So run 46100161743's capture step died on
+  `FLAC__STREAM_DECODER_INIT_STATUS_ERROR_OPENING_FILE` after five and a
+  half hours of recipe, having been the only new code in the step.
+  `capture_waveforms` now takes the recipe directory and reads inside
+  it, which is reproducing the recipe's own assumption rather than
+  guessing at a path, and one unreadable utterance is logged and skipped
+  rather than ending the capture — a gap in a reference is not worth
+  losing the rest of a run that has already cost hours.
+  **What let it ship is the test fixture, not the review.**
+  `tests/reference/test_capture.py`'s synthetic recipe has no `wav.scp`
+  at all, so the waveform branch skipped in every one of its ninety-nine
+  tests and the suite was green over a function that could not run — the
+  same shape as the `G.fst` gate that could not fail and the `idim`
+  reader that stopped matching. The fixture writes one now, relative and
+  in both the plain and the piped form, and four of the six new tests
+  fail if the working directory is taken away. **A capture step is the
+  last thing in a five-hour job, so its own tests have to be the kind
+  that run in a second.**
   **And it invalidates the captured reference, which is the gate working
   rather than a problem.** The capture records `conf/pitch.conf`, and
   `test_against_reference.py` fails with "recipe/conf/pitch.conf no

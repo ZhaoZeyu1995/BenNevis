@@ -43,6 +43,7 @@ Authors:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import os
 import shutil
@@ -172,6 +173,30 @@ TOOL_LOCATIONS = {
     "fstprint": "tools/openfst/bin",
     "copy-feats": "src/featbin",
 }
+
+
+@contextlib.contextmanager
+def working_directory(path: Path):
+    """
+    Run a block with the working directory set to `path`.
+
+    `contextlib.chdir` would do, and is Python 3.11, which the image has
+    -- written out because the other tiers are 3.12 and this file is
+    imported by their tests. Restored on the way out however the block
+    ends, since a capture that left the process somewhere else would
+    write the rest of itself into the recipe.
+
+    Arguments
+    ---------
+    path: Path
+        The directory to run in.
+    """
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
 
 
 def find_kaldi_tool(name: str) -> Optional[str]:
@@ -829,7 +854,7 @@ def capture_features(
         # Stored as the samples rather than as a file, so the capture does
         # not depend on a corpus layout or on an audio decoder, and so the
         # digest is of the numbers a feature extractor actually receives.
-        capture_waveforms(manifest, data, destination, dataset, whole_keys)
+        capture_waveforms(manifest, recipe, data, destination, dataset, whole_keys)
 
         cmvn = data / "cmvn.scp"
         if cmvn.is_file():
@@ -857,6 +882,7 @@ def capture_features(
 
 def capture_waveforms(
     manifest: Manifest,
+    recipe: Path,
     data: Path,
     destination: Path,
     dataset: str,
@@ -872,10 +898,25 @@ def capture_waveforms(
     that went in, which is the gap that made the filterbank residual
     unmeasurable -- see the comment at the call site.
 
+    **The paths in `wav.scp` are relative to the recipe directory, and
+    this is read from somewhere else.** mini-librispeech's entries are
+    `flac -c -d -s ./corpus/LibriSpeech/... |`, which a Kaldi recipe can
+    write because every one of its stages runs from its own directory --
+    so the first capture that reached this function died on
+    `FLAC__STREAM_DECODER_INIT_STATUS_ERROR_OPENING_FILE` with the
+    recipe's whole five-hour run already spent. The reads therefore happen
+    with the working directory set to `recipe`, which is reproducing the
+    recipe's own assumption rather than guessing at it. yesno's paths are
+    relative too and only looked fine because its capture predates this
+    function.
+
     Arguments
     ---------
     manifest: Manifest
         The manifest to record into.
+    recipe: Path
+        The recipe directory, which is what `wav.scp`'s relative paths
+        and piped commands are written against.
     data: Path
         The data directory.
     destination: Path
@@ -889,29 +930,45 @@ def capture_waveforms(
     import kaldiio
     import numpy as np
 
-    scp = data / "wav.scp"
+    # Absolute before the chdir below, because a relative destination
+    # would otherwise be written inside the recipe.
+    scp = (data / "wav.scp").resolve()
+    destination = destination.resolve()
     if not scp.is_file():
         sys.stderr.write(f"capture: no {scp}, skipping waveforms\n")
         return
-    segments = data / "segments"
-    try:
-        loader = kaldiio.load_scp(
-            str(scp), segments=str(segments) if segments.is_file() else None
-        )
-    except Exception as failure:  # pragma: no cover - corpus dependent
-        sys.stderr.write(f"capture: cannot read {scp}: {failure!r}\n")
-        return
+    segments = (data / "segments").resolve()
 
     arrays = {}
     rates = {}
-    for key in keys:
-        if key not in loader:
-            sys.stderr.write(f"capture: no audio for {key}\n")
-            continue
-        rate, samples = loader[key]
-        arrays[key] = np.asarray(samples)
-        rates[key] = int(rate)
+    with working_directory(recipe):
+        try:
+            loader = kaldiio.load_scp(
+                str(scp), segments=str(segments) if segments.is_file() else None
+            )
+        except Exception as failure:  # pragma: no cover - corpus dependent
+            sys.stderr.write(f"capture: cannot read {scp}: {failure!r}\n")
+            return
+        for key in keys:
+            if key not in loader:
+                sys.stderr.write(f"capture: no audio for {key}\n")
+                continue
+            try:
+                rate, samples = loader[key]
+            except Exception as failure:
+                # A corpus whose audio cannot be decoded is a gap in the
+                # capture, not a reason to lose the rest of a run that
+                # has already cost hours. Said loudly, since a silent
+                # skip here is what made the waveforms missing and
+                # unexplained once before.
+                sys.stderr.write(
+                    f"capture: cannot decode {key} from {scp}: {failure!r}\n"
+                )
+                continue
+            arrays[key] = np.asarray(samples)
+            rates[key] = int(rate)
     if not arrays:
+        sys.stderr.write(f"capture: no waveforms captured for {dataset}\n")
         return
 
     relative = f"audio/{dataset}.npz"

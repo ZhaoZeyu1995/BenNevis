@@ -1298,3 +1298,183 @@ class TestGraphTokenTables:
         store(manifest, tmp_path, "graph/ctc/k2/tokens.txt", b"<blk> 0\nSIL 1\n")
         assert (tmp_path / "graph" / "ctc" / "k2" / "tokens.txt").is_file()
         assert "graph/ctc/k2/tokens.txt" in manifest.exact
+
+
+class TestWaveforms:
+    """
+    The waveforms, and the working directory they have to be read from.
+
+    **`wav.scp` holds paths relative to the recipe directory**, because
+    every stage of a Kaldi recipe runs from there -- mini-librispeech's
+    entries are `flac -c -d -s ./corpus/LibriSpeech/... |`. The capture is
+    invoked from the repository root instead, so the first run that
+    reached `capture_waveforms` died on
+    `FLAC__STREAM_DECODER_INIT_STATUS_ERROR_OPENING_FILE` with a five-hour
+    recipe already spent.
+
+    The reason it shipped is worth more than the fix: **the fixture above
+    has no `wav.scp`**, so the waveform branch skipped in every test and
+    the suite was green over a function that could not run. These tests
+    write one.
+    """
+
+    @staticmethod
+    def write_wave(path, samples, rate=8000):
+        import wave
+
+        import numpy as np
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(rate)
+            handle.writeframes(np.asarray(samples, dtype="<i2").tobytes())
+
+    @classmethod
+    def add_audio(cls, recipe, template="./corpus/{dataset}/{utterance}.wav"):
+        """
+        Give every dataset a `wav.scp`, written the way a recipe writes
+        one: relative to the recipe directory.
+
+        Returns the samples keyed by `(dataset, utterance)`, so a test
+        can compare what was captured against what was on disc rather
+        than against itself. Keyed by the pair because `UTTERANCES` is
+        the same list for both datasets and the names are not unique
+        across them -- which is also true of the real corpora.
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(97)
+        expected = {}
+        for dataset in ("train_yesno", "test_yesno"):
+            lines = []
+            for utterance in UTTERANCES:
+                samples = rng.integers(-3000, 3000, size=400, dtype="int16")
+                cls.write_wave(
+                    recipe / "corpus" / dataset / f"{utterance}.wav", samples
+                )
+                expected[dataset, utterance] = np.asarray(samples)
+                entry = template.format(dataset=dataset, utterance=utterance)
+                lines.append(f"{utterance} {entry}\n")
+            (recipe / "data" / dataset / "wav.scp").write_text("".join(lines))
+        return expected
+
+    def test_a_relative_path_is_resolved_against_the_recipe(self, recipe, tmp_path):
+        """
+        The regression itself. The capture runs from the repository root
+        and `./corpus/...` means nothing there.
+        """
+        import numpy as np
+
+        expected = self.add_audio(recipe)
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        out = destination / "yesno"
+        manifest = Manifest.read(out / MANIFEST_NAME)
+
+        audio = {
+            name: entry
+            for name, entry in manifest.arrays.items()
+            if name.startswith("audio/")
+        }
+        assert audio, "no waveforms were captured"
+        for name, entry in audio.items():
+            _kind, dataset, utterance = name.split("/", 2)
+            stored = np.load(out / entry["path"], allow_pickle=True)[utterance]
+            assert np.array_equal(stored, expected[dataset, utterance]), name
+            assert entry["sample_rate"] == 8000
+            # Exact: these are the samples, not a computation over them.
+            assert entry["tolerance"] == {"rtol": 0.0, "atol": 0.0}
+
+    def test_the_waveforms_pair_with_the_features_kept_whole(self, recipe, tmp_path):
+        """
+        The point of capturing audio is to be able to compute features
+        from it and compare. An utterance with audio but no reference
+        features, or the other way round, compares nothing -- which is
+        exactly the shape of gate that `tests/utils/test_features.py`
+        skips over.
+        """
+        self.add_audio(recipe)
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+
+        audio = {
+            name[len("audio/") :]
+            for name in manifest.arrays
+            if name.startswith("audio/")
+        }
+        raw = {
+            name[len("raw/") :] for name in manifest.arrays if name.startswith("raw/")
+        }
+        assert audio, "no waveforms were captured"
+        assert audio == raw, "the audio and the raw features cover different utterances"
+
+    @posix_only
+    def test_a_piped_command_is_run_from_the_recipe_too(self, recipe, tmp_path):
+        """
+        mini-librispeech's entries are a `flac` pipe, not a file, and the
+        relative path sits inside the command where no path-resolving code
+        would find it. `cat` stands in for `flac`: the question is the
+        working directory the shell inherits, not the decoder.
+        """
+        import numpy as np
+
+        expected = self.add_audio(
+            recipe, template="cat ./corpus/{dataset}/{utterance}.wav |"
+        )
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        out = destination / "yesno"
+        manifest = Manifest.read(out / MANIFEST_NAME)
+
+        audio = [name for name in manifest.arrays if name.startswith("audio/")]
+        assert audio, "a piped wav.scp captured nothing"
+        for name in audio:
+            entry = manifest.arrays[name]
+            _kind, dataset, utterance = name.split("/", 2)
+            stored = np.load(out / entry["path"], allow_pickle=True)[utterance]
+            assert np.array_equal(stored, expected[dataset, utterance]), name
+
+    def test_the_working_directory_is_restored(self, recipe, tmp_path):
+        """
+        A capture that left the process inside the recipe would write
+        everything after this point there, and `destination` is allowed
+        to be relative.
+        """
+        before = os.getcwd()
+        self.add_audio(recipe)
+        assert run(recipe, tmp_path / "reference") == 0
+        assert os.getcwd() == before
+
+    def test_a_missing_wav_scp_is_skipped_rather_than_fatal(self, recipe, tmp_path):
+        """
+        yesno's committed capture has no audio and the recipes that have
+        never run have no `wav.scp`; neither is a reason to lose a
+        capture. This is the behaviour the fixture was silently relying
+        on, which is why it is now asserted rather than assumed.
+        """
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        assert not [name for name in manifest.arrays if name.startswith("audio/")]
+
+    def test_an_undecodable_utterance_does_not_lose_the_rest(self, recipe, tmp_path):
+        """
+        The failure that cost a run was an exception out of one
+        `loader[key]`. One unreadable utterance is a gap in the capture;
+        it must not take the other seven, nor the hours of recipe behind
+        them.
+        """
+        self.add_audio(recipe)
+        broken = recipe / "corpus" / "test_yesno" / f"{UTTERANCES[0]}.wav"
+        broken.write_bytes(b"not a wave file")
+        destination = tmp_path / "reference"
+        assert run(recipe, destination) == 0
+        manifest = Manifest.read(destination / "yesno" / MANIFEST_NAME)
+        captured_audio = [
+            name for name in manifest.arrays if name.startswith("audio/test_yesno/")
+        ]
+        assert captured_audio, "one bad utterance took the whole dataset"
+        assert f"audio/test_yesno/{UTTERANCES[0]}" not in manifest.arrays
