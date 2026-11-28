@@ -1235,9 +1235,30 @@ The WER ledger is `tests/golden/wer/yesno.json`: one `reference_wer` per
 topology, taken from `egs/yesno/asr/README.md` and so from the author's own
 pre-refactor CUDA runs, and one `max_wer` that is the gate. **Raising
 `max_wer` to make a run pass is how a ledger stops meaning anything** — judge
-a change against `reference_wer` and tighten `max_wer` deliberately. The
-gates start loose because no run has yet been recorded in CI; `test_set` has
-232 reference words, so one word error is 0.43%.
+a change against `reference_wer` and tighten `max_wer` deliberately.
+`test_set` has 232 reference words, so one word error is 0.43%, which is
+also this corpus's resolution limit: it cannot distinguish a change worth
+less than one error, and that is why mini-librispeech exists.
+
+**It is re-anchored to the Python pipeline now.** Every `measured_wer`
+had been from run 44962562909, taken on 83-dimensional features with
+Kaldi doing the data preparation, the language directory, the features
+and CMVN — none of which is true any more. They come from run
+46155782177, the first yesno run of the pipeline as it now is, so
+`features.measured_at` equals `features.current` for the first time
+since pitch was dropped, and every entry carries a
+`measured_breakdown`.
+**`max_wer` was deliberately not touched in the re-anchoring**, which
+leaves some gates a little wider relative to their topology and some a
+little narrower, because they were `measured + 3 errors` against the
+*old* measurement. Tightening wants more than two runs: the spread
+between the last Kaldi-pipeline run and the first Python one is one word
+error in 1,856 across eight topologies, **moving in both directions**,
+and that is the whole of the evidence about run-to-run variation on this
+corpus. Two runs would make a band that was a guess written down.
+`reference_wer` is **not** re-anchored and should not be: it is the
+historical record, and the comparison against it is what showed that
+dropping pitch cost three word errors in total.
 
 **There are two ledgers now, and they are discovered rather than listed.**
 `tests/recipes/test_ledger.py` had yesno's path as a module constant, which
