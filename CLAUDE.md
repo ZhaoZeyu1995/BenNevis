@@ -296,12 +296,43 @@ tolerances chosen per layer:
   **Removing dither cost one word error in total across all eight
   topologies**, and it moved downward, so the baseline survived the change
   intact.
-- **`torchaudio.compliance.kaldi.fbank` is close but not equivalent, and the
-  cause is narrowed rather than found.** Against undithered Kaldi it agrees
-  to 0.065 max and 0.012 mean in the log-mel domain, down from 1.45 and 0.038
-  with dither on — so dither was about 95% of the gap. What is left is
-  **zero-mean scatter of about 1.2% in linear energy**, and these have been
-  ruled out:
+- **`torchaudio.compliance.kaldi.fbank` is faithful to Kaldi, and the
+  "1.2% residual" this entry used to describe was the reference's 8-bit
+  compression.** `make_fbank.sh` writes compressed archives and
+  `CompressedMatrix` quantises each column to 8 bits under its default
+  `kSpeechFeature` scheme, so the captured features are Kaldi's output
+  **put on a grid** -- and anything computed from the waveform was being
+  compared against the grid rather than against Kaldi's arithmetic.
+  Measured on yesno, by `tools/fbank/probe.py`, which implements Kaldi's
+  filterbank from `feature-window.cc` and `mel-computations.cc` directly
+  and needs no Kaldi:
+
+  | comparison | mean | note |
+  | --- | --- | --- |
+  | that implementation vs `torchaudio` | **4e-6** | two independent readings of Kaldi's source agreeing |
+  | either vs the capture | **0.0117** | 1.17% in linear energy: the figure that was chased |
+  | the capture vs *the nearest grid point to it* | **6e-6** | float32 noise |
+
+  and **53,428 of 53,440 entries have the captured value exactly equal to
+  the nearest grid point**; the twelve that do not sit within a rounding
+  tie of halfway. Half the median grid step is 0.0244, so uniform
+  rounding would average 0.0122 against the 0.0117 observed.
+  **The clue was in this file already.** The residual was recorded as
+  *independent of the sample rate and of how many FFT bins a mel bin
+  spans* -- 7.7e-2 max and 1.4e-2 mean on 16 kHz mini-librispeech against
+  6.5e-2 and 1.2e-2 on 8 kHz yesno -- and that was written up as
+  refuting the degenerate-filterbank hypothesis. Compression does not
+  care about the sample rate or the conditioning, which is exactly why
+  the two agreed; the observation was pointing at the answer and was read
+  as ruling something out. **A difference that does not move when
+  everything about the signal changes is a property of the measurement,
+  not of the signal.**
+  So the whole hypothesis table below was answering the wrong question,
+  and the next step it named -- capturing `compute-spectrogram-feats` to
+  localise the difference upstream or downstream of the mel projection --
+  **is not needed**. There is nothing to localise. For the record, what it
+  ruled out and how, since every line of it is still true of the
+  *comparison* even though the comparison was against a grid:
 
   | Hypothesis | Verdict |
   | --- | --- |
@@ -311,23 +342,49 @@ tolerances chosen per layer:
   | Filterbank weights | a fixed weight error would bias each mel bin consistently; per-bin mean differences are ±0.0004 |
   | A normalisation factor | the mean difference of logs is −0.00007, so there is no offset to find |
   | Quiet-bin cancellation | the scatter is flat across frame energies |
+  | The filterbank's conditioning | tested and refuted — and it was the clue, see above |
 
-  | The filterbank's conditioning | **tested and refuted**, see below |
+  **Six hypotheses, each tested properly and each correctly refuted,
+  while the quantity being measured was not what anyone thought it was.**
+  That is the shape of the error worth remembering, and it is why the
+  table is kept rather than deleted. The paragraph that used to follow it
+  -- that the per-frame spectrum path was the remaining suspect, and that
+  capturing `compute-spectrogram-feats` was the next cheap step -- is
+  gone, because there is nothing to localise.
+  **The extractor is Python now, and it is not the default.**
+  `BenNevis.utils.features.fbank` wraps torchaudio's, and
+  `run/make_fbank.py` writes an archive for a data directory. The recipes
+  still call `steps/make_fbank.sh`, deliberately: switching changes the
+  features -- Kaldi's are 8-bit compressed and these are not -- hence the
+  CMVN statistics, hence every WER, which is a measured decision of the
+  same kind as dropping pitch. `--compress` writes a like-for-like
+  archive when the comparison is the point.
+  What the module owes is not arithmetic but **the settings**, because
+  Kaldi's defaults and torchaudio's differ where it matters:
+  `energy_floor` is 0.0 for Kaldi and **1.0** for torchaudio, which would
+  floor every mel energy at 1 rather than at float epsilon, and `dither`
+  is 1.0 for Kaldi and 0.0 for torchaudio. So it reads the recipe's own
+  `conf/fbank.conf` -- the same file Kaldi's extractor reads, so the two
+  cannot be given different settings -- takes *Kaldi's* defaults for
+  anything the file omits, and **refuses** an option it does not pass on
+  rather than ignoring it. A `--dither` above zero is refused outright.
+  And the scale is pinned, because it is a plausible mistake with an
+  implausible symptom: Kaldi reads a wav and does **not** normalise, so a
+  waveform in [-1, 1] gives log energies about `log(32768**2)`, 20.8, too
+  small.
+  **What the gate needs is an uncompressed reference**, and the capture
+  cannot give one while it reads what the recipe wrote -- the recipe must
+  not store features uncompressed, because that would alter CMVN's
+  inputs and hence the WERs. So the capture should extract features
+  uncompressed *itself*, alongside, the same way it already has Kaldi
+  rewrite the archives with `copy-feats --compress=false`. Meanwhile the
+  gate is built the other way round: the closest anything can get to an
+  8-bit reference is half a grid step, so asserting closeness at that
+  tolerance would pass for an implementation genuinely 0.01 wrong, and
+  `tests/utils/test_features.py` asserts instead that **the captured
+  value is the nearest grid point to ours** -- 99.97% of entries, a gate
+  at roughly 7e-6 out of a reference quantised to 0.05.
 
-  **It is not the degenerate filterbank.** That was the natural suspicion and
-  it is wrong: measured against mini-librispeech at 16 kHz, where the
-  filterbank is well conditioned, the gap is **7.7e-02 max and 1.4e-02
-  mean** — the same size as yesno's 6.5e-02 and 1.2e-02 at 8 kHz. So the
-  residual is independent of the sample rate and of how many FFT bins a mel
-  bin spans, which rules out the one explanation that had looked likely
-  enough to justify building a second corpus for.
-
-  What remains is the per-frame spectrum path, and localising it needs one of
-  Kaldi's intermediates rather than more guessing from outside.
-  `compute-spectrogram-feats` would give the power spectrum before the
-  filterbank, and capturing that for a few utterances would say in a single
-  run whether the difference is upstream or downstream of the mel
-  projection. That is the next cheap step if this is worth pursuing.
 - **The yesno filterbank is degenerate, and this is about the recipe rather
   than the migration.** 80 mel bins are requested over 20–4000 Hz, but a
   25 ms frame at 8 kHz is 200 samples, padded to a 256-point FFT, giving 128
@@ -977,6 +1034,36 @@ non-negative and already sorted, so a `searchsorted` against
 3.8x. After that the honest remainder is determinisation: Kaldi evaluates
 ~18,300 arcs a frame where this evaluates 56,416 at the same beam, which
 is the 3x the flower still costs.
+
+**And the comparison stage 10 exists for is finally made.** Run
+46049745072, four epochs of `ctc` on master, all stages, success:
+
+| | Kaldi `decode-faster` | Python + token passing |
+| --- | --- | --- |
+| WER | 67.6% | **65.96%** |
+| sub / del / ins | 25.2 / 42.2 / 0.3 | 26.1 / **39.7** / 0.15 |
+| utterances | 1,089 | **1,089** |
+| wall time at nj=8 | **8m46s** | 29m21s |
+| peak decoder RSS | — | **1,818 MiB** |
+
+So on the same checkpoint the Python lane is **1.6 points better**, and
+the shape of the difference is the interesting part: it **deletes less**
+— 39.7 against 42.2 — and substitutes slightly more. Two plausible
+causes, neither measured: our graph keeps full precision where
+`fstminimizeencoded` quantises every arc to 1/1024, and the two searches
+prune differently. It is **3.35x slower** rather than the 29x the k2
+route was, and it peaks at **1,818 MiB against the 14,988 that SIGKILLed
+k2** — which is why this run finished at all.
+Four things to hold onto. The run was **slow throughout**, 35.5 minutes
+an epoch, so the 8m46s is this runner's `decode-faster` and not the
+6m10s recorded earlier on a faster one; the ratio is the comparable
+figure, not either absolute. **Neither WER is a ledger entry** — four
+epochs is a deliberately undertrained model, 42% deletions, and
+`tests/golden/wer/` still has no mini-librispeech file. The 67.6% here
+against 68.1% on run 45918000128 is the same configuration twice, which
+is a useful consistency check on the Kaldi side. And the remaining 3.35x
+is still the flower: Kaldi evaluates some 18,300 arcs a frame where this
+evaluates more, which only determinisation closes.
 
 **All of that is done, and one of the three was a defect rather than an
 optimisation.** Profiling the shipped decoder rather than theorising about
