@@ -90,6 +90,7 @@ class Trainer:
         optimizers: Optional[List[torch.optim.Optimizer]] = None,
         schedulers: Optional[List[torch.optim.lr_scheduler._LRScheduler]] = None,
         loss_func: Optional["GraphLoss"] = None,
+        spec_augment: Optional[Dict[str, Any]] = None,
         exp_dir: Optional[str] = None,
         save_every_n_epochs: Optional[float] = 1.0,
         save_every_n_steps: Optional[int] = None,
@@ -131,6 +132,17 @@ class Trainer:
         self.optimizers = optimizers
         self.schedulers = schedulers
         self.loss_func = loss_func
+        # SpecAugment, built from the configuration rather than passed in
+        # already constructed, so that `conf/trainer/*.yaml` is the only
+        # place it is described. None means off, which is what every
+        # recipe did before it existed.
+        self.spec_augment = None
+        if spec_augment:
+            from BenNevis.core.augment import SpecAugment
+
+            self.spec_augment = SpecAugment(**spec_augment)
+            if self.gpu_id == 0:
+                logging.info(f"RANK 0: SpecAugment: {self.spec_augment}")
         self.config = config
 
         if self.gpu_id == 0:
@@ -481,6 +493,18 @@ class Trainer:
             raise ValueError(
                 f"RANK {self.gpu_id}: Expected 'feats' or 'wavs' in batch, got {batch.keys()}"
             )
+
+        # Augmentation goes here and nowhere else: `_train_batch` calls
+        # `model.train()` and `_valid_batch` calls `model.eval()` before
+        # reaching this, so `SpecAugment` being a no-op outside training
+        # is what keeps the validation loss comparable across epochs --
+        # a validation loss computed on masked features would wander with
+        # the mask draw rather than with the model.
+        #
+        # Only on features. For `Wav2Vec2Model` the input is a waveform,
+        # where masking mel channels is meaningless.
+        if self.spec_augment is not None and "feats" in batch:
+            inputs = self.spec_augment(inputs, input_lens)
 
         outputs = self.model(inputs, input_lens)
         log_probs, log_prob_lens = outputs[0], outputs[1]

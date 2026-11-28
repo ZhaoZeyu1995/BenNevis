@@ -6,3 +6,24 @@ save_top_k: 2
 # topology. Eighty, as yesno uses, would exceed the six-hour job ceiling.
 max_epochs: 20
 log_every_n_steps: 100
+
+# SpecAugment, off by default so a run that does not ask for it behaves
+# as every run before it did. Turn it on with
+#   --hydra_opts "trainer.spec_augment.num_freq_masks=2 ..."
+# or by uncommenting this block.
+#
+# The widths below are the paper's LibriSpeech-100 setting scaled to 80
+# mel bins, with the adaptive time cap espnet uses: 27 of 80 channels is
+# the paper's F=27 at 80 bins, and 0.2 of the utterance bounds a time
+# mask so that one setting works on yesno's 600-frame utterances and
+# mini-librispeech's 1,100-frame ones alike.
+#
+# This has NOT been measured on this project yet. It is the regulariser
+# most likely to move a 66% WER on five hours of audio, and the WER
+# ledger is how that gets judged.
+# spec_augment:
+#   num_freq_masks: 2
+#   freq_mask_width: 27
+#   num_time_masks: 2
+#   time_mask_width: 100
+#   max_time_mask_ratio: 0.2
