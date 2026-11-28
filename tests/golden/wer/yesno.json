@@ -4,14 +4,30 @@
     "",
     "reference_wer is the number in egs/yesno/asr/README.md, measured by the",
     "author on CUDA with torch 2.1. measured_wer is what this repository",
-    "produces now, on CPU with torch 2.15, recorded from the run named under",
-    "`measured`. max_wer is the gate.",
+    "produces now, recorded from the run named under `measured`. max_wer is",
+    "the gate.",
     "",
-    "The gate is measured_wer plus three word errors. test_yesno has 232",
-    "reference words, so one word error is 0.43%: the allowance absorbs a",
-    "different runner's floating-point rounding without admitting a real",
-    "regression, which on this corpus means tens of percent rather than",
-    "fractions of one.",
+    "**Re-anchored to the Python pipeline.** Every number under",
+    "measured_wer was previously from run 44962562909, taken on",
+    "83-dimensional features with Kaldi doing the data preparation, the",
+    "language directory, the features and CMVN. None of that is true any",
+    "more: yesno trains with no Kaldi at all. So the measurements are from",
+    "run 46155782177, which is the first run of the pipeline as it now is,",
+    "and `features.measured_at` finally equals `features.current`.",
+    "",
+    "**max_wer was not touched when re-anchoring**, and that is deliberate.",
+    "It is measured_wer-plus-three-errors against the *old* measurement, so",
+    "some gates now sit a little wider relative to their topology and some a",
+    "little narrower. Tightening them wants more than two runs: the spread",
+    "between the last Kaldi-pipeline run and this one is one word error in",
+    "1,856 across eight topologies, moving in both directions, which is the",
+    "whole evidence available about run-to-run variation on this corpus.",
+    "A third and fourth run would make a real band; two runs would make a",
+    "guess that happened to be written down.",
+    "",
+    "test_yesno has 232 reference words, so one word error is 0.43%. That is",
+    "the resolution limit of this corpus: it cannot distinguish a change",
+    "worth less than one error, which is why mini-librispeech exists.",
     "",
     "Judge a change against measured_wer. **Raising max_wer to make a run",
     "pass is how a ledger stops meaning anything** -- if a run exceeds the",
@@ -20,91 +36,125 @@
     "utterances pins the data split. It is 31/29 rather than an even 30/30",
     "because that is the split the published results were measured on: it",
     "arose from two README files in the corpus being counted as waves, and",
-    "prepare_data.sh now states the count explicitly so that filtering them",
-    "out did not move an utterance across. 29 test utterances of eight words",
-    "each is the 232 above.",
+    "local/prepare_data.py now states the count explicitly so that filtering",
+    "them out did not move an utterance across. 29 test utterances of eight",
+    "words each is the 232 above.",
     "",
-    "**Every number here was measured on 83-dimensional features** -- 80",
-    "filterbank coefficients plus the three pitch dimensions",
-    "process-kaldi-pitch-feats produces. Pitch was dropped in the PR that",
-    "added this note, so the model's input is 80 wide now and these are a",
-    "record of a configuration the recipe no longer has.",
-    "",
-    "They are kept rather than cleared because they are the only",
-    "pre-refactor measurement that exists, and because the comparison that",
-    "matters is between the 83-dim and 80-dim eras: if yesno moves by more",
-    "than the gate allows, that is a real finding about pitch and not",
-    "noise. **max_wer has deliberately not been widened for the change.**",
-    "If an 80-dim run exceeds it, find out why -- which is what this file",
-    "is for."
+    "reference_wer remains an 83-dimensional CUDA measurement and is not",
+    "re-anchored: it is the historical record, and the comparison against it",
+    "is what showed that dropping pitch cost three word errors in total."
   ],
-  "model": "rnnp",
-  "test_set": "test_yesno",
-  "reference_words": 232,
-  "utterances": {
-    "train_yesno": 31,
-    "test_yesno": 29
-  },
-  "reference_source": "egs/yesno/asr/README.md, pre-refactor CUDA run",
-  "topologies": {
-    "ctc": {
-      "reference_wer": 0.0,
-      "max_wer": 1.29,
-      "measured_wer": 0.0,
-      "measured_errors": 0
-    },
-    "mmictc": {
-      "reference_wer": 0.4,
-      "max_wer": 1.72,
-      "measured_wer": 0.43,
-      "measured_errors": 1
-    },
-    "mmictc-1": {
-      "reference_wer": 0.9,
-      "max_wer": 2.16,
-      "measured_wer": 0.86,
-      "measured_errors": 2
-    },
-    "2state": {
-      "reference_wer": 0.0,
-      "max_wer": 1.72,
-      "measured_wer": 0.43,
-      "measured_errors": 1
-    },
-    "2state-1": {
-      "reference_wer": 0.9,
-      "max_wer": 1.29,
-      "measured_wer": 0.0,
-      "measured_errors": 0
-    },
-    "3state-skip": {
-      "reference_wer": 0.0,
-      "max_wer": 1.29,
-      "measured_wer": 0.0,
-      "measured_errors": 0
-    },
-    "3state-skip-1": {
-      "reference_wer": 0.4,
-      "max_wer": 1.72,
-      "measured_wer": 0.43,
-      "measured_errors": 1
-    },
-    "3state-skip-2": {
-      "reference_wer": 0.4,
-      "max_wer": 1.29,
-      "measured_wer": 0.0,
-      "measured_errors": 0
-    }
+  "features": {
+    "current": "fbank, 80 dimensions",
+    "measured_at": "fbank, 80 dimensions",
+    "note": "The two agree for the first time since pitch was dropped: these numbers were measured on the features the recipe computes now, by run/make_fbank.py rather than steps/make_fbank.sh, written compressed so the archive is on the same 8-bit grid Kaldi's was. See CLAUDE.md on why pitch went."
   },
   "measured": {
-    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/44962562909",
-    "date": "2026-11-22",
-    "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:8e57ab123343df7f57908cee5cb6f1251f4e8aed8d110d69ce6ffb5f80994779",
-    "note": "CPU, torch 2.15, with --dither=0 in conf/fbank.conf. reference_wer is the author's pre-refactor CUDA run at torch 2.1, kept as the historical record. Removing dither moved one word error in total across all eight topologies, downward."
+    "date": "2026-11-28",
+    "image": "ghcr.io/zhaozeyu1995/bennevis-kaldi@sha256:a96f6c57d61b8a775feff6353be05ebbc5d279fb296b5a223981ef2ec6fb7247",
+    "note": "The first yesno run whose data preparation, language directory, features, CMVN and topologies were all Python: no Kaldi binary or script touches anything these numbers depend on. CPU, torch 2.15, --dither=0. reference_wer is still the author's pre-refactor CUDA run at torch 2.1, kept as the historical record.",
+    "previous": {
+      "note": "The last run before the preparation became Python, on ff0088f, three hours earlier and on a different image build. Its errors were 1, 1, 0, 1, 2, 0, 1, 2 for the topologies in this file's order against this run's 1, 1, 1, 0, 2, 0, 2, 2 -- eight becoming nine, moving in both directions. That is the run-to-run spread of training on this corpus, not a pipeline difference, and it is why re-anchoring was recorded rather than treated as a regression.",
+      "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/46139958942"
+    },
+    "run": "https://github.com/ZhaoZeyu1995/BenNevis/actions/runs/46155782177"
   },
-  "features": {
-    "measured_at": "fbank+pitch, 83 dimensions",
-    "current": "fbank, 80 dimensions",
-    "note": "pitch was a GMM-era addition for tonal languages; yesno is Hebrew and the gain is marginal. See CLAUDE.md."
+  "model": "rnnp",
+  "reference_source": "egs/yesno/asr/README.md, pre-refactor CUDA run",
+  "reference_words": 232,
+  "test_set": "test_yesno",
+  "topologies": {
+    "2state": {
+      "max_wer": 1.72,
+      "measured_breakdown": {
+        "deletions": 1,
+        "insertions": 0,
+        "substitutions": 0
+      },
+      "measured_errors": 1,
+      "measured_wer": 0.43,
+      "reference_wer": 0.0
+    },
+    "2state-1": {
+      "max_wer": 1.29,
+      "measured_breakdown": {
+        "deletions": 0,
+        "insertions": 0,
+        "substitutions": 1
+      },
+      "measured_errors": 1,
+      "measured_wer": 0.43,
+      "reference_wer": 0.9
+    },
+    "3state-skip": {
+      "max_wer": 1.29,
+      "measured_breakdown": {
+        "deletions": 1,
+        "insertions": 0,
+        "substitutions": 0
+      },
+      "measured_errors": 1,
+      "measured_wer": 0.43,
+      "reference_wer": 0.0
+    },
+    "3state-skip-1": {
+      "max_wer": 1.72,
+      "measured_breakdown": {
+        "deletions": 0,
+        "insertions": 0,
+        "substitutions": 0
+      },
+      "measured_errors": 0,
+      "measured_wer": 0.0,
+      "reference_wer": 0.4
+    },
+    "3state-skip-2": {
+      "max_wer": 1.29,
+      "measured_breakdown": {
+        "deletions": 1,
+        "insertions": 1,
+        "substitutions": 0
+      },
+      "measured_errors": 2,
+      "measured_wer": 0.86,
+      "reference_wer": 0.4
+    },
+    "ctc": {
+      "max_wer": 1.29,
+      "measured_breakdown": {
+        "deletions": 0,
+        "insertions": 0,
+        "substitutions": 0
+      },
+      "measured_errors": 0,
+      "measured_wer": 0.0,
+      "reference_wer": 0.0
+    },
+    "mmictc": {
+      "max_wer": 1.72,
+      "measured_breakdown": {
+        "deletions": 1,
+        "insertions": 1,
+        "substitutions": 0
+      },
+      "measured_errors": 2,
+      "measured_wer": 0.86,
+      "reference_wer": 0.4
+    },
+    "mmictc-1": {
+      "max_wer": 2.16,
+      "measured_breakdown": {
+        "deletions": 1,
+        "insertions": 1,
+        "substitutions": 0
+      },
+      "measured_errors": 2,
+      "measured_wer": 0.86,
+      "reference_wer": 0.9
+    }
+  },
+  "utterances": {
+    "test_yesno": 29,
+    "train_yesno": 31
   }
 }
