@@ -163,6 +163,7 @@ def build_lexicon_arcs(
     sil_phone: str = "SIL",
     sil_disambig: Optional[str] = None,
     position_dependent_phones: bool = False,
+    structure: str = "flower",
 ) -> Tuple[List[Arc], int]:
     """
     The arcs of `L.fst`, and its final state.
@@ -189,6 +190,37 @@ def build_lexicon_arcs(
         because that is what a caller who has not thought about it wants to
         be told about by a KeyError, rather than silently getting phones
         that are not in the table.
+    structure: str
+        `"flower"` or `"tree"`.
+
+        **`"flower"` is `make_lexicon_fst.py`'s shape**: a fresh chain of
+        states per entry, hanging off the loop state, with the word on the
+        *first* arc. It reproduces Kaldi's `L.fst` byte for byte on both
+        corpora, which is why it is the default and why it stays -- it is
+        the oracle the tree is checked against.
+
+        **`"tree"` shares common prefixes**, which is the shape
+        determinisation would produce, and it exists because the flower is
+        the measured cause of the decoding gap. Measured on
+        mini-librispeech's 206,510 entries: **1,333,084 arcs become
+        469,947** and the loop state's out-degree **206,510 becomes 195**.
+        That out-degree is the whole of the diagnosis recorded in
+        CLAUDE.md -- "State 0 carries 208,941 arcs over 106 distinct input
+        labels, 1,950 parallel arcs per label, and 366 states like it hold
+        52.5% of the whole graph".
+
+        Two things about the tree are forced rather than chosen. The
+        **word rides the last arc**, not the first, because the first arc
+        is shared between every entry beginning with that phone; measured,
+        a word only becomes unambiguous 5.90 phones into a mean
+        pronunciation of 6.46, so there is no earlier placement to be had.
+        That moves where a word is emitted and so **changes alignment
+        timing**, which is inherent to removing the flower rather than
+        particular to this shape -- determinisation delays output labels
+        the same way, so Kaldi's own determinised graph already emits
+        words late. And the **final arc cannot be shared**, since it
+        carries the word, which is why the saving is 2.84x rather than the
+        3.37x a fully shared tree would give.
 
     Returns
     -------
@@ -210,6 +242,8 @@ def build_lexicon_arcs(
             f"sil_prob={sil_prob} is not in [0, 1); a probability of one "
             f"would make the no-silence arc cost infinity"
         )
+    if structure not in ("flower", "tree"):
+        raise ValueError(f"structure must be 'flower' or 'tree', got {structure!r}")
 
     def check(word: str, pronunciation: Tuple[str, ...]) -> None:
         if word not in words:
@@ -250,6 +284,12 @@ def build_lexicon_arcs(
             arcs.append((silence, disambig_state, phones[sil_phone], 0, 0.0))
             arcs.append((disambig_state, loop, phones[sil_disambig], 0, 0.0))
 
+    # For the tree, a map from a pronunciation prefix to the state that
+    # represents it. Allocated on first visit, walking the lexicon in its
+    # own order, so the numbering is a function of the input and two runs
+    # agree.
+    node: Dict[Tuple[str, ...], int] = {}
+
     for word, raw_pronunciation in lexicon:
         pronunciation = (
             position_dependent(raw_pronunciation)
@@ -257,6 +297,33 @@ def build_lexicon_arcs(
             else raw_pronunciation
         )
         check(word, pronunciation)
+
+        if structure == "tree":
+            # Walk the shared prefix, creating states as needed. The last
+            # phone is left to the code below, which is where the word and
+            # the silence split live.
+            source = loop
+            for index in range(len(pronunciation) - 1):
+                prefix = pronunciation[: index + 1]
+                if prefix not in node:
+                    node[prefix] = next_state
+                    next_state += 1
+                    arcs.append(
+                        (source, node[prefix], phones[pronunciation[index]], 0, 0.0)
+                    )
+                source = node[prefix]
+            last = len(pronunciation) - 1
+            phone = phones[pronunciation[last]] if last >= 0 else 0
+            # The word always rides the final arc here, where the flower
+            # puts it on the first: in a tree the first arc is shared.
+            label = words[word]
+            if sil_prob == 0.0:
+                arcs.append((source, loop, phone, label, 0.0))
+            else:
+                arcs.append((source, loop, phone, label, no_sil_cost))
+                arcs.append((source, silence, phone, label, sil_cost))
+            continue
+
         source = loop
         # Every phone but the last walks forward through fresh states.
         for index in range(len(pronunciation) - 1):
