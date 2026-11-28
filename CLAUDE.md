@@ -1297,12 +1297,34 @@ The per-epoch loss is also 0.018 *worse* than the 83-dimensional run's
 1.8100 at the same epoch, while the WER came out 0.9 points better — a
 reminder that the two do not move together and that the ledger gates the
 one that matters.
-One easy win was visible and is not taken yet: the eight shards finished
-across a **five-minute spread**, 08:16:59 to 08:22:03, because
-`decode_k2.py` block-splits an `output.scp` that is sorted by duration,
-so the last shard gets the longest utterances. Interleaving would cost
-nothing and give back most of that tail; the hypotheses are identical
-either way, which is what makes it safe.
+**That easy win is taken.** The eight shards had finished across a
+**five-minute spread**, 08:16:59 to 08:22:03, because `decode_k2.py`
+block-split an `output.scp` that is sorted by duration, so the last shard
+got every one of the longest utterances and seven shards sat idle at the
+end. `split_entries` interleaves now -- `entries[start::count]` -- which
+makes each shard a near-uniform sample of the length distribution.
+**The reason it had not been done is a comment that was wrong.** The old
+`shards` docstring said contiguous blocks were needed "because the blocks
+are concatenated in order afterwards and the recipe merges the result
+against `ref.wrd.trn` by position". They are not merged by position:
+`read_trn` returns a mapping from utterance id and `score` looks every
+reference utterance up by id, so the order affects nothing that is
+scored. A justification nobody checked had made a free change look
+unsafe -- the same shape as the stale `continue-on-error` comment, and
+worth the same suspicion.
+What the order *does* decide is the bytes of `hyp.wrd.trn`, and the claim
+that "every `nj` from 1 to 8 gave byte-identical hypotheses" was true only
+by the accident of splitting contiguously. `in_scp_order` restores the
+scp's order explicitly before writing, so that property now holds **by
+construction**, and the tests assert it across every `nj` rather than at
+one. An utterance the decoder returned that is not in the scp is appended
+rather than dropped, because `score` fails loudly on a mismatch and an
+unexpected extra has to survive to be seen.
+The three helpers were lifted out of `main` to be testable at all: nested
+in a function that needs k2, a graph and a trained model, the split could
+only ever have been exercised by a five-hour run. The balance test is
+paired with a **counter-example** that fails for a contiguous split, so
+it is known to discriminate rather than merely to pass.
 
 The error rate itself is computed by `BenNevis.utils.scoring`, in Python, not
 read out of `sclite`. That keeps sctk off the measurement path and makes the
