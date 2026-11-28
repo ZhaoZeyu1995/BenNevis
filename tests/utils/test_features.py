@@ -20,10 +20,24 @@ settled the "1.2% residual" CLAUDE.md chased through six hypotheses, and
 `tools/fbank/probe.py` is the independent implementation it was settled
 with.
 
-It skips until a capture records the **waveforms**, which
-`capture.py` does from the change that found this. Feature extraction was
-the one stage whose input was never captured, so until a fresh capture
-exists there is nothing to compute features *from*.
+**It is live now.** yesno's capture records the waveforms from run
+46139958942, and the gate reports 505,600 entries compared with 121 --
+**0.024%** -- not exactly the nearest grid point. That is the same rate
+as the 12-of-53,440 recorded in CLAUDE.md, on ten times the data, and it
+is the measurement feature extraction had been waiting for: Kaldi's
+filterbank and `torchaudio`'s agree to within the reference's own 8-bit
+quantisation on real audio.
+
+**And the gate had never run in CI, which is why it is marked now.**
+Everything below `importorskip("torch")` needs torch, so in tier 1 --
+which installs pytest and pyyaml -- it skipped; and tier 1b selects
+`-m torch`, which **deselected the whole file** because nothing in it
+carried the marker. So `TestFbank` and `TestAgainstTheCapture` ran only
+on a machine that happened to have torch *and* used the tier-1
+selection. This was the one file of eighteen that importorskips a heavy
+dependency without a marker; the rest are marked. A test that never runs
+is the same as no test, and it is harder to notice than one that cannot
+fail, because the suite does not even report a skip.
 
 Authors:
     * Zeyu Zhao (The University of Edinburgh) 2026
@@ -129,6 +143,7 @@ pytest.importorskip("torchaudio")
 from BenNevis.utils.features import fbank  # noqa: E402
 
 
+@pytest.mark.torch
 class TestFbank:
     @staticmethod
     def tone(frames=400, rate=8000, freq=440.0):
@@ -196,6 +211,7 @@ class TestFbank:
         assert 18.0 < shift < 22.0, shift
 
 
+@pytest.mark.torch
 class TestAgainstTheCapture:
     """
     Gated on the grid, not on closeness. See the module docstring.
