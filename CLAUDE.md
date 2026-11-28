@@ -334,6 +334,57 @@ tolerances chosen per layer:
   ruled out and how, since every line of it is still true of the
   *comparison* even though the comparison was against a grid:
 
+  | Hypothesis | Verdict |
+  | --- | --- |
+  | Configuration | every Kaldi and torchaudio default already agrees — `use_power`, `use_log_fbank`, `htk_compat`, `raw_energy`, `low_freq`, `high_freq`, `povey`, preemphasis, `remove_dc_offset`, `round_to_power_of_two`, `snip_edges`. `energy_floor` differs but only matters with `use_energy=true` |
+  | Framing offset | offset 0 agrees twice as well as ±1, so framing is right |
+  | The `povey` window | the two definitions agree to 1.3e-16 |
+  | Filterbank weights | a fixed weight error would bias each mel bin consistently; per-bin mean differences are ±0.0004 |
+  | A normalisation factor | the mean difference of logs is −0.00007, so there is no offset to find |
+  | Quiet-bin cancellation | the scatter is flat across frame energies |
+  | The filterbank's conditioning | tested and refuted — and it was the clue, see above |
+
+  **Six hypotheses, each tested properly and each correctly refuted,
+  while the quantity being measured was not what anyone thought it was.**
+  That is the shape of the error worth remembering, and it is why the
+  table is kept rather than deleted. The paragraph that used to follow it
+  -- that the per-frame spectrum path was the remaining suspect, and that
+  capturing `compute-spectrogram-feats` was the next cheap step -- is
+  gone, because there is nothing to localise.
+  **The extractor is Python now, and it is not the default.**
+  `BenNevis.utils.features.fbank` wraps torchaudio's, and
+  `run/make_fbank.py` writes an archive for a data directory. The recipes
+  still call `steps/make_fbank.sh`, deliberately: switching changes the
+  features -- Kaldi's are 8-bit compressed and these are not -- hence the
+  CMVN statistics, hence every WER, which is a measured decision of the
+  same kind as dropping pitch. `--compress` writes a like-for-like
+  archive when the comparison is the point.
+  What the module owes is not arithmetic but **the settings**, because
+  Kaldi's defaults and torchaudio's differ where it matters:
+  `energy_floor` is 0.0 for Kaldi and **1.0** for torchaudio, which would
+  floor every mel energy at 1 rather than at float epsilon, and `dither`
+  is 1.0 for Kaldi and 0.0 for torchaudio. So it reads the recipe's own
+  `conf/fbank.conf` -- the same file Kaldi's extractor reads, so the two
+  cannot be given different settings -- takes *Kaldi's* defaults for
+  anything the file omits, and **refuses** an option it does not pass on
+  rather than ignoring it. A `--dither` above zero is refused outright.
+  And the scale is pinned, because it is a plausible mistake with an
+  implausible symptom: Kaldi reads a wav and does **not** normalise, so a
+  waveform in [-1, 1] gives log energies about `log(32768**2)`, 20.8, too
+  small.
+  **What the gate needs is an uncompressed reference**, and the capture
+  cannot give one while it reads what the recipe wrote -- the recipe must
+  not store features uncompressed, because that would alter CMVN's
+  inputs and hence the WERs. So the capture should extract features
+  uncompressed *itself*, alongside, the same way it already has Kaldi
+  rewrite the archives with `copy-feats --compress=false`. Meanwhile the
+  gate is built the other way round: the closest anything can get to an
+  8-bit reference is half a grid step, so asserting closeness at that
+  tolerance would pass for an implementation genuinely 0.01 wrong, and
+  `tests/utils/test_features.py` asserts instead that **the captured
+  value is the nearest grid point to ours** -- 99.97% of entries, a gate
+  at roughly 7e-6 out of a reference quantised to 0.05.
+
 - **The yesno filterbank is degenerate, and this is about the recipe rather
   than the migration.** 80 mel bins are requested over 20–4000 Hz, but a
   25 ms frame at 8 kHz is 200 samples, padded to a 256-point FFT, giving 128
